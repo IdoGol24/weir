@@ -42,7 +42,7 @@ def _all_text(spec) -> str:  # noqa: ANN001
 
 def test_red_contains_planted_iban_at_the_sink() -> None:
     red = instantiate("injection-exfil", seed=1)
-    send_email = red.steps[3]
+    send_email = red.steps[6]
     assert send_email.tool_name == "send_email"
     assert send_email.args is not None
     assert PLANTED_IBAN in str(send_email.args)
@@ -50,7 +50,7 @@ def test_red_contains_planted_iban_at_the_sink() -> None:
 
 def test_benign_has_zero_iban_eligible_tokens_at_the_sink() -> None:
     benign = instantiate("injection-exfil-benign", seed=1)
-    send_email = benign.steps[3]
+    send_email = benign.steps[6]
     assert send_email.tool_name == "send_email"
     assert send_email.args is not None
     args_text = str(send_email.args)

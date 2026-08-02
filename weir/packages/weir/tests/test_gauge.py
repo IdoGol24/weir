@@ -18,7 +18,7 @@ def _gauge_for(filename: str, *, detected_framework: str | None = "langchain"): 
 
 def test_full_capture_red_fixture_reports_full_coverage() -> None:
     report = _gauge_for("injection-exfil.json")
-    assert report.total_tool_call_nodes == 2
+    assert report.total_tool_call_nodes == 3
     assert report.inspectable_args_bp == 10_000
     assert report.degraded_bp == 0
     assert report.evidentiary_coverage_bp == 10_000
@@ -39,10 +39,10 @@ def test_full_capture_benign_fixture_reports_full_coverage() -> None:
 
 def test_degraded_fixture_reports_low_coverage_and_a_real_remediation_line() -> None:
     report = _gauge_for("injection-exfil-benign.degraded.json")
-    assert report.total_tool_call_nodes == 2
-    assert report.inspectable_args_bp == 5_000  # 1 of 2 tool_call nodes has captured args
-    assert report.degraded_bp == 5_000
-    assert report.evidentiary_coverage_bp == 5_000
+    assert report.total_tool_call_nodes == 3
+    assert report.inspectable_args_bp == 3_333  # 1 of 3 tool_call nodes has captured args
+    assert report.degraded_bp == 6_666
+    assert report.evidentiary_coverage_bp == 3_333
     assert report.remediation_line is not None
     assert report.remediation_line.strip() != ""
     assert "langchain" in report.remediation_line.lower()

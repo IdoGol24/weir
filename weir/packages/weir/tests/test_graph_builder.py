@@ -16,23 +16,20 @@ def _load(filename: str):  # noqa: ANN201
 def test_next_edges_form_a_temporal_chain() -> None:
     trace = _load("injection-exfil.json")
     graph = build_session_graph(trace)
-    assert graph.next_edges == [
-        Edge(src=0, dst=1),
-        Edge(src=1, dst=2),
-        Edge(src=2, dst=3),
-        Edge(src=3, dst=4),
-    ]
+    assert graph.next_edges == [Edge(src=i, dst=i + 1) for i in range(7)]
 
 
 def test_joins_carry_through_with_confidence_and_resolved_indices() -> None:
     trace = _load("injection-exfil.json")
     graph = build_session_graph(trace)
-    assert len(graph.joins) == 2
+    assert len(graph.joins) == 3
     assert graph.joins[0].call_index == 1
     assert graph.joins[0].result_index == 2
     assert graph.joins[0].join_confidence == JoinConfidence.EXPLICIT
-    assert graph.joins[1].call_index == 3
-    assert graph.joins[1].result_index == 4
+    assert graph.joins[1].call_index == 4
+    assert graph.joins[1].result_index == 5
+    assert graph.joins[2].call_index == 6
+    assert graph.joins[2].result_index == 7
 
 
 def test_source_ref_preserved() -> None:
@@ -63,7 +60,7 @@ def test_dangling_join_reference_degrades_instead_of_crashing() -> None:
     )
     corrupt_trace = msgspec.structs.replace(trace, joins=[*trace.joins, corrupt_join])
     graph = build_session_graph(corrupt_trace)  # must not raise
-    assert len(graph.joins) == 2  # the corrupt join was dropped, not crashed on
+    assert len(graph.joins) == 3  # the corrupt join was dropped, not crashed on
 
 
 def test_build_session_graph_is_hash_seed_independent() -> None:

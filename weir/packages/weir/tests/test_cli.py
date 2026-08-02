@@ -22,7 +22,7 @@ def test_gauge_on_degraded_trace_shows_remediation_and_exits_zero() -> None:
         main, ["gauge", str(_FIXTURES_DIR / "injection-exfil-benign.degraded.json")]
     )
     assert result.exit_code == 0
-    assert "evidentiary coverage: 50%" in result.output
+    assert "evidentiary coverage: 33%" in result.output
     assert "langchain" in result.output.lower()
 
 

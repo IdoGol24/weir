@@ -34,7 +34,7 @@ def test_red_report_shows_one_highlighted_finding_not_the_green_screen() -> None
     html = _render_for("injection-exfil.json")
     assert "0 verdict-grade findings" not in html
     assert 'class="finding"' in html
-    assert "#2" in html and "#3" in html
+    assert "#2" in html and "#6" in html
     assert "send_email" in html
 
 

@@ -35,6 +35,34 @@ def agent_fetches_tickets() -> StepSpec:
     )
 
 
+def agent_drafts_reply() -> StepSpec:
+    """An innocent intervening step (no tool call): the injection at the
+    ticket-fetch and the exfil at send_email need to be several steps apart
+    in the demo trace, or the finding's witness path looks like something a
+    per-call check could almost catch - the point is that weir tracks the
+    flow across the sequence, not just adjacent steps."""
+    return StepSpec(
+        kind="llm_call",
+        actor="agent",
+        content="Drafting a reply email summarizing the ticket status.",
+    )
+
+
+def agent_looks_up_contact() -> StepSpec:
+    return StepSpec(
+        kind="tool_call",
+        actor="agent",
+        tool_name="lookup_customer_contact",
+        args={"ticket_id_ref": "from-ticket"},
+    )
+
+
+def contact_confirmed_result() -> StepSpec:
+    return StepSpec(
+        kind="tool_result", actor="tool", content="Contact confirmed: user@acme.example"
+    )
+
+
 def agent_sends_email(body: str) -> StepSpec:
     return StepSpec(
         kind="tool_call",

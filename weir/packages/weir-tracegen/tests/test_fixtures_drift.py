@@ -37,6 +37,8 @@ def test_injection_exfil_benign_degraded_fixture_matches_committed() -> None:
     _assert_matches_committed(
         "injection-exfil-benign.degraded.json",
         render_fixture_json(
-            emit_degraded("injection-exfil-benign", seed=_DEMO_SEED, degrade_tool_call_index=1)
+            emit_degraded(
+                "injection-exfil-benign", seed=_DEMO_SEED, degrade_tool_call_indices=[1, 4]
+            )
         ),
     )

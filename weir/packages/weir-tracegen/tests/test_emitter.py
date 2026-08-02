@@ -41,7 +41,7 @@ def test_emit_is_hash_seed_independent() -> None:
 
 
 def test_emit_degraded_marks_node_and_empties_args() -> None:
-    trace = emit_degraded("injection-exfil-benign", seed=1, degrade_tool_call_index=1)
+    trace = emit_degraded("injection-exfil-benign", seed=1, degrade_tool_call_indices=[1])
     node = trace.nodes[1]
     assert node.degraded is True
     assert isinstance(node.payload, ToolCallPayload)
@@ -53,15 +53,22 @@ def test_emit_degraded_marks_node_and_empties_args() -> None:
     assert trace.joins == baseline.joins
 
 
+def test_emit_degraded_can_degrade_multiple_nodes() -> None:
+    trace = emit_degraded("injection-exfil-benign", seed=1, degrade_tool_call_indices=[1, 4])
+    assert trace.nodes[1].degraded is True
+    assert trace.nodes[4].degraded is True
+    assert trace.nodes[6].degraded is False  # send_email stays fully captured
+
+
 def test_emit_degraded_still_validates_against_schema() -> None:
-    trace = emit_degraded("injection-exfil-benign", seed=1, degrade_tool_call_index=1)
+    trace = emit_degraded("injection-exfil-benign", seed=1, degrade_tool_call_indices=[1, 4])
     data = encode_canonical_trace(trace)
     assert decode_canonical_trace(data) == trace
 
 
 def test_emit_degraded_rejects_non_tool_call_index() -> None:
     with pytest.raises(ValueError, match="not a tool_call"):
-        emit_degraded("injection-exfil-benign", seed=1, degrade_tool_call_index=0)
+        emit_degraded("injection-exfil-benign", seed=1, degrade_tool_call_indices=[0])
 
 
 def test_cli_emit_same_seed_byte_identical() -> None:
@@ -87,3 +94,24 @@ def test_cli_emit_degraded_variant() -> None:
     assert result.exit_code == 0
     trace = decode_canonical_trace(result.output)
     assert trace.nodes[1].degraded is True
+
+
+def test_cli_emit_degraded_variant_accepts_repeated_flag() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "emit",
+            "injection-exfil-benign",
+            "--seed",
+            "1",
+            "--degrade-index",
+            "1",
+            "--degrade-index",
+            "4",
+        ],
+    )
+    assert result.exit_code == 0
+    trace = decode_canonical_trace(result.output)
+    assert trace.nodes[1].degraded is True
+    assert trace.nodes[4].degraded is True

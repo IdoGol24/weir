@@ -60,7 +60,7 @@ def test_red_fixture_fires_exactly_one_verbatim_match_on_the_planted_iban() -> N
     assert len(tainted.verbatim_matches) == 1
     (match,) = tainted.verbatim_matches
     assert match.source_node_index == 2
-    assert match.sink_node_index == 3
+    assert match.sink_node_index == 6
     assert match.source_class == "financial_account_identifier"
     assert match.matched_value == _PLANTED_IBAN
 
@@ -124,7 +124,7 @@ def test_degraded_sink_excluded_from_verbatim_matching() -> None:
 
 def test_context_taint_reaches_session_end_from_the_injection_node() -> None:
     tainted = _tainted_from_fixture("injection-exfil.json")
-    assert set(tainted.context_tainted[2]) == {3, 4}
+    assert set(tainted.context_tainted[2]) == {3, 4, 5, 6, 7}
 
 
 def test_taint_engine_is_hash_seed_independent() -> None:

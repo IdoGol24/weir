@@ -37,7 +37,7 @@ def test_benign_ticket_result_yields_only_ticket_id_source_label() -> None:
 
 def test_sink_label_extracts_true_destination_not_tool_name() -> None:
     labeled = _label("injection-exfil.json")
-    (send_email_label,) = [label for label in labeled.sink_labels if label.node_index == 3]
+    (send_email_label,) = [label for label in labeled.sink_labels if label.node_index == 6]
     assert send_email_label.tool_name == "send_email"
     assert send_email_label.true_destination == "user@acme.example"
     assert send_email_label.true_destination != send_email_label.tool_name

@@ -14,15 +14,18 @@ def main() -> None:
 @click.option("--seed", type=int, required=True)
 @click.option(
     "--degrade-index",
+    "degrade_indices",
     type=int,
-    default=None,
-    help="Emit a partially-degraded variant: strip this tool_call node's args, mark it degraded.",
+    multiple=True,
+    help="Strip this tool_call node's args and mark it degraded. Repeatable.",
 )
-def emit_cmd(scenario_name: str, seed: int, degrade_index: int | None) -> None:
-    if degrade_index is None:
+def emit_cmd(scenario_name: str, seed: int, degrade_indices: tuple[int, ...]) -> None:
+    if not degrade_indices:
         trace = emit(scenario_name, seed=seed)
     else:
-        trace = emit_degraded(scenario_name, seed=seed, degrade_tool_call_index=degrade_index)
+        trace = emit_degraded(
+            scenario_name, seed=seed, degrade_tool_call_indices=list(degrade_indices)
+        )
     click.echo(encode_canonical_trace(trace).decode())
 
 

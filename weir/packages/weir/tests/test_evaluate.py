@@ -33,9 +33,9 @@ def test_red_fixture_end_to_end_produces_one_verdict_grade_finding() -> None:
     (finding,) = _end_to_end_findings("injection-exfil.json")
     assert finding.rule_id == "injection-exfil-to-outbound-sink"
     assert finding.source_node_index == 2
-    assert finding.sink_node_index == 3
+    assert finding.sink_node_index == 6
     assert finding.matched_value == _PLANTED_IBAN
-    assert finding.witness_path == [2, 3]
+    assert finding.witness_path == [2, 3, 4, 5, 6]
     assert finding.is_verdict_grade is True
 
 

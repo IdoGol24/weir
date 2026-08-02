@@ -100,20 +100,28 @@ def emit(name: str, *, seed: int) -> CanonicalTrace:
     return emit_scenario(instantiate(name, seed=seed))
 
 
-def emit_degraded(name: str, *, seed: int, degrade_tool_call_index: int) -> CanonicalTrace:
-    """A generation-parameter variation of `emit`, not a new emitter (per the
-    demo-slice doc's L8 notes): strips one tool_call node's args and marks it
-    `degraded:true`, simulating a real-world payload-capture gap. Feeds the
-    L13 gauge demo's partial-coverage beat."""
-    trace = emit(name, seed=seed)
-    target = trace.nodes[degrade_tool_call_index]
+def _degrade_node(trace: CanonicalTrace, index: int) -> CanonicalTrace:
+    target = trace.nodes[index]
     if not isinstance(target.payload, ToolCallPayload):
-        raise ValueError(
-            f"node at index {degrade_tool_call_index} is not a tool_call "
-            f"(kind={target.kind!r})"
-        )
+        raise ValueError(f"node at index {index} is not a tool_call (kind={target.kind!r})")
     degraded_payload = msgspec.structs.replace(target.payload, args={})
     degraded_node = msgspec.structs.replace(target, payload=degraded_payload, degraded=True)
     nodes = list(trace.nodes)
-    nodes[degrade_tool_call_index] = degraded_node
+    nodes[index] = degraded_node
     return msgspec.structs.replace(trace, nodes=nodes)
+
+
+def emit_degraded(
+    name: str, *, seed: int, degrade_tool_call_indices: list[int]
+) -> CanonicalTrace:
+    """A generation-parameter variation of `emit`, not a new emitter (per the
+    demo-slice doc's L8 notes): strips the given tool_call nodes' args and
+    marks them `degraded:true`, simulating a real-world payload-capture gap.
+    Feeds the L13 gauge demo's partial-coverage beat - kept as its own
+    dedicated fixture, never the red/green scan pair, so the coverage
+    number and the finding/no-finding contrast don't collide (see
+    injection_exfil.py's module docstring)."""
+    trace = emit(name, seed=seed)
+    for index in degrade_tool_call_indices:
+        trace = _degrade_node(trace, index)
+    return trace
