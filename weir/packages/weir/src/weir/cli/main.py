@@ -1,12 +1,12 @@
 """Minimal CLI surface (L18): `weir gauge` and `weir scan` only.
 
-Thin argument parsing over the pure pipeline functions — no logic of its
+Thin argument parsing over the pure pipeline functions - no logic of its
 own. `weir test`/`validate`/`verify`/`feedback`/`rules list`/`events import`
 are all deferred (not on the demo path, per the demo-slice doc's L18 notes).
 
 A `--mode verbatim|context` scan flag is NOT exposed here: the one bundled
 rule (L11) is verbatim-only, and no context-mode finding path exists yet in
-the evaluator (L16) — adding the flag without real behavior behind it would
+the evaluator (L16) - adding the flag without real behavior behind it would
 imply a capability this slice doesn't have. Revisit once a context-mode
 rule exists.
 """

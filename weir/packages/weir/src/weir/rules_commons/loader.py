@@ -1,7 +1,7 @@
 """Rule loader (C2), local/unsigned path only (L11).
 
 Provenance-mandatory and fixtures-required rejection gates, and signed-bundle
-verification, are deferred (execution-plan L11-full / L32) — a demo rule
+verification, are deferred (execution-plan L11-full / L32) - a demo rule
 only needs to load and evaluate, not pass the commons contribution gate.
 Every rule is a data file loaded from disk; none are ever fabricated in code
 (constitution #4).
@@ -23,6 +23,6 @@ def load_rules(rules_dir: Path | None = None) -> list[RuleSpec]:
     rules = [
         msgspec.json.decode(path.read_bytes(), type=RuleSpec) for path in directory.glob("*.json")
     ]
-    # Stable global ordering (C2) — never the filesystem's own iteration
+    # Stable global ordering (C2) - never the filesystem's own iteration
     # order, which isn't guaranteed deterministic across platforms.
     return sorted(rules, key=lambda r: r.id)

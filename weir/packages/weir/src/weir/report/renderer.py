@@ -1,10 +1,10 @@
-"""HTML reporter (L17, R7.1/R7.5/R7.6, G4/G5) — the visible payoff.
+"""HTML reporter (L17, R7.1/R7.5/R7.6, G4/G5) - the visible payoff.
 
 Single self-contained HTML file (inline CSS, no external assets, no JS
 needed for this slice) so it opens anywhere. Masking is simple truncation
-(G4 spirit) — no §8 witness commitments/salts/digests (M2/L22). No SARIF or
+(G4 spirit) - no §8 witness commitments/salts/digests (M2/L22). No SARIF or
 JSON evidence-pack output (L21/L22). Non-verdict-grade findings render in a
-visually distinct review queue, never mixed with verdict-grade (R7.1) —
+visually distinct review queue, never mixed with verdict-grade (R7.1) -
 this slice's single rule never produces one, but the structure is real, not
 a stub. The green state (R7.6) is a designed screen, not a blank page.
 """
@@ -21,11 +21,13 @@ from weir.report.lexicon import find_forbidden_lexicon
 from weir.rules_commons import RuleSpec
 from weir.schema.trace import ToolCallPayload, TraceNode
 
-_TEMPLATE = jinja2.Environment(autoescape=True).from_string(REPORT_TEMPLATE)
+_TEMPLATE = jinja2.Environment(
+    autoescape=True, trim_blocks=True, lstrip_blocks=True
+).from_string(REPORT_TEMPLATE)
 
 
 def mask(value: str) -> str:
-    """Simple truncation masking (G4 spirit) — not a §8 commitment scheme."""
+    """Simple truncation masking (G4 spirit) - not a §8 commitment scheme."""
     if len(value) <= 8:
         return value[:2] + "…"
     return f"{value[:4]}…{value[-4:]}"
@@ -40,19 +42,16 @@ def _node_summary(node: TraceNode) -> str:
     return f"{node.kind.value}: {shown}"
 
 
-def _finding_sentence(finding: Finding, rule: RuleSpec | None, graph: SessionGraph) -> str:
+def _finding_sentence(finding: Finding, graph: SessionGraph) -> str:
     sink_node = graph.nodes[finding.sink_node_index]
     sink_tool = (
         sink_node.payload.tool_name if isinstance(sink_node.payload, ToolCallPayload) else "?"
     )
-    sentence = (
+    return (
         f"Untrusted content at step #{finding.source_node_index} flows verbatim to "
         f"{sink_tool} at step #{finding.sink_node_index}, carrying a sensitive value: "
         f"{mask(finding.matched_value)}."
     )
-    if rule is not None:
-        sentence += f" ({rule.description})"
-    return sentence
 
 
 def render_html_report(
@@ -68,8 +67,10 @@ def render_html_report(
     review_queue = [f for f in findings if not f.is_verdict_grade]
 
     def _render(finding: Finding) -> dict[str, object]:
+        rule = rules_by_id.get(finding.rule_id)
         return {
-            "sentence": _finding_sentence(finding, rules_by_id.get(finding.rule_id), graph),
+            "sentence": _finding_sentence(finding, graph),
+            "rule_caption": f"rule: {finding.rule_id} v{rule.version}" if rule else None,
             "witness_steps": [
                 {
                     "index": i,

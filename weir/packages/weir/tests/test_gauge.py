@@ -25,7 +25,7 @@ def test_full_capture_red_fixture_reports_full_coverage() -> None:
 
 
 def test_full_capture_fixture_shows_no_remediation_even_with_known_framework() -> None:
-    # A remediation line is remediation, not commentary — showing "arguments
+    # A remediation line is remediation, not commentary - showing "arguments
     # not captured" advice on a fully-captured trace would be misleading.
     report = _gauge_for("injection-exfil.json", detected_framework="langchain")
     assert report.remediation_line is None

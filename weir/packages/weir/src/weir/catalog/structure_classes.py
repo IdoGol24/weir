@@ -1,8 +1,8 @@
 """R5.9 structure-class matchers (catalog data, fixture-gated).
 
-For this demo slice only the `iban` class is implemented — the real ISO
+For this demo slice only the `iban` class is implemented - the real ISO
 13616 signature (2-alpha country + 2 check digits + country-length BBAN),
-verified by mod-97 checksum, not a loose regex — so no incidental digit
+verified by mod-97 checksum, not a loose regex - so no incidental digit
 string in either fixture accidentally clears it.
 """
 
@@ -14,7 +14,7 @@ from collections.abc import Callable
 _IBAN_SHAPE = re.compile(r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{1,30}$")
 
 # ISO 3166-1 alpha-2 country -> registered IBAN length. Adding a country is a
-# catalog-data edit, not a code change (constitution #4) — the demo only
+# catalog-data edit, not a code change (constitution #4) - the demo only
 # needs DE, the locked planted secret's country.
 _IBAN_LENGTH_BY_COUNTRY: dict[str, int] = {
     "DE": 22,

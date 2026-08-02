@@ -1,4 +1,4 @@
-"""TaintedGraph data model — an internal pipeline artifact (§3.3), minimal
+"""TaintedGraph data model - an internal pipeline artifact (§3.3), minimal
 and inline for this demo slice, same treatment as SessionGraph (L12) and
 LabeledGraph (L14)."""
 

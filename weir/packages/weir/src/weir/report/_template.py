@@ -8,7 +8,7 @@ REPORT_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>weir scan report — {{ scenario_name }}</title>
+<title>weir scan report - {{ scenario_name }}</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem;
          color: #1a1a1a; background: #fafafa; }
@@ -20,7 +20,8 @@ REPORT_TEMPLATE = """<!doctype html>
                   padding: 1.5rem; font-size: 1.05rem; }
   .finding { border: 1px solid #e6b6b6; background: #fdf2f2; border-radius: 8px;
              padding: 1rem 1.25rem; margin-bottom: 1rem; }
-  .finding .sentence { font-size: 1.05rem; margin-bottom: 0.75rem; }
+  .finding .sentence { font-size: 1.05rem; margin-bottom: 0.5rem; }
+  .finding .rule-caption { font-size: 0.8rem; color: #888; margin-bottom: 0.75rem; }
   .witness { display: flex; flex-wrap: wrap; gap: 0.5rem; }
   .witness .step { border: 1px solid #ccc; border-radius: 6px; padding: 0.4rem 0.6rem;
                     font-size: 0.85rem; background: #fff; }
@@ -32,10 +33,10 @@ REPORT_TEMPLATE = """<!doctype html>
 </style>
 </head>
 <body>
-<h1>weir scan — {{ scenario_name }}</h1>
+<h1>weir scan - {{ scenario_name }}</h1>
 
 <div class="gauge">
-  <div class="headline">evidentiary coverage: {{ coverage_pct }}% — {{ steps_scanned }} steps
+  <div class="headline">evidentiary coverage: {{ coverage_pct }}% - {{ steps_scanned }} steps
     scanned, {{ rules_evaluated }} rules evaluated, {{ arg_capture_pct }}% argument capture</div>
   {% if remediation_line %}
   <div class="remediation">{{ remediation_line }}</div>
@@ -46,6 +47,9 @@ REPORT_TEMPLATE = """<!doctype html>
   {% for f in verdict_grade_findings %}
   <div class="finding">
     <div class="sentence">{{ f.sentence }}</div>
+    {% if f.rule_caption %}
+    <div class="rule-caption">{{ f.rule_caption }}</div>
+    {% endif %}
     <div class="witness">
       {% for step in f.witness_steps %}
       <div class="step{% if step.highlighted %} highlight{% endif %}">
@@ -57,14 +61,14 @@ REPORT_TEMPLATE = """<!doctype html>
   {% endfor %}
 {% else %}
   <div class="green-screen">
-    0 verdict-grade findings — {{ steps_scanned }} steps scanned, {{ rules_evaluated }} rules
+    0 verdict-grade findings - {{ steps_scanned }} steps scanned, {{ rules_evaluated }} rules
     evaluated, {{ arg_capture_pct }}% argument capture
   </div>
 {% endif %}
 
 {% if review_queue %}
 <div class="review-queue">
-  <h2>review queue — context-mode, never a headline count</h2>
+  <h2>review queue - context-mode, never a headline count</h2>
   {% for f in review_queue %}
   <div>{{ f.sentence }}</div>
   {% endfor %}

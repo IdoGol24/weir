@@ -1,4 +1,4 @@
-"""§6: fixtures are committed, never hand-edited — CI regenerates from seeds
+"""§6: fixtures are committed, never hand-edited - CI regenerates from seeds
 and fails on any diff. This test IS that regeneration check for the demo's
 gold corpus (fixtures/*.json, committed at repo root)."""
 
@@ -14,7 +14,7 @@ _DEMO_SEED = 1
 def _assert_matches_committed(filename: str, rendered: str) -> None:
     committed = (_FIXTURES_DIR / filename).read_text()
     assert rendered == committed, (
-        f"fixtures/{filename} is stale — regenerate it from weir_tracegen.emitter "
+        f"fixtures/{filename} is stale - regenerate it from weir_tracegen.emitter "
         f"(seed={_DEMO_SEED}); fixtures are never hand-edited (§6)"
     )
 

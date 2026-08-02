@@ -2,7 +2,7 @@
 findings, each with a minimal witness path and the four-clause §7
 verdict-grade check:
 
-  1. produced in verbatim mode (B2)              — always true here; only
+  1. produced in verbatim mode (B2)              - always true here; only
                                                      VerbatimMatch objects
                                                      reach this loop.
   2. every join on the witness path is
@@ -13,7 +13,7 @@ verdict-grade check:
 This is the inline four-clause check the demo-slice doc calls for. The full
 R6.9 grade-authoring guard, R6.8's shadow-stage segregation beyond this
 check, R6.7 event predicates, and a general rule-expression language are all
-out of scope for this slice — our RuleSpec has no rule-authored expression
+out of scope for this slice - our RuleSpec has no rule-authored expression
 to interpret at all, so totality (G2: no recursion, no unbounded loops, no
 eval) holds trivially: this evaluator iterates fixed-size inputs (rules x
 verbatim matches) and does one bounded BFS per match.

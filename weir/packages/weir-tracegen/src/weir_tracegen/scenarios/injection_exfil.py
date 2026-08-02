@@ -1,7 +1,7 @@
-"""injection-exfil / injection-exfil-benign — the demo's red/green pair.
+"""injection-exfil / injection-exfil-benign - the demo's red/green pair.
 
 Both scenarios share the same opening (user asks for a ticket summary, agent
-fetches tickets) and the same negative-control numeral in the ticket body —
+fetches tickets) and the same negative-control numeral in the ticket body -
 given the same seed, both draw it as their first (and only) RNG call, so it
 matches across the pair. They diverge only in whether the untrusted ticket
 content carries a prompt injection, and whether that injection's target value

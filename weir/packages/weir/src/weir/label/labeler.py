@@ -2,10 +2,10 @@
 
 Pure, order-independent (purity core, constitution #2; enforced by the
 import-linter contract). Source labels use the catalog's content-pattern,
-which is deliberately loose (see weir.catalog.SourceSpec) — R5.9 eligibility
+which is deliberately loose (see weir.catalog.SourceSpec) - R5.9 eligibility
 filtering happens downstream in the taint engine (L15), not here. Sink
 labels extract the true destination via recursive descent over (possibly
-nested) tool_call args, keyed by the catalog's destination_arg_keys — never
+nested) tool_call args, keyed by the catalog's destination_arg_keys - never
 the tool name itself.
 
 Guard satisfaction (R4.1-4.5) is deferred: no guard-bearing scenario exists

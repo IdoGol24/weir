@@ -1,6 +1,6 @@
 """G5 language lint (minimal, inline): the forbidden lexicon check applied
 directly to a rendered report. The full `weir validate --templates` linter
-(L24, checking all shipped templates generically) is deferred to M2 — this
+(L24, checking all shipped templates generically) is deferred to M2 - this
 is just enough to prove L17's own output stays honest (constitution #9)."""
 
 from __future__ import annotations

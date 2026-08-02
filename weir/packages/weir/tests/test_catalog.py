@@ -31,7 +31,7 @@ def test_bare_numeral_is_not_iban_structured() -> None:
 
 def test_non_de_iban_shape_without_registered_length_is_rejected() -> None:
     # GB IBANs are 22 chars too but have a different registered length in
-    # general (this demo only registers DE) — an unregistered country must
+    # general (this demo only registers DE) - an unregistered country must
     # never silently pass.
     assert is_iban_structured("GB29NWBK60161331926819") is False
 
@@ -45,7 +45,7 @@ def test_bare_numeral_fails_verbatim_eligibility_floor() -> None:
 
 
 def test_tampered_iban_fails_verbatim_eligibility_floor() -> None:
-    # Same length as a real IBAN (22 chars) — proves eligibility is keyed to
+    # Same length as a real IBAN (22 chars) - proves eligibility is keyed to
     # the `iban` structure class, not merely to a length threshold that a
     # tampered-but-long lookalike would clear by accident.
     tampered = "DE88370400440532013000"

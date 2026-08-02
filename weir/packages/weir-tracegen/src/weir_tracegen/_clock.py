@@ -1,6 +1,6 @@
 """Seeded deterministic clock (L6).
 
-Never reads the wall clock — `datetime.datetime.now`/`time.time` are
+Never reads the wall clock - `datetime.datetime.now`/`time.time` are
 ruff-banned repo-wide, including here. Timestamps are pure arithmetic from a
 fixed base instant plus an explicit step, so two clocks constructed the same
 way always produce the same tick sequence.

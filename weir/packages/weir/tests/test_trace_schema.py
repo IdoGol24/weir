@@ -59,7 +59,7 @@ def test_committed_json_schema_artifact_matches_generated() -> None:
     generated = canonical_trace_json_schema()
     committed = json.loads(_ARTIFACT_PATH.read_text())
     assert generated == committed, (
-        "packages/weir/schema_artifacts/canonical_trace.v1.schema.json is stale — "
+        "packages/weir/schema_artifacts/canonical_trace.v1.schema.json is stale - "
         "regenerate it from weir.schema.trace.canonical_trace_json_schema()"
     )
 

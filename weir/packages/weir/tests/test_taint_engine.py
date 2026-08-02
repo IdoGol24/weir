@@ -91,7 +91,7 @@ def test_synthetic_control_confirms_the_harness_can_produce_a_match() -> None:
 
 def test_bare_numeral_reaching_a_sink_is_still_ruled_ineligible() -> None:
     # THE critical R5.9 test: construct a case where a bare numeral DOES flow
-    # verbatim to a sink — without the eligibility floor this would fire a
+    # verbatim to a sink - without the eligibility floor this would fire a
     # false positive. It must not.
     labeled = _synthetic_labeled(
         source_content="Ticket #18134063 needs review",

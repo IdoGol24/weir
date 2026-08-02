@@ -1,4 +1,4 @@
-"""SessionGraph data model — an internal pipeline artifact (§3.3), not a
+"""SessionGraph data model - an internal pipeline artifact (§3.3), not a
 seam schema, so it isn't schema-versioned/exported the way CanonicalTrace is
 (the demo-slice doc's L3 note applies here too: minimal, inline)."""
 

@@ -2,7 +2,7 @@
 
 Runs a snippet of code twice, once per PYTHONHASHSEED value, and asserts the
 captured stdout is byte-identical. This is the repo's one reusable check for
-"identical inputs -> byte-identical output" (spec constitution #1, G1) —
+"identical inputs -> byte-identical output" (spec constitution #1, G1) -
 later layers (tracegen's --seed emitters, the engine's repeat-run fixture
 comparisons) call into this rather than reimplementing subprocess plumbing.
 """

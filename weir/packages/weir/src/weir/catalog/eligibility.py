@@ -1,6 +1,6 @@
 """R5.9 verbatim-eligibility check: applies a source class's floor (a named
 structure class, or a minimum length) to a candidate value. This is what the
-taint layer (L15) calls before it will count a match as verbatim — not the
+taint layer (L15) calls before it will count a match as verbatim - not the
 labeler's content-pattern, which is deliberately loose."""
 
 from __future__ import annotations

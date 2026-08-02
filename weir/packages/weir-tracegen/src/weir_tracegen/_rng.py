@@ -1,7 +1,7 @@
 """Seeded deterministic PRNG (L6).
 
 This is the one file in the repo where importing stdlib `random` is allowed
-(see the ruff per-file-ignore for this exact path) — everything here is
+(see the ruff per-file-ignore for this exact path) - everything here is
 driven by an explicit `seed`, never OS entropy or a global unseeded instance.
 """
 

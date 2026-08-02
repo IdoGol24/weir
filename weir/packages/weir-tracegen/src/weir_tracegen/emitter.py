@@ -1,6 +1,6 @@
 """Native Seam-1 emitter (L8, R1.1 path): ScenarioSpec -> validated CanonicalTrace.
 
-The only place scenario steps become schema-valid trace nodes — ids,
+The only place scenario steps become schema-valid trace nodes - ids,
 source_refs, and timestamps are assigned here, deterministically, from the L6
 seeded core. Skips the OTLP path entirely (execution-plan L25-27, out of
 scope for this demo slice).

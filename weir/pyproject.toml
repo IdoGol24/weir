@@ -18,10 +18,10 @@ src = ["packages/weir/src", "packages/weir-tracegen/src"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
-# Determinism guardrail (G1, constitution #1): nothing in this codebase — engine
-# or tracegen — may read the wall clock. The only sanctioned randomness is
+# Determinism guardrail (G1, constitution #1): nothing in this codebase - engine
+# or tracegen - may read the wall clock. The only sanctioned randomness is
 # render-time commitment salts (`secrets`, spec §8), which is out of scope for
-# this demo slice (no §8 commitments here — see the plan). `random` is banned
+# this demo slice (no §8 commitments here - see the plan). `random` is banned
 # repo-wide too; tracegen's seeded core is exempted below because it *is* the
 # one place a seeded `random.Random(seed)` is the deterministic PRNG (L6).
 [tool.ruff.lint.flake8-tidy-imports.banned-api]

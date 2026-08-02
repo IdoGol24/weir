@@ -1,7 +1,7 @@
 [project]
 name = "weir"
 version = "0.1.0"
-description = "weir — deterministic, post-hoc verification engine for AI-agent sessions"
+description = "weir - deterministic, post-hoc verification engine for AI-agent sessions"
 requires-python = ">=3.12"
 dependencies = [
     "msgspec>=0.18",

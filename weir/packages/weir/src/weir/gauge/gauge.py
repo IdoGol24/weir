@@ -1,12 +1,12 @@
 """Gauge (L13, R3.1-R3.5 + R3.10): SessionGraph + Catalog -> GaugeReport.
 
-Standalone (R3.5): needs no rules and no catalog customization — only the
+Standalone (R3.5): needs no rules and no catalog customization - only the
 bundled default catalog's remediation table (R3.4). Pure, over the graph
 built at L12; doesn't touch the labeler/taint/rule layers at all.
 
 R3.6-R3.9 threshold gates, CTA block, Fidelity Attestation seam, per-path
 breakdown, and R3.11 profile conformance are deferred per the demo-slice
-doc's L13 notes — this is the coverage-number opening beat only.
+doc's L13 notes - this is the coverage-number opening beat only.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def compute_gauge_report(
         ),
     )
 
-    # R3.4's line is remediation, not commentary — only surface it when
+    # R3.4's line is remediation, not commentary - only surface it when
     # there's an actual capture gap (inspectable < 100%). Showing "arguments
     # not captured" on a fully-captured trace would be actively misleading
     # (constitution #5 cuts both ways: silence isn't safety, but a spurious

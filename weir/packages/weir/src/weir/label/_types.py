@@ -1,4 +1,4 @@
-"""LabeledGraph data model — an internal pipeline artifact (§3.3), minimal
+"""LabeledGraph data model - an internal pipeline artifact (§3.3), minimal
 and inline for this demo slice, same treatment as SessionGraph (L12)."""
 
 from __future__ import annotations

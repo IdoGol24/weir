@@ -1,7 +1,7 @@
 [project]
 name = "weir-tracegen"
 version = "0.1.0"
-description = "weir-tracegen — dev-side deterministic synthetic trace generator (never runtime code)"
+description = "weir-tracegen - dev-side deterministic synthetic trace generator (never runtime code)"
 requires-python = ">=3.12"
 dependencies = [
     "weir",

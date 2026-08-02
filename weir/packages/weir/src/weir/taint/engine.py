@@ -2,7 +2,7 @@
 
 Pure, O(V+E) reachability per source label (R5.6). `verbatim` is the demo's
 only exercised mode (R5.8 default); context-mode propagation (R5.1) is
-implemented too — R5.7 requires degraded nodes still carry context taint —
+implemented too - R5.7 requires degraded nodes still carry context taint -
 but no rule in this slice consumes it.
 
 R5.9 is the demo, not a soundness footnote: a source value is verbatim-
@@ -14,7 +14,7 @@ produce a verbatim finding, no matter what it coincidentally resembles at a
 sink.
 
 Base canon only (R5.3): uppercase, strip whitespace/hyphens; match mode is
-substring containment (the base-canon default — canon v2's token-bounded N2
+substring containment (the base-canon default - canon v2's token-bounded N2
 mode is deferred to M2). Degraded nodes (R5.7) are excluded as either end of
 a verbatim match, but still included in context-taint reachability.
 """

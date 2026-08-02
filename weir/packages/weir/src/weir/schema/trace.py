@@ -2,7 +2,7 @@
 
 This is the one schema built in this demo slice; the full rule/catalog/report/
 gauge schema layer (execution-plan L4/L5) is deferred (see
-weir-demo-slice-L17-first.md, L3 notes) — later layers define their own
+weir-demo-slice-L17-first.md, L3 notes) - later layers define their own
 minimal inline structs as they're reached.
 """
 
@@ -36,7 +36,7 @@ class _PayloadBase(msgspec.Struct, frozen=True, forbid_unknown_fields=True, tag_
 
 class ToolCallPayload(_PayloadBase, frozen=True, tag="tool_call"):
     tool_name: str
-    # Opaque pass-through JSON — whatever the traced agent actually sent, not
+    # Opaque pass-through JSON - whatever the traced agent actually sent, not
     # a weir-authored numeric field, so §3.3's no-floats-at-seams rule doesn't
     # apply here. `object` accepts any decoded JSON value (dict/list/str/
     # int/float/bool/None); see json_schema_hook() for schema generation.
@@ -60,7 +60,7 @@ Payload = ToolCallPayload | ToolResultPayload | LlmCallPayload | UserInputPayloa
 
 class JoinRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Ties a tool_call node to its tool_result node (R1.4). `join_confidence`
-    is carried permanently — never discarded after joining — because it feeds
+    is carried permanently - never discarded after joining - because it feeds
     the §7 verdict-grade decision downstream."""
 
     tool_call_source_ref: str
@@ -82,7 +82,7 @@ class TraceNode(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     kind: NodeKind
     timestamp: str
     actor: str
-    # Native step identifier (span id / message id / event index) — R1.7. The
+    # Native step identifier (span id / message id / event index) - R1.7. The
     # stable join key for anything produced outside weir over the same trace.
     source_ref: str
     payload: Payload

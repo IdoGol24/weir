@@ -1,4 +1,4 @@
-"""Finding data model — an internal pipeline artifact (§3.3), minimal and
+"""Finding data model - an internal pipeline artifact (§3.3), minimal and
 inline for this demo slice. The full R7.4 evidence JSON (witnesses,
 commitments, join provenance, versions) is an M2 deliverable (L22); this is
 just enough for L17's reporter."""
