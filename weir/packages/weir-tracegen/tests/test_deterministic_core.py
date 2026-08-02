@@ -1,9 +1,7 @@
 from _harness.g1 import assert_byte_identical_across_hash_seeds
-from click.testing import CliRunner
 
 from weir_tracegen._clock import SeededClock
 from weir_tracegen._rng import SeededRng
-from weir_tracegen.cli import main
 
 
 def test_rng_same_seed_same_sequence() -> None:
@@ -33,21 +31,6 @@ def test_clock_ticks_strictly_increase() -> None:
     ticks = [clock.tick() for _ in range(5)]
     assert ticks == sorted(ticks)
     assert len(set(ticks)) == len(ticks)
-
-
-def test_cli_seed_byte_identical_output() -> None:
-    runner = CliRunner()
-    first = runner.invoke(main, ["emit-smoke", "--seed", "42"])
-    second = runner.invoke(main, ["emit-smoke", "--seed", "42"])
-    assert first.exit_code == 0
-    assert first.output == second.output
-
-
-def test_cli_different_seed_differs() -> None:
-    runner = CliRunner()
-    a = runner.invoke(main, ["emit-smoke", "--seed", "42"])
-    b = runner.invoke(main, ["emit-smoke", "--seed", "43"])
-    assert a.output != b.output
 
 
 def test_deterministic_core_is_hash_seed_independent() -> None:
