@@ -85,7 +85,7 @@
   "metadata": {
     "adapter_name": "native",
     "adapter_version": "0.1.0",
-    "framework_name": null,
-    "framework_version": null
+    "framework_name": "langchain",
+    "framework_version": "0.3"
   }
 }

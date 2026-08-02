@@ -30,6 +30,11 @@ from weir_tracegen.scenarios._types import ScenarioSpec, StepSpec
 
 ADAPTER_NAME = "native"
 ADAPTER_VERSION = "0.1.0"
+# R1.6: detected framework/version, so the L13 gauge demo has a real
+# framework to key its R3.4 remediation line off of. Matches the catalog's
+# bundled "langchain" remediation entry (weir.catalog.default).
+FRAMEWORK_NAME = "langchain"
+FRAMEWORK_VERSION = "0.3"
 
 _KIND_MAP = {
     "user_input": NodeKind.USER_INPUT,
@@ -82,7 +87,12 @@ def emit_scenario(spec: ScenarioSpec) -> CanonicalTrace:
         schema_version=SCHEMA_VERSION,
         nodes=nodes,
         joins=joins,
-        metadata=TraceMetadata(adapter_name=ADAPTER_NAME, adapter_version=ADAPTER_VERSION),
+        metadata=TraceMetadata(
+            adapter_name=ADAPTER_NAME,
+            adapter_version=ADAPTER_VERSION,
+            framework_name=FRAMEWORK_NAME,
+            framework_version=FRAMEWORK_VERSION,
+        ),
     )
 
 
