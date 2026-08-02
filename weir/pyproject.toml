@@ -41,6 +41,7 @@ pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "packages/weir/tests", "packages/weir-tracegen/tests"]
+pythonpath = ["tests"]
 
 [tool.importlinter]
 root_packages = ["weir"]
