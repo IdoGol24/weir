@@ -1,0 +1,266 @@
+{
+  "$defs": {
+    "CanonicalTrace": {
+      "additionalProperties": false,
+      "properties": {
+        "joins": {
+          "items": {
+            "$ref": "#/$defs/JoinRecord"
+          },
+          "type": "array"
+        },
+        "metadata": {
+          "$ref": "#/$defs/TraceMetadata"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/TraceNode"
+          },
+          "type": "array"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "nodes",
+        "joins",
+        "metadata"
+      ],
+      "title": "CanonicalTrace",
+      "type": "object"
+    },
+    "JoinConfidence": {
+      "description": "Join precedence per R1.4: explicit id > parent/child nesting > heuristic.",
+      "enum": [
+        "explicit",
+        "heuristic",
+        "nested"
+      ],
+      "title": "JoinConfidence"
+    },
+    "JoinRecord": {
+      "additionalProperties": false,
+      "description": "Ties a tool_call node to its tool_result node (R1.4). `join_confidence`\n    is carried permanently \u2014 never discarded after joining \u2014 because it feeds\n    the \u00a77 verdict-grade decision downstream.",
+      "properties": {
+        "join_confidence": {
+          "$ref": "#/$defs/JoinConfidence"
+        },
+        "tool_call_source_ref": {
+          "type": "string"
+        },
+        "tool_result_source_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_call_source_ref",
+        "tool_result_source_ref",
+        "join_confidence"
+      ],
+      "title": "JoinRecord",
+      "type": "object"
+    },
+    "LlmCallPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "llm_call"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "content"
+      ],
+      "title": "LlmCallPayload",
+      "type": "object"
+    },
+    "NodeKind": {
+      "enum": [
+        "llm_call",
+        "tool_call",
+        "tool_result",
+        "user_input"
+      ],
+      "title": "NodeKind"
+    },
+    "ToolCallPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "additionalProperties": {
+            "type": [
+              "null",
+              "boolean",
+              "integer",
+              "number",
+              "string",
+              "array",
+              "object"
+            ]
+          },
+          "type": "object"
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "tool_call"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "tool_name",
+        "args"
+      ],
+      "title": "ToolCallPayload",
+      "type": "object"
+    },
+    "ToolResultPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "tool_result"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "content"
+      ],
+      "title": "ToolResultPayload",
+      "type": "object"
+    },
+    "TraceMetadata": {
+      "additionalProperties": false,
+      "description": "R1.6: adapter + detected framework versions, so the Gauge can flag drift.",
+      "properties": {
+        "adapter_name": {
+          "type": "string"
+        },
+        "adapter_version": {
+          "type": "string"
+        },
+        "framework_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "framework_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "adapter_name",
+        "adapter_version"
+      ],
+      "title": "TraceMetadata",
+      "type": "object"
+    },
+    "TraceNode": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "type": "string"
+        },
+        "degraded": {
+          "default": false,
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/NodeKind"
+        },
+        "payload": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolCallPayload"
+            },
+            {
+              "$ref": "#/$defs/ToolResultPayload"
+            },
+            {
+              "$ref": "#/$defs/LlmCallPayload"
+            },
+            {
+              "$ref": "#/$defs/UserInputPayload"
+            }
+          ],
+          "discriminator": {
+            "mapping": {
+              "llm_call": "#/$defs/LlmCallPayload",
+              "tool_call": "#/$defs/ToolCallPayload",
+              "tool_result": "#/$defs/ToolResultPayload",
+              "user_input": "#/$defs/UserInputPayload"
+            },
+            "propertyName": "type"
+          }
+        },
+        "source_ref": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "timestamp",
+        "actor",
+        "source_ref",
+        "payload"
+      ],
+      "title": "TraceNode",
+      "type": "object"
+    },
+    "UserInputPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "user_input"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "content"
+      ],
+      "title": "UserInputPayload",
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/CanonicalTrace"
+}
