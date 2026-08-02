@@ -1,0 +1,131 @@
+import json
+from pathlib import Path
+
+from click.testing import CliRunner
+
+from weir.cli.main import main
+
+_FIXTURES_DIR = Path(__file__).parents[3] / "fixtures"
+_PLANTED_IBAN = "DE89370400440532013000"
+
+
+def test_gauge_on_full_capture_trace_exits_zero() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["gauge", str(_FIXTURES_DIR / "injection-exfil.json")])
+    assert result.exit_code == 0
+    assert "evidentiary coverage: 100%" in result.output
+
+
+def test_gauge_on_degraded_trace_shows_remediation_and_exits_zero() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["gauge", str(_FIXTURES_DIR / "injection-exfil-benign.degraded.json")]
+    )
+    assert result.exit_code == 0
+    assert "evidentiary coverage: 50%" in result.output
+    assert "langchain" in result.output.lower()
+
+
+def test_gauge_json_output_is_valid_json_with_expected_fields() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["gauge", "--json", str(_FIXTURES_DIR / "injection-exfil.json")]
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["evidentiary_coverage_bp"] == 10_000
+
+
+def test_gauge_on_malformed_trace_exits_two() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("bad.json").write_text("not json at all")
+        result = runner.invoke(main, ["gauge", "bad.json"])
+    assert result.exit_code == 2
+
+
+def test_gauge_on_missing_file_exits_two() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["gauge", "does-not-exist.json"])
+    assert result.exit_code == 2
+
+
+def test_scan_red_trace_exits_one_and_reports_the_finding() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            main,
+            ["scan", str(_FIXTURES_DIR / "injection-exfil.json"), "--report", "red.html"],
+        )
+        assert result.exit_code == 1
+        assert "1 verdict-grade finding" in result.output
+        html = Path("red.html").read_text(encoding="utf-8")
+    assert "0 verdict-grade findings" not in html
+    assert _PLANTED_IBAN not in html  # masked, never plaintext
+
+
+def test_scan_benign_trace_exits_zero_and_shows_green_screen() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            main,
+            [
+                "scan",
+                str(_FIXTURES_DIR / "injection-exfil-benign.json"),
+                "--report",
+                "green.html",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "0 verdict-grade findings" in result.output
+        html = Path("green.html").read_text(encoding="utf-8")
+    assert "0 verdict-grade findings" in html
+
+
+def test_scan_on_malformed_trace_exits_two() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("bad.json").write_text("{}")
+        result = runner.invoke(main, ["scan", "bad.json"])
+    assert result.exit_code == 2
+
+
+def test_scan_without_report_flag_does_not_write_a_file() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(main, ["scan", str(_FIXTURES_DIR / "injection-exfil.json")])
+        assert result.exit_code == 1
+        assert not Path("report.html").exists()
+
+
+def test_the_three_demo_commands_run_end_to_end() -> None:
+    """The plan's literal done-definition, run live via the CLI."""
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        gauge_result = runner.invoke(
+            main, ["gauge", str(_FIXTURES_DIR / "injection-exfil-benign.degraded.json")]
+        )
+        assert gauge_result.exit_code == 0
+        assert "evidentiary coverage:" in gauge_result.output
+        assert "langchain" in gauge_result.output.lower()
+
+        red_result = runner.invoke(
+            main,
+            ["scan", str(_FIXTURES_DIR / "injection-exfil.json"), "--report", "red.html"],
+        )
+        assert red_result.exit_code == 1
+        red_html = Path("red.html").read_text(encoding="utf-8")
+        assert "0 verdict-grade findings" not in red_html
+
+        green_result = runner.invoke(
+            main,
+            [
+                "scan",
+                str(_FIXTURES_DIR / "injection-exfil-benign.json"),
+                "--report",
+                "green.html",
+            ],
+        )
+        assert green_result.exit_code == 0
+        green_html = Path("green.html").read_text(encoding="utf-8")
+        assert "0 verdict-grade findings" in green_html
