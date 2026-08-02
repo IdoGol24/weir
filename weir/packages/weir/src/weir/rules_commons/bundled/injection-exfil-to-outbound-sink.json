@@ -1,0 +1,9 @@
+{
+  "id": "injection-exfil-to-outbound-sink",
+  "version": "1.0.0",
+  "stage": "active",
+  "description": "Untrusted content reaches an outbound sink verbatim, carrying a source-class-eligible sensitive value (R5.9).",
+  "source_class": "financial_account_identifier",
+  "sink_tool_name": "send_email",
+  "mode": "verbatim"
+}
