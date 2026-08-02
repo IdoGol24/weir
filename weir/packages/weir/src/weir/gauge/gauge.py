@@ -64,8 +64,16 @@ def compute_gauge_report(
         ),
     )
 
+    # R3.4's line is remediation, not commentary — only surface it when
+    # there's an actual capture gap (inspectable < 100%). Showing "arguments
+    # not captured" on a fully-captured trace would be actively misleading
+    # (constitution #5 cuts both ways: silence isn't safety, but a spurious
+    # remediation isn't honest either).
+    has_capture_gap = _basis_points(inspectable_count, total) < _BASIS_POINTS_SCALE
     remediation_line = (
-        catalog.remediations.get(detected_framework) if detected_framework else None
+        catalog.remediations.get(detected_framework)
+        if detected_framework and has_capture_gap
+        else None
     )
 
     return GaugeReport(
