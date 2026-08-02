@@ -1,0 +1,65 @@
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "pyright>=1.1",
+    "pytest>=8",
+    "hypothesis>=6",
+    "import-linter>=2",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["packages/weir/src", "packages/weir-tracegen/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+# Determinism guardrail (G1, constitution #1): nothing in this codebase — engine
+# or tracegen — may read the wall clock. The only sanctioned randomness is
+# render-time commitment salts (`secrets`, spec §8), which is out of scope for
+# this demo slice (no §8 commitments here — see the plan). `random` is banned
+# repo-wide too; tracegen's seeded core is exempted below because it *is* the
+# one place a seeded `random.Random(seed)` is the deterministic PRNG (L6).
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"datetime.datetime.now" = { msg = "Determinism (G1): no wall-clock reads anywhere. Timestamps come from the trace or tracegen's seeded clock." }
+"time.time" = { msg = "Determinism (G1): no wall-clock reads anywhere." }
+"time.time_ns" = { msg = "Determinism (G1): no wall-clock reads anywhere." }
+"random" = { msg = "Determinism (G1): no unseeded randomness. tracegen's seeded core (L6) is the one exempted module." }
+
+[tool.ruff.lint.per-file-ignores]
+# The one place a seeded `random.Random(seed)` is legitimate (L6 deterministic core).
+"packages/weir-tracegen/src/weir_tracegen/_rng.py" = ["TID251"]
+
+[tool.pyright]
+include = ["packages/weir/src", "packages/weir-tracegen/src", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages/weir/tests", "packages/weir-tracegen/tests"]
+
+[tool.importlinter]
+root_packages = ["weir"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Analysis-path purity: no I/O or CLI in the pure core"
+type = "forbidden"
+source_modules = [
+    "weir.graph",
+    "weir.gauge",
+    "weir.label",
+    "weir.taint",
+    "weir.evaluate",
+]
+forbidden_modules = ["weir.cli", "weir.adapters"]
+
+[[tool.importlinter.contracts]]
+name = "tracegen is dev-side only: the engine never imports it"
+type = "forbidden"
+source_modules = ["weir"]
+forbidden_modules = ["weir_tracegen"]
