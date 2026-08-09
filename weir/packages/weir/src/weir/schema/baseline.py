@@ -69,10 +69,17 @@ class ScenarioBaseline(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     # reach n_runs.
     observation_counts: dict[str, int]
     source_trace_digests: list[str]
+    # Identity digests admitted by `weir diff --accept` rather than observed
+    # during capture (spec section 5). They deliberately carry NO observation
+    # count: they were seen in 0 of the N runs, and inventing a count would
+    # corrupt the flap diagnostic that counts exist for.
+    accepted: list[str] = []
 
     def __post_init__(self) -> None:
         if self.n_runs < 1:
             raise ValueError("n_runs must be at least 1")
+        if len(self.source_trace_digests) != self.n_runs:
+            raise ValueError("source_trace_digests must hold exactly n_runs entries")
         _check_fact_list("required", self.required)
         _check_fact_list("allowed", self.allowed)
         if self.source_trace_digests != sorted(self.source_trace_digests):
@@ -81,6 +88,10 @@ class ScenarioBaseline(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
             _require_digest("source_trace_digests entry", digest)
         for digest in self.observation_counts:
             _require_digest("observation_counts key", digest)
+        if self.accepted != sorted(set(self.accepted)):
+            raise ValueError("accepted must be sorted and duplicate-free")
+        for digest in self.accepted:
+            _require_digest("accepted entry", digest)
 
 
 class BaselineMetadata(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -126,22 +137,33 @@ def validate_flow_baseline(baseline: FlowBaseline) -> None:
     """Cross-field invariants. Field-level ones live in __post_init__ so they
     cannot be bypassed at all; these need more than one field to check.
 
-    - observation counts cover exactly the allowed identities, each in [1, n_runs]
+    - accepted identities must all be present in the allowed set
+    - observation counts cover exactly the captured allowed identities (every
+      allowed identity except the accepted ones, which carry no count)
     - every required fact appears in allowed as the SAME fact, byte for byte
       (spec 2.3's merge rules yield exactly one fact per identity, so identity
       containment alone would let required and allowed make contradictory
       attribute claims about one flow)
-    - every required fact was observed in all of that scenario's n_runs
+    - every required fact was observed in all of that scenario's n_runs,
+      except a required fact that was accepted rather than captured - that is
+      an operator policy assertion, not an observation
     """
     for scenario in baseline.scenarios:
         counts = scenario.observation_counts
         n_runs = scenario.n_runs
         allowed_identities = {identity_digest(f) for f in scenario.allowed}
         allowed_objects = {canonical_fact_bytes(f) for f in scenario.allowed}
-        if set(counts) != allowed_identities:
+        accepted = set(scenario.accepted)
+        if not accepted <= allowed_identities:
+            raise ValueError(
+                f"scenario {scenario.scenario_id!r}: accepted identities must all "
+                "be present in the allowed set"
+            )
+        if set(counts) != allowed_identities - accepted:
             raise ValueError(
                 f"scenario {scenario.scenario_id!r}: observation_counts must cover "
-                "exactly the allowed identities"
+                "exactly the captured allowed identities (every allowed identity "
+                "except the accepted ones)"
             )
         for digest, count in counts.items():
             if not 1 <= count <= n_runs:
@@ -155,11 +177,16 @@ def validate_flow_baseline(baseline: FlowBaseline) -> None:
                     f"scenario {scenario.scenario_id!r}: required fact "
                     f"{identity_digest(fact)} is not in the allowed set"
                 )
-            if counts.get(identity_digest(fact)) != n_runs:
+            identity = identity_digest(fact)
+            if identity in accepted:
+                # Promoted by `--require` (spec section 5). That is an operator
+                # policy assertion, not an observation, so the observed-in-all-
+                # runs rule does not apply to it.
+                continue
+            if counts.get(identity) != n_runs:
                 raise ValueError(
                     f"scenario {scenario.scenario_id!r}: required fact "
-                    f"{identity_digest(fact)} must be observed in all runs "
-                    f"(n_runs={n_runs})"
+                    f"{identity} must be observed in all runs (n_runs={n_runs})"
                 )
 
 

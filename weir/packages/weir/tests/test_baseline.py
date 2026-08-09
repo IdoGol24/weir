@@ -44,11 +44,18 @@ def _baseline(
     allowed: list[FlowFact] | None = None,
     counts: dict[str, int] | None = None,
     n_runs: int = 5,
+    accepted: list[str] | None = None,
 ) -> FlowBaseline:
     fact = _fact()
     required = [fact] if required is None else required
     allowed = [fact] if allowed is None else allowed
-    counts = {identity_digest(f): n_runs for f in allowed} if counts is None else counts
+    accepted = [] if accepted is None else accepted
+    if counts is None:
+        counts = {
+            identity_digest(f): n_runs
+            for f in allowed
+            if identity_digest(f) not in set(accepted)
+        }
     return FlowBaseline(
         fact_schema_version=FACT_SCHEMA_VERSION,
         scenarios=[
@@ -59,7 +66,8 @@ def _baseline(
                 allowed=allowed,
                 observations=BaselineObservations(uncataloged_tools_on_tainted_paths=[]),
                 observation_counts=counts,
-                source_trace_digests=["b" * 64],
+                source_trace_digests=[f"{i:064x}" for i in range(n_runs)],
+                accepted=sorted(accepted),
             )
         ],
         metadata=BaselineMetadata(weir_version="0.1.0", catalog_digest="a" * 64),
@@ -113,17 +121,6 @@ def test_decode_rejects_unknown_fields() -> None:
         decode_flow_baseline(b'{"bogus": true}')
 
 
-def test_counts_key_on_identity_not_content() -> None:
-    # Why counts key on identity rather than the full fact digest: the same
-    # flow observed with a different witness in a different run merges to one
-    # fact, and its count must still reach n_runs. Content-keyed counts would
-    # split it into two entries of 1 and the required check would never fire.
-    fact = _fact()
-    variant = _fact(witness=["n-9", "n-10"])
-    assert identity_digest(fact) == identity_digest(variant)
-    assert canonical_fact_bytes(fact) != canonical_fact_bytes(variant)
-
-
 def test_required_must_match_allowed_byte_for_byte() -> None:
     fact = _fact()
     variant = _fact(witness=["n-9", "n-10"])
@@ -139,9 +136,12 @@ def test_fact_lists_must_be_sorted() -> None:
 
 
 def test_fact_lists_reject_duplicate_identities() -> None:
-    fact = _fact()
+    # Same identity, DIFFERENT content: the state that used to be legal and is
+    # exactly what identity-keyed uniqueness exists to forbid. Sorted first so
+    # the order check cannot fire before the uniqueness check.
+    pair = sorted([_fact(), _fact(witness=["n-9", "n-10"])], key=canonical_fact_bytes)
     with pytest.raises(ValueError, match="one fact per identity"):
-        _baseline(required=[], allowed=[fact, fact])
+        _baseline(required=[], allowed=pair)
 
 
 def test_digest_is_independent_of_capture_order() -> None:
@@ -196,3 +196,47 @@ def test_decode_validates_cross_field_invariants() -> None:
     raw = canonical_baseline_bytes(bad)
     with pytest.raises(ValueError, match="all runs"):
         decode_flow_baseline(raw)
+
+
+def test_accepted_fact_needs_no_observation_count() -> None:
+    # spec section 5: --accept admits a fact observed in 0 of the N capture
+    # runs. Inventing a count for it would corrupt the flap diagnostic that
+    # counts exist for, so accepted identities are exempt instead.
+    captured = _fact()
+    admitted = _fact(sink_tool_name="post_to_webhook")
+    base = _baseline(
+        required=[captured],
+        allowed=sorted([captured, admitted], key=canonical_fact_bytes),
+        accepted=[identity_digest(admitted)],
+    )
+    validate_flow_baseline(base)
+    assert identity_digest(admitted) not in base.scenarios[0].observation_counts
+
+
+def test_accepted_must_be_present_in_allowed() -> None:
+    ghost = _fact(sink_tool_name="ghost_tool")
+    with pytest.raises(ValueError, match="accepted identities"):
+        validate_flow_baseline(_baseline(accepted=[identity_digest(ghost)]))
+
+
+def test_required_may_be_promoted_from_accepted() -> None:
+    # `--require <identity-digest>` promotes an accepted fact into required.
+    # An operator policy assertion, not an observation, so the all-runs rule
+    # does not apply.
+    fact = _fact()
+    validate_flow_baseline(
+        _baseline(required=[fact], allowed=[fact], accepted=[identity_digest(fact)])
+    )
+
+
+def test_source_trace_digests_must_match_n_runs() -> None:
+    with pytest.raises(ValueError, match="exactly n_runs"):
+        ScenarioBaseline(
+            scenario_id="s",
+            n_runs=5,
+            required=[],
+            allowed=[],
+            observations=BaselineObservations(uncataloged_tools_on_tainted_paths=[]),
+            observation_counts={},
+            source_trace_digests=["b" * 64],
+        )
