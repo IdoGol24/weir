@@ -1,0 +1,8 @@
+{
+  "baseline_fixture": "diffspec/baselines/injection-exfil.with-observations.baseline.json",
+  "candidate_fixtures": [
+    "diffspec/variants/injection-exfil-uncataloged.json"
+  ],
+  "expected_exit_code": 0,
+  "deltas": []
+}

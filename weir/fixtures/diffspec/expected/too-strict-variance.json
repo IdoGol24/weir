@@ -1,0 +1,12 @@
+{
+  "baseline_fixture": "diffspec/baselines/injection-exfil.baseline.json",
+  "candidate_fixtures": [
+    "diffspec/runs/injection-exfil.run0.json",
+    "diffspec/runs/injection-exfil.run1.json",
+    "diffspec/runs/injection-exfil.run2.json",
+    "diffspec/runs/injection-exfil.run3.json",
+    "diffspec/runs/injection-exfil.run4.json"
+  ],
+  "expected_exit_code": 0,
+  "deltas": []
+}

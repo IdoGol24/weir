@@ -1,0 +1,15 @@
+{
+  "baseline_fixture": "diffspec/baselines/injection-exfil.baseline.json",
+  "candidate_fixtures": [
+    "diffspec/variants/injection-exfil-external.json"
+  ],
+  "expected_exit_code": 1,
+  "deltas": [
+    {
+      "kind": "new_fact_unguarded",
+      "severity": "fail",
+      "attribution": "behavioral",
+      "note": "replaces previous known-contact flow (pairing annotation)"
+    }
+  ]
+}

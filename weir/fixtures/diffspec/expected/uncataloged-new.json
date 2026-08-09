@@ -1,0 +1,15 @@
+{
+  "baseline_fixture": "diffspec/baselines/injection-exfil.baseline.json",
+  "candidate_fixtures": [
+    "diffspec/variants/injection-exfil-uncataloged.json"
+  ],
+  "expected_exit_code": 0,
+  "deltas": [
+    {
+      "kind": "new_uncataloged_tool",
+      "severity": "warn",
+      "attribution": "evidentiary",
+      "note": "register or classify this tool: translate_text"
+    }
+  ]
+}

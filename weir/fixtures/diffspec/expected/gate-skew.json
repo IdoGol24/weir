@@ -1,0 +1,15 @@
+{
+  "baseline_fixture": "diffspec/baselines/injection-exfil.skew.baseline.json",
+  "candidate_fixtures": [
+    "injection-exfil.json"
+  ],
+  "expected_exit_code": 3,
+  "deltas": [
+    {
+      "kind": "compare_skew",
+      "severity": "insufficient_evidence",
+      "attribution": "evidentiary",
+      "note": "baseline catalog digest does not match the current catalog: re-capture the baseline"
+    }
+  ]
+}
