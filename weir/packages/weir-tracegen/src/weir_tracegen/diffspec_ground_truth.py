@@ -46,6 +46,12 @@ def red_fact(*, mode: TaintMode = TaintMode.VERBATIM) -> FlowFact:
     return FlowFact(
         source_class="financial_account_identifier",
         sink_tool_name="send_email",
+        # `known-contact`, not `internal-domain`: the destination is pinned by
+        # the explicit lookup_customer_contact join whose result confirms this
+        # address, not by its domain (which happens to be the agent's own).
+        # This is the one identity field no code checks yet, so it is the
+        # constraint the future destination classifier must satisfy - and a
+        # classifier that keyed on domain instead would regenerate the corpus.
         destination_class="known-contact",
         guards_on_path=[],
         mode=mode,
