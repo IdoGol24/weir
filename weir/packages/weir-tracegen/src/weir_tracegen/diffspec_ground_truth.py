@@ -42,15 +42,14 @@ from weir.schema.flowfact import (
 # malformed baseline.
 SKEW_CATALOG_DIGEST = "0" * 64
 
-# The red scenario's witness: the injected tool_result at index 2 through to
-# the send_email sink at index 6, on whichever trace `witness_prefix` names.
-
-
 def red_fact(
     *,
     mode: TaintMode = TaintMode.VERBATIM,
     witness_prefix: str = "native-injection-exfil",
 ) -> FlowFact:
+    """The one flow the red scenario plants: the injected tool_result at index
+    2 through to the send_email sink at index 6, on whichever trace
+    `witness_prefix` names."""
     return FlowFact(
         source_class="financial_account_identifier",
         sink_tool_name="send_email",
@@ -64,6 +63,14 @@ def red_fact(
         guards_on_path=[],
         mode=mode,
         evidence_confidence=EvidenceConfidence.FULL,
+        # In VERBATIM mode this is derived and pinned by a test: the planted
+        # value reaches `body` and no other argument. In CONTEXT mode the spec
+        # does not define what `sink_arg_roles` means, since no value reaches
+        # the sink at all. The reading chosen here is "the argument the context
+        # taint influenced" - the context-only trace's body text IS derived
+        # from the injected ticket content - so the two modes stay comparable
+        # and a mode escalation reads as an escalation rather than as a role
+        # change. Revisit if the spec ever defines context-mode roles.
         sink_arg_roles=["body"],
         witness=[f"{witness_prefix}-{i}" for i in range(2, 7)],
     )
