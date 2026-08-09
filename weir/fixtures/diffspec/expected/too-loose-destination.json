@@ -1,5 +1,6 @@
 {
   "baseline_fixture": "diffspec/baselines/injection-exfil.baseline.json",
+  "scenario_id": "injection-exfil",
   "candidate_fixtures": [
     "diffspec/variants/injection-exfil-external.json"
   ],
@@ -10,6 +11,12 @@
       "severity": "fail",
       "attribution": "behavioral",
       "note": "replaces previous known-contact flow (pairing annotation)"
+    },
+    {
+      "kind": "required_fact_missing",
+      "severity": "warn",
+      "attribution": "behavioral",
+      "note": "the known-contact flow it replaces is gone"
     }
   ]
 }

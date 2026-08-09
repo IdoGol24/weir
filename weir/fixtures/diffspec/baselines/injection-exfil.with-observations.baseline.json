@@ -46,6 +46,7 @@
       ],
       "observations": {
         "uncataloged_tools_on_tainted_paths": [
+          "lookup_customer_contact",
           "translate_text"
         ]
       },

@@ -48,6 +48,7 @@ def test_every_kind_has_a_default_severity() -> None:
 def test_expected_diff_roundtrip() -> None:
     diff = ExpectedDiff(
         baseline_fixture="diffspec/baselines/injection-exfil.baseline.json",
+        scenario_id="injection-exfil",
         candidate_fixtures=["diffspec/variants/injection-exfil-external.json"],
         expected_exit_code=EXIT_FAIL_DELTA,
         deltas=[
@@ -75,7 +76,8 @@ def test_note_defaults_to_none() -> None:
 def test_decode_rejects_unknown_kind() -> None:
     with pytest.raises((msgspec.ValidationError, msgspec.DecodeError)):
         decode_expected_diff(
-            b'{"baseline_fixture": "x", "candidate_fixtures": [], '
+            b'{"baseline_fixture": "x", "scenario_id": "injection-exfil", '
+            b'"candidate_fixtures": [], '
             b'"expected_exit_code": 1, "deltas": [{"kind": "nonsense", '
             b'"severity": "fail", "attribution": "behavioral"}]}'
         )
@@ -90,6 +92,7 @@ def test_expected_exit_code_must_be_a_known_code() -> None:
     with pytest.raises(ValueError, match="expected_exit_code"):
         ExpectedDiff(
             baseline_fixture="x",
+            scenario_id="injection-exfil",
             candidate_fixtures=[],
             expected_exit_code=7,
             deltas=[],
@@ -103,6 +106,7 @@ def test_fail_class_delta_requires_exit_one() -> None:
     with pytest.raises(ValueError, match="fail-class"):
         ExpectedDiff(
             baseline_fixture="x",
+            scenario_id="injection-exfil",
             candidate_fixtures=[],
             expected_exit_code=EXIT_PASS,
             deltas=[
@@ -119,6 +123,7 @@ def test_warn_class_delta_may_pass() -> None:
     # The uncataloged-tool delta warns by default: it reports without gating.
     diff = ExpectedDiff(
         baseline_fixture="x",
+        scenario_id="injection-exfil",
         candidate_fixtures=[],
         expected_exit_code=EXIT_PASS,
         deltas=[
@@ -141,6 +146,7 @@ def test_exit_three_requires_an_insufficient_evidence_delta() -> None:
     with pytest.raises(ValueError, match="exit 3"):
         ExpectedDiff(
             baseline_fixture="x",
+            scenario_id="injection-exfil",
             candidate_fixtures=[],
             expected_exit_code=EXIT_INVALID_COMPARE,
             deltas=[],
@@ -151,6 +157,7 @@ def test_insufficient_evidence_delta_requires_exit_three() -> None:
     with pytest.raises(ValueError, match="exit 3"):
         ExpectedDiff(
             baseline_fixture="x",
+            scenario_id="injection-exfil",
             candidate_fixtures=[],
             expected_exit_code=EXIT_PASS,
             deltas=[
@@ -167,6 +174,7 @@ def test_exit_one_requires_a_fail_delta() -> None:
     with pytest.raises(ValueError, match="fail-class"):
         ExpectedDiff(
             baseline_fixture="x",
+            scenario_id="injection-exfil",
             candidate_fixtures=[],
             expected_exit_code=EXIT_FAIL_DELTA,
             deltas=[],
@@ -177,6 +185,7 @@ def test_untrusted_compare_cannot_also_fail() -> None:
     with pytest.raises(ValueError, match="could not be trusted"):
         ExpectedDiff(
             baseline_fixture="x",
+            scenario_id="injection-exfil",
             candidate_fixtures=[],
             expected_exit_code=EXIT_FAIL_DELTA,
             deltas=[
@@ -196,6 +205,7 @@ def test_the_two_exit_three_causes_are_distinguishable() -> None:
     # engine that reports the wrong cause from one that is right.
     coverage = ExpectedDiff(
         baseline_fixture="x",
+        scenario_id="injection-exfil",
         candidate_fixtures=[],
         expected_exit_code=EXIT_INVALID_COMPARE,
         deltas=[
@@ -208,6 +218,7 @@ def test_the_two_exit_three_causes_are_distinguishable() -> None:
     )
     skew = ExpectedDiff(
         baseline_fixture="x",
+        scenario_id="injection-exfil",
         candidate_fixtures=[],
         expected_exit_code=EXIT_INVALID_COMPARE,
         deltas=[
@@ -230,6 +241,7 @@ def test_uncataloged_tool_may_be_escalated_to_fail() -> None:
     # spec section 4: this row is config-escalatable to fail, and nothing else is.
     diff = ExpectedDiff(
         baseline_fixture="x",
+        scenario_id="injection-exfil",
         candidate_fixtures=[],
         expected_exit_code=EXIT_FAIL_DELTA,
         deltas=[
@@ -264,6 +276,7 @@ def test_candidate_fixtures_must_be_sorted_and_unique() -> None:
     with pytest.raises(ValueError, match="candidate_fixtures"):
         ExpectedDiff(
             baseline_fixture="x",
+            scenario_id="injection-exfil",
             candidate_fixtures=["b.json", "a.json"],
             expected_exit_code=EXIT_PASS,
             deltas=[],
@@ -281,10 +294,22 @@ def test_invariants_fire_on_the_decode_path_too() -> None:
     # ValueError, so a caller mapping input errors to exit 2 catches both paths
     # with one except - that is load-bearing and non-obvious.
     payload = (
-        b'{"baseline_fixture": "x", "candidate_fixtures": [], '
+        b'{"baseline_fixture": "x", "scenario_id": "injection-exfil", '
+        b'"candidate_fixtures": [], '
         b'"expected_exit_code": 0, "deltas": [{"kind": "new_fact_unguarded", '
         b'"severity": "fail", "attribution": "behavioral"}]}'
     )
     with pytest.raises(ValueError):
         decode_expected_diff(payload)
     assert issubclass(msgspec.ValidationError, ValueError)
+
+
+def test_scenario_id_must_be_non_empty() -> None:
+    with pytest.raises(ValueError, match="scenario_id"):
+        ExpectedDiff(
+            baseline_fixture="x",
+            scenario_id="",
+            candidate_fixtures=[],
+            expected_exit_code=EXIT_PASS,
+            deltas=[],
+        )

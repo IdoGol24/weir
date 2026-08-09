@@ -126,11 +126,19 @@ class ExpectedDiff(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     Fixture paths are relative to the repo's `weir/fixtures/` directory."""
 
     baseline_fixture: str
+    # Which baseline scenario the candidates are compared against. This is the
+    # `--scenario` override the expectation implies, NOT a substitute for spec
+    # section 5's stamped-metadata rule: CanonicalTrace carries no scenario id,
+    # so real adapters still need that mechanism. The fixture harness states it
+    # explicitly rather than guessing from a filename.
+    scenario_id: str
     candidate_fixtures: list[str]
     expected_exit_code: int
     deltas: list[ExpectedDelta]
 
     def __post_init__(self) -> None:
+        if not self.scenario_id:
+            raise ValueError("scenario_id must be non-empty")
         if self.expected_exit_code not in _KNOWN_EXIT_CODES:
             raise ValueError(
                 f"expected_exit_code must be one of {sorted(_KNOWN_EXIT_CODES)}"

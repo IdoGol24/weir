@@ -1,5 +1,6 @@
 {
   "baseline_fixture": "diffspec/baselines/injection-exfil-context-only.baseline.json",
+  "scenario_id": "injection-exfil",
   "candidate_fixtures": [
     "injection-exfil.json"
   ],

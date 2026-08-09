@@ -14,6 +14,11 @@ The witness node ids below are coupled to the native emitter's id scheme
 (`native-{scenario}-{index}`). That coupling is deliberate and is pinned by
 the byte-identity constraint on the committed fixtures, but it does mean any
 future change to the emitter's id scheme is a corpus regeneration.
+`witness_prefix` names which trace the witness was actually observed on
+(`native-injection-exfil` for the run fixtures, `native-injection-exfil-
+context-only` for the context-only trace): a baseline's stated witness must
+point at the trace it claims to have captured, or the baseline's provenance
+is false even though its shape validates.
 """
 
 from __future__ import annotations
@@ -38,11 +43,14 @@ from weir.schema.flowfact import (
 SKEW_CATALOG_DIGEST = "0" * 64
 
 # The red scenario's witness: the injected tool_result at index 2 through to
-# the send_email sink at index 6.
-_WITNESS = [f"native-injection-exfil-{i}" for i in range(2, 7)]
+# the send_email sink at index 6, on whichever trace `witness_prefix` names.
 
 
-def red_fact(*, mode: TaintMode = TaintMode.VERBATIM) -> FlowFact:
+def red_fact(
+    *,
+    mode: TaintMode = TaintMode.VERBATIM,
+    witness_prefix: str = "native-injection-exfil",
+) -> FlowFact:
     return FlowFact(
         source_class="financial_account_identifier",
         sink_tool_name="send_email",
@@ -57,7 +65,7 @@ def red_fact(*, mode: TaintMode = TaintMode.VERBATIM) -> FlowFact:
         mode=mode,
         evidence_confidence=EvidenceConfidence.FULL,
         sink_arg_roles=["body"],
-        witness=list(_WITNESS),
+        witness=[f"{witness_prefix}-{i}" for i in range(2, 7)],
     )
 
 
@@ -70,8 +78,9 @@ def red_baseline(
     mode: TaintMode = TaintMode.VERBATIM,
     scenario_id: str = "injection-exfil",
     uncataloged_tools: list[str] | None = None,
+    witness_prefix: str = "native-injection-exfil",
 ) -> FlowBaseline:
-    fact = red_fact(mode=mode)
+    fact = red_fact(mode=mode, witness_prefix=witness_prefix)
     return FlowBaseline(
         fact_schema_version=FACT_SCHEMA_VERSION,
         scenarios=[

@@ -45,7 +45,9 @@
         }
       ],
       "observations": {
-        "uncataloged_tools_on_tainted_paths": []
+        "uncataloged_tools_on_tainted_paths": [
+          "lookup_customer_contact"
+        ]
       },
       "observation_counts": {
         "5f406b9f0b935aea730d043f18e60ba5aab891a5d52e42bc8ae84bb9eaf8f767": 5
