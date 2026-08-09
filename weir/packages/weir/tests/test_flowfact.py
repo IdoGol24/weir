@@ -215,6 +215,33 @@ def test_identity_digest_changes_with_identity() -> None:
     assert identity_digest(_fact()) != identity_digest(_fact(destination_class="external-novel"))
 
 
+def test_identity_digest_partitions_exactly_like_identity_key() -> None:
+    # identity is expressed in three places (identity_key, guard_free_projection,
+    # canonical_identity_bytes). Nothing else pins them together, so a new identity
+    # field added to one and forgotten in another would silently collapse two
+    # distinct identities onto one digest. This is that tripwire.
+    facts = [
+        _fact(),
+        _fact(source_class="other_source"),
+        _fact(sink_tool_name="post_to_webhook"),
+        _fact(destination_class="external-novel"),
+        _fact(destination_class=DESTINATION_NONE),
+        _fact(destination_class=DESTINATION_UNEXTRACTED),
+        _fact(guards_on_path=["mandate_present"]),
+        _fact(guards_on_path=["a_guard", "b_guard"]),
+        # attribute-only variations must NOT create new identities
+        _fact(mode=TaintMode.CONTEXT),
+        _fact(evidence_confidence=EvidenceConfidence.DEGRADED),
+        _fact(sink_arg_roles=["recipient"]),
+        _fact(witness=["n-9"]),
+    ]
+    for a in facts:
+        for b in facts:
+            assert (identity_key(a) == identity_key(b)) == (
+                identity_digest(a) == identity_digest(b)
+            )
+
+
 @pytest.mark.parametrize(
     "bad_field,bad_value",
     [
