@@ -25,7 +25,7 @@ from weir.schema.trace import (
     UserInputPayload,
 )
 from weir_tracegen._clock import SeededClock
-from weir_tracegen.scenarios import instantiate
+from weir_tracegen.scenarios import instantiate, instantiate_varied
 from weir_tracegen.scenarios._types import ScenarioSpec, StepSpec
 
 ADAPTER_NAME = "native"
@@ -98,6 +98,13 @@ def emit_scenario(spec: ScenarioSpec) -> CanonicalTrace:
 
 def emit(name: str, *, seed: int) -> CanonicalTrace:
     return emit_scenario(instantiate(name, seed=seed))
+
+
+def emit_run(name: str, *, seed: int, run: int) -> CanonicalTrace:
+    """One run of the multi-run variance dial: the same scenario with seeded
+    benign variance in wording, step count, and path. Feeds baseline capture
+    (N runs) and the too-strict fixture family (spec sections 3 and 6)."""
+    return emit_scenario(instantiate_varied(name, seed=seed, run=run))
 
 
 def _degrade_node(trace: CanonicalTrace, index: int) -> CanonicalTrace:
