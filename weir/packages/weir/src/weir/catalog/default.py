@@ -20,6 +20,10 @@ DEFAULT_CATALOG = Catalog(
     ],
     sinks=[
         SinkSpec(tool_name="send_email", destination_arg_keys=["to"]),
+        # A second outbound sink, so a fixture can exercise the same tainted
+        # value reaching a DIFFERENT sink (a new source-to-sink pair) rather
+        # than only a changed destination on the same one.
+        SinkSpec(tool_name="post_to_webhook", destination_arg_keys=["url"]),
     ],
     remediations={
         "langchain": (
