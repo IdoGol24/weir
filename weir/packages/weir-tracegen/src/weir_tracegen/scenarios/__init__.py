@@ -1,12 +1,16 @@
 from collections.abc import Callable
 
 from weir_tracegen._rng import SeededRng
-from weir_tracegen.scenarios import injection_exfil
+from weir_tracegen.scenarios import diffspec_variants, injection_exfil
 from weir_tracegen.scenarios._types import JoinSpec, ScenarioSpec, StepSpec
 
 SCENARIOS: dict[str, Callable[[SeededRng], ScenarioSpec]] = {
     "injection-exfil": injection_exfil.build_red,
     "injection-exfil-benign": injection_exfil.build_benign,
+    "injection-exfil-context-only": diffspec_variants.build_context_only,
+    "injection-exfil-external": diffspec_variants.build_external_destination,
+    "injection-exfil-webhook": diffspec_variants.build_webhook_pair,
+    "injection-exfil-uncataloged": diffspec_variants.build_uncataloged_tool,
 }
 
 # Varied counterparts for the multi-run variance dial (spec section 6).
