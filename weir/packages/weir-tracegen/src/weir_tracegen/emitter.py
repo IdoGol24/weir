@@ -102,7 +102,7 @@ def emit(name: str, *, seed: int) -> CanonicalTrace:
 
 def emit_run(name: str, *, seed: int, run: int) -> CanonicalTrace:
     """One run of the multi-run variance dial: the same scenario with seeded
-    benign variance in wording, step count, and path. Feeds baseline capture
+    benign variance in wording and step count. Feeds baseline capture
     (N runs) and the too-strict fixture family (spec sections 3 and 6)."""
     return emit_scenario(instantiate_varied(name, seed=seed, run=run))
 
