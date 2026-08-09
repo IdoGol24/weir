@@ -49,6 +49,9 @@ _CONFIDENCE_RANK: dict[EvidenceConfidence, int] = {
     EvidenceConfidence.FULL: 2,
 }
 
+if set(_MODE_RANK) != set(TaintMode) or set(_CONFIDENCE_RANK) != set(EvidenceConfidence):
+    raise RuntimeError("rank tables must cover every enum member")
+
 
 class FlowFact(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """One canonical flow fact. Identity fields first, then attributes.
@@ -70,6 +73,10 @@ class FlowFact(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     witness: list[str]
 
     def __post_init__(self) -> None:
+        if self.mode not in _MODE_RANK:
+            raise ValueError("mode must be a TaintMode member")
+        if self.evidence_confidence not in _CONFIDENCE_RANK:
+            raise ValueError("evidence_confidence must be an EvidenceConfidence member")
         if self.guards_on_path != sorted(set(self.guards_on_path)):
             raise ValueError("guards_on_path must be sorted and duplicate-free")
         if self.sink_arg_roles != sorted(set(self.sink_arg_roles)):
@@ -104,6 +111,28 @@ def fact_digest(fact: FlowFact) -> str:
     return hashlib.sha256(canonical_fact_bytes(fact)).hexdigest()
 
 
+def canonical_identity_bytes(fact: FlowFact) -> bytes:
+    """Canonical JSON over the identity fields only (spec 2.1)."""
+    data = {
+        "source_class": fact.source_class,
+        "sink_tool_name": fact.sink_tool_name,
+        "destination_class": fact.destination_class,
+        "guards_on_path": list(fact.guards_on_path),
+    }
+    return json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def identity_digest(fact: FlowFact) -> str:
+    """Stable id for the fact's IDENTITY, independent of attributes.
+
+    The handle that survives re-capture: a run that improves a witness or
+    escalates a mode changes fact_digest but never identity_digest. Baseline
+    observation counts and `--require` address facts by THIS digest;
+    fact_digest addresses one exact observed fact (content addressing for the
+    accept chain)."""
+    return hashlib.sha256(canonical_identity_bytes(fact)).hexdigest()
+
+
 def decode_flow_fact(data: bytes | str) -> FlowFact:
     """Decode + validate, G9-style precise errors on rejection."""
     return msgspec.json.decode(data, type=FlowFact, strict=True)
@@ -113,16 +142,24 @@ def witness_order_key(
     confidence: EvidenceConfidence, witness: list[str]
 ) -> tuple[int, int, tuple[str, ...]]:
     """Total order for witness selection (spec 2.2): highest confidence first,
-    then shortest path, then lexicographic on the sorted source_ref sequence.
-    Confidence ranks first because evidence_confidence derives from the STORED
-    witness - a short degraded path must never shadow a longer clean one."""
-    return (-_CONFIDENCE_RANK[confidence], len(witness), tuple(sorted(witness)))
+    then shortest path, then lexicographic on the source_ref sequence in PATH
+    ORDER. Confidence ranks first because evidence_confidence derives from the
+    STORED witness - a short degraded path must never shadow a longer clean
+    one. Path order, not sorted order, is what makes this injective: two
+    distinct witnesses that are permutations of each other must not tie, or
+    merge_facts becomes order-dependent and byte-identity breaks."""
+    return (-_CONFIDENCE_RANK[confidence], len(witness), tuple(witness))
 
 
 def merge_facts(a: FlowFact, b: FlowFact) -> FlowFact:
     """Attribute-merge rules (spec 2.3): max mode, max confidence, union of
     roles, best witness under the total order. Used identically for within-run
-    and cross-run merging."""
+    and cross-run merging.
+
+    Note: max mode and best witness are independent rules, so a merged fact
+    can report `verbatim` while storing a witness from a `context` run. That
+    is spec 2.3's prescribed behavior, not an oversight - the delta report
+    must not assume the stored witness demonstrates the reported mode."""
     if identity_key(a) != identity_key(b):
         raise ValueError("cannot merge facts with different identities")
     best = min(

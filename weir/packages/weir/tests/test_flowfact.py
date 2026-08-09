@@ -11,9 +11,11 @@ from weir.schema.flowfact import (
     FlowFact,
     TaintMode,
     canonical_fact_bytes,
+    canonical_identity_bytes,
     decode_flow_fact,
     fact_digest,
     guard_free_projection,
+    identity_digest,
     identity_key,
     merge_facts,
     witness_order_key,
@@ -89,6 +91,19 @@ def test_empty_witness_rejected() -> None:
         _fact(witness=[])
 
 
+def test_unknown_enum_values_rejected() -> None:
+    with pytest.raises(ValueError, match="mode"):
+        _fact(mode="bogus")
+    with pytest.raises(ValueError, match="evidence_confidence"):
+        _fact(evidence_confidence="bogus")
+
+
+def test_bare_string_equal_to_an_enum_value_is_accepted() -> None:
+    # A raw string that matches an enum value serializes to identical bytes,
+    # so it is harmless; only unknown values are a problem.
+    assert canonical_fact_bytes(_fact(mode="verbatim")) == canonical_fact_bytes(_fact())
+
+
 def test_decode_rejects_unknown_fields() -> None:
     raw = msgspec.json.encode(msgspec.to_builtins(_fact(), str_keys=True))
     ok = decode_flow_fact(raw)
@@ -139,7 +154,83 @@ def test_merge_facts_rejects_different_identities() -> None:
         merge_facts(_fact(), _fact(destination_class="external-novel"))
 
 
-def test_merge_is_commutative_and_byte_identical() -> None:
-    a = _fact(mode=TaintMode.CONTEXT, sink_arg_roles=["recipient"])
-    b = _fact(sink_arg_roles=["body"])
+def test_merge_is_commutative_with_distinct_witnesses() -> None:
+    a = _fact(mode=TaintMode.CONTEXT, sink_arg_roles=["recipient"], witness=["n-1", "n-2", "n-3"])
+    b = _fact(sink_arg_roles=["body"], witness=["n-4", "n-5"])
     assert canonical_fact_bytes(merge_facts(a, b)) == canonical_fact_bytes(merge_facts(b, a))
+
+
+def test_merge_is_commutative_with_permuted_witnesses() -> None:
+    # Regression for the sorted()-tie-break bug: permutations of one another
+    # must not compare equal, or merge order leaks into the output bytes.
+    a = _fact(witness=["n-a", "n-b"])
+    b = _fact(witness=["n-b", "n-a"])
+    assert canonical_fact_bytes(merge_facts(a, b)) == canonical_fact_bytes(merge_facts(b, a))
+
+
+def test_witness_order_distinguishes_permutations() -> None:
+    k_ab = witness_order_key(EvidenceConfidence.FULL, ["n-a", "n-b"])
+    k_ba = witness_order_key(EvidenceConfidence.FULL, ["n-b", "n-a"])
+    assert k_ab != k_ba
+
+
+_EXPECTED_CANONICAL_JSON = (
+    '{"destination_class":"known-contact","evidence_confidence":"full",'
+    '"guards_on_path":[],"mode":"verbatim","sink_arg_roles":["body"],'
+    '"sink_tool_name":"send_email","source_class":"financial_account_identifier",'
+    '"witness":["native-injection-exfil-2","native-injection-exfil-6"]}'
+)
+
+_EXPECTED_FACT_DIGEST = "b6c211f8bffd7daa702937ee59dc1c02901a37d724390ae9a193159d683294f5"
+_EXPECTED_IDENTITY_DIGEST = "5f406b9f0b935aea730d043f18e60ba5aab891a5d52e42bc8ae84bb9eaf8f767"
+
+
+def test_canonical_bytes_are_pinned() -> None:
+    # The tripwire: these bytes feed SHA-256 digests that get committed into
+    # fixture files. A field reorder or serializer swap must fail HERE, loudly,
+    # not silently invalidate the corpus.
+    assert canonical_fact_bytes(_fact()).decode() == _EXPECTED_CANONICAL_JSON
+
+
+def test_identity_bytes_are_pinned() -> None:
+    assert canonical_identity_bytes(_fact()).decode() == (
+        '{"destination_class":"known-contact","guards_on_path":[],'
+        '"sink_tool_name":"send_email","source_class":"financial_account_identifier"}'
+    )
+
+
+def test_identity_digest_ignores_attributes() -> None:
+    a = _fact()
+    b = _fact(
+        mode=TaintMode.CONTEXT,
+        evidence_confidence=EvidenceConfidence.DEGRADED,
+        sink_arg_roles=["recipient"],
+        witness=["n-9"],
+    )
+    assert identity_digest(a) == identity_digest(b)
+    assert fact_digest(a) != fact_digest(b)
+
+
+def test_identity_digest_changes_with_identity() -> None:
+    assert identity_digest(_fact()) != identity_digest(_fact(destination_class="external-novel"))
+
+
+@pytest.mark.parametrize(
+    "bad_field,bad_value",
+    [
+        ("guards_on_path", ["b_guard", "a_guard"]),
+        ("sink_arg_roles", ["body", "body"]),
+        ("witness", []),
+    ],
+)
+def test_decode_enforces_invariants(bad_field: str, bad_value: list[str]) -> None:
+    payload = msgspec.to_builtins(_fact(), str_keys=True)
+    assert isinstance(payload, dict)
+    payload[bad_field] = bad_value
+    with pytest.raises((msgspec.ValidationError, msgspec.DecodeError, ValueError)):
+        decode_flow_fact(msgspec.json.encode(payload))
+
+
+def test_digests_are_pinned() -> None:
+    assert fact_digest(_fact()) == _EXPECTED_FACT_DIGEST
+    assert identity_digest(_fact()) == _EXPECTED_IDENTITY_DIGEST
