@@ -64,13 +64,13 @@ def red_fact(
         mode=mode,
         evidence_confidence=EvidenceConfidence.FULL,
         # In VERBATIM mode this is derived and pinned by a test: the planted
-        # value reaches `body` and no other argument. In CONTEXT mode the spec
-        # does not define what `sink_arg_roles` means, since no value reaches
-        # the sink at all. The reading chosen here is "the argument the context
-        # taint influenced" - the context-only trace's body text IS derived
-        # from the injected ticket content - so the two modes stay comparable
-        # and a mode escalation reads as an escalation rather than as a role
-        # change. Revisit if the spec ever defines context-mode roles.
+        # value reaches `body` and no other argument. In CONTEXT mode no value
+        # reaches the sink at all, so spec section 2.2 defines the roles as
+        # the arguments the context taint INFLUENCED - the context-only
+        # trace's body text is derived from the injected ticket content. That
+        # reading is now normative, not a local choice: it keeps the two modes
+        # comparable so a mode escalation reads as an escalation rather than
+        # as a role change, and the derivation engine is bound by it.
         sink_arg_roles=["body"],
         witness=[f"{witness_prefix}-{i}" for i in range(2, 7)],
     )

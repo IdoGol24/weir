@@ -9,6 +9,16 @@
 - For one-off or infrequent operational work, start with the simplest direct end-to-end path. Do not build wrappers, control planes, policy layers, custom verifiers, or automation unless the direct path exposes a concrete blocker or repeated need that justifies the added machinery.
 - When doing bug fixes, always start with reproducing the bug in an E2E setting as closely aligned with how an end user would experience it as possible.
   This makes sure you find the real problem so your fix will actually solve it.
+- **Every test that pins a committed fixture must DERIVE its expectation from the
+  artifact, never restate a literal, and must be demonstrated to fail under at least
+  one source mutation.** A test that asserts the same constant the code sets is not a
+  test, it is a copy - it passes for exactly as long as the code and the fixture are
+  wrong together. This rule is not theoretical: the version-diff corpus shipped a
+  baseline claiming `observations: []` while an uncataloged tool sat on the tainted
+  path of every single fixture. All tests were green and all bytes were stable; only
+  running the real taint engine against the committed bytes exposed it. Derive from
+  the artifact (emit the trace, run the pipeline, compare), then break the source on
+  purpose and watch the test fail before you trust it.
 - When end-to-end testing a product, be picky about the UI you see and be obsessed with pixel perfection.
   If something clearly looks off, even if it is not directly related to what you are doing, try to get it fixed along the way.
 - Apply that same high standard to engineering excellence: lint, test failures, and test flakiness.
