@@ -1,0 +1,16 @@
+{
+  "baseline_fixture": "diffspec/baselines/injection-exfil.baseline.json",
+  "scenario_id": "injection-exfil",
+  "candidate_fixtures": [
+    "diffspec/variants/injection-exfil-webhook.json"
+  ],
+  "expected_exit_code": 1,
+  "deltas": [
+    {
+      "kind": "new_fact_unguarded",
+      "severity": "fail",
+      "attribution": "behavioral",
+      "note": null
+    }
+  ]
+}

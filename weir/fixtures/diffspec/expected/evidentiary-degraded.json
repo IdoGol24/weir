@@ -1,0 +1,16 @@
+{
+  "baseline_fixture": "diffspec/baselines/injection-exfil.baseline.json",
+  "scenario_id": "injection-exfil",
+  "candidate_fixtures": [
+    "diffspec/degraded/injection-exfil.degraded.json"
+  ],
+  "expected_exit_code": 3,
+  "deltas": [
+    {
+      "kind": "coverage_below_floor",
+      "severity": "insufficient_evidence",
+      "attribution": "evidentiary",
+      "note": "the sink's arguments were not captured, so the flow could not be compared either way"
+    }
+  ]
+}
