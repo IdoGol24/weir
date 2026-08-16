@@ -12,11 +12,29 @@ import msgspec
 
 
 class StepSpec(msgspec.Struct, frozen=True):
+    """One step of a scenario plan.
+
+    The last two fields are DECLARATIVE DIAL STATE, not renderer instructions.
+    A dial is a pure plan-to-plan function; each renderer maps these fields
+    into its own dialect and never knows a dial exists. The defaults are the
+    undialed values, which is what keeps the committed fixtures byte-identical.
+    """
+
     kind: str
     actor: str
     content: str | None = None
     tool_name: str | None = None
     args: dict[str, object] | None = None
+    # False means the instrumentation captured no payload for this step. The
+    # native renderer maps that to empty args plus degraded=True; the OTLP
+    # renderer omits the content-bearing attributes. This is the wild's
+    # privacy default and therefore the most common real trace weir will see.
+    content_captured: bool = True
+    # Nanosecond offset applied to this step's timestamp, modelling clock skew,
+    # which is legal OTLP and real. The plan has no other notion of time: the
+    # seeded clock lives inside the renderers, so without this field a timing
+    # dial could not be a plan transform at all.
+    clock_offset_ns: int = 0
 
 
 class JoinSpec(msgspec.Struct, frozen=True):
