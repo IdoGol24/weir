@@ -8,6 +8,7 @@ dev = [
     "pytest>=8",
     "hypothesis>=6",
     "import-linter>=2",
+    "opentelemetry-proto>=1.44",
 ]
 
 [tool.ruff]
