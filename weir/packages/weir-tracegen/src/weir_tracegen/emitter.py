@@ -8,6 +8,8 @@ scope for this demo slice).
 
 from __future__ import annotations
 
+import datetime
+
 import msgspec.structs
 
 from weir.schema.trace import (
@@ -44,18 +46,38 @@ _KIND_MAP = {
 }
 
 
+def step_source_ref(scenario_name: str, index: int) -> str:
+    """The ONE step-identity function. Both renderers derive their ids from it
+    (the OTLP renderer hashes it into a span id), so native `source_ref`s and
+    OTLP span ids cannot drift into two conventions that happen to agree."""
+    return f"native-{scenario_name}-{index}"
+
+
 def _build_payload(step: StepSpec) -> Payload:
+    captured = step.content_captured
     if step.kind == "tool_call":
         if step.tool_name is None:
             raise ValueError("tool_call step requires tool_name")
-        return ToolCallPayload(tool_name=step.tool_name, args=dict(step.args or {}))
+        args = dict(step.args or {}) if captured else {}
+        return ToolCallPayload(tool_name=step.tool_name, args=args)
+    content = (step.content or "") if captured else ""
     if step.kind == "tool_result":
-        return ToolResultPayload(content=step.content or "")
+        return ToolResultPayload(content=content)
     if step.kind == "llm_call":
-        return LlmCallPayload(content=step.content or "")
+        return LlmCallPayload(content=content)
     if step.kind == "user_input":
-        return UserInputPayload(content=step.content or "")
+        return UserInputPayload(content=content)
     raise ValueError(f"unknown step kind {step.kind!r}")
+
+
+def _offset_iso(timestamp: str, offset_ns: int) -> str:
+    """Apply a plan-declared clock offset to a seeded timestamp. Pure
+    arithmetic on the parsed instant; never reads a wall clock."""
+    if offset_ns == 0:
+        return timestamp
+    instant = datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    shifted = instant + datetime.timedelta(microseconds=offset_ns // 1000)
+    return shifted.isoformat().replace("+00:00", "Z")
 
 
 def emit_scenario(spec: ScenarioSpec) -> CanonicalTrace:
@@ -63,16 +85,17 @@ def emit_scenario(spec: ScenarioSpec) -> CanonicalTrace:
     nodes: list[TraceNode] = []
     source_refs: list[str] = []
     for i, step in enumerate(spec.steps):
-        source_ref = f"native-{spec.name}-{i}"
+        source_ref = step_source_ref(spec.name, i)
         source_refs.append(source_ref)
         nodes.append(
             TraceNode(
                 id=f"n{i}",
                 kind=_KIND_MAP[step.kind],
-                timestamp=clock.tick(),
+                timestamp=_offset_iso(clock.tick(), step.clock_offset_ns),
                 actor=step.actor,
                 source_ref=source_ref,
                 payload=_build_payload(step),
+                degraded=not step.content_captured,
             )
         )
     joins = [
