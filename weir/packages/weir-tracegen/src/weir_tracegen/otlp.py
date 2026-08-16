@@ -43,6 +43,20 @@ _OPERATION_BY_KIND = {
     "user_input": "chat",
 }
 
+# OTLP SpanKind: 1 INTERNAL, 3 CLIENT. A model call and a tool invocation
+# leave the process; a user turn and the recorded result of a call do not.
+# Emitting INTERNAL for everything is valid OTLP but reads as obviously
+# synthetic to anyone who knows the conventions.
+_SPAN_KIND_INTERNAL = 1
+_SPAN_KIND_CLIENT = 3
+
+_SPAN_KIND_BY_KIND = {
+    "llm_call": _SPAN_KIND_CLIENT,
+    "tool_call": _SPAN_KIND_CLIENT,
+    "tool_result": _SPAN_KIND_INTERNAL,
+    "user_input": _SPAN_KIND_INTERNAL,
+}
+
 
 def _hex_id(seed_text: str, width: int) -> str:
     """Derive a stable id from the ONE step-identity helper, so OTLP span ids
@@ -80,6 +94,17 @@ def _span_attributes(step: StepSpec, *, call_id: str | None) -> dict[str, str]:
     return pairs
 
 
+def _span_name(step: StepSpec, *, joined_tool_name: str | None) -> str:
+    """`{operation} {target}`, or the operation alone when there is no target.
+
+    Never falls back to `step.kind`: that is a weir-internal identifier and
+    putting it on the wire makes the corpus read as synthetic.
+    """
+    operation = _OPERATION_BY_KIND[step.kind]
+    target = step.tool_name or joined_tool_name
+    return f"{operation} {target}" if target else operation
+
+
 def render_otlp(
     plan: ScenarioSpec,
     *,
@@ -101,14 +126,19 @@ def render_otlp(
             call_id_of[join.call_index] = call_id
             call_id_of[join.result_index] = call_id
 
+    tool_name_of_parent: dict[int, str | None] = {
+        result_index: plan.steps[call_index].tool_name
+        for result_index, call_index in parent_of.items()
+    }
+
     spans: list[dict[str, object]] = []
     for i, step in enumerate(plan.steps):
         start = BASE_UNIX_NANOS + i * _STEP_NANOS + step.clock_offset_ns
         span: dict[str, object] = {
             "traceId": trace_id,
             "spanId": span_ids[i],
-            "name": f"{_OPERATION_BY_KIND[step.kind]} {step.tool_name or step.kind}",
-            "kind": 1,
+            "name": _span_name(step, joined_tool_name=tool_name_of_parent.get(i)),
+            "kind": _SPAN_KIND_BY_KIND[step.kind],
             "startTimeUnixNano": str(start),
             "endTimeUnixNano": str(start + _STEP_NANOS),
             "attributes": _attributes(_span_attributes(step, call_id=call_id_of.get(i))),

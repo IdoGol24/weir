@@ -132,3 +132,38 @@ def test_render_is_deterministic() -> None:
 def test_span_count_matches_step_count() -> None:
     plan = instantiate("injection-exfil", seed=1)
     assert len(_spans(_doc(plan))) == len(plan.steps)
+
+
+def test_span_kinds_reflect_whether_the_step_leaves_the_process() -> None:
+    # Note: a tool_result span shares its display name with the tool_call it
+    # reports (FIX 2), so a name->span lookup collides here and would silently
+    # check the wrong span. Index into the fixed injection-exfil step order
+    # instead: 6 is the send_email tool_call, 7 is its tool_result.
+    spans = _spans(_doc())
+    assert spans[6]["name"] == "execute_tool send_email"
+    assert spans[6]["kind"] == 3
+    assert spans[7]["name"] == "execute_tool send_email"
+    assert spans[7]["kind"] == 1
+    # index 0 is the user_input step, index 3 is the llm_call step; both are
+    # named "chat" but only the model call leaves the process.
+    assert spans[0]["kind"] == 1
+    assert spans[3]["kind"] == 3
+    # user_input and tool_result stay INTERNAL
+    assert any(s["kind"] == 1 for s in spans)
+    assert any(s["kind"] == 3 for s in spans)
+
+
+def test_span_names_never_leak_the_internal_step_kind() -> None:
+    # `kind` values like "user_input" / "tool_result" are weir-internal
+    # identifiers and must not appear on the wire.
+    for span in _spans(_doc()):
+        assert "user_input" not in span["name"]
+        assert "tool_result" not in span["name"]
+        assert "llm_call" not in span["name"]
+
+
+def test_tool_result_span_is_named_for_the_tool_it_reports() -> None:
+    spans = _spans(_doc())
+    # span 2 is the tool_result joined to span 1's fetch_support_tickets call
+    assert spans[2]["name"] == "execute_tool fetch_support_tickets"
+    assert spans[1]["name"] == "execute_tool fetch_support_tickets"
