@@ -44,7 +44,7 @@ testpaths = ["tests", "packages/weir/tests", "packages/weir-tracegen/tests"]
 pythonpath = ["tests"]
 
 [tool.importlinter]
-root_packages = ["weir"]
+root_packages = ["weir", "weir_tracegen"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
@@ -64,3 +64,19 @@ name = "tracegen is dev-side only: the engine never imports it"
 type = "forbidden"
 source_modules = ["weir"]
 forbidden_modules = ["weir_tracegen"]
+
+[[tool.importlinter.contracts]]
+name = "tracegen reaches only the schema seam"
+type = "forbidden"
+source_modules = ["weir_tracegen"]
+forbidden_modules = [
+    "weir.catalog",
+    "weir.graph",
+    "weir.gauge",
+    "weir.label",
+    "weir.taint",
+    "weir.evaluate",
+    "weir.report",
+    "weir.rules_commons",
+    "weir.cli",
+]
