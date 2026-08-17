@@ -24,10 +24,8 @@ from __future__ import annotations
 from weir.evaluate._types import EvaluationResult, Finding
 from weir.evaluate.witness import joins_on_path, shortest_witness_path
 from weir.rules_commons import RuleSpec
-from weir.schema.trace import JoinConfidence, ToolCallPayload
+from weir.schema.trace import VERDICT_GRADE_JOIN_CONFIDENCES, ToolCallPayload
 from weir.taint import TaintedGraph
-
-_VERDICT_GRADE_JOIN_CONFIDENCES = frozenset({JoinConfidence.EXPLICIT, JoinConfidence.NESTED})
 
 
 def evaluate(tainted: TaintedGraph, rules: list[RuleSpec]) -> EvaluationResult:
@@ -56,7 +54,7 @@ def evaluate(tainted: TaintedGraph, rules: list[RuleSpec]) -> EvaluationResult:
             {
                 j.join_confidence.value
                 for j in joins_on_path(graph, path)
-                if j.join_confidence not in _VERDICT_GRADE_JOIN_CONFIDENCES
+                if j.join_confidence not in VERDICT_GRADE_JOIN_CONFIDENCES
             }
         )
         if bad_tiers:

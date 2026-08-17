@@ -81,7 +81,9 @@ def test_render_raises_if_a_forbidden_word_reaches_the_template() -> None:
         total_tool_call_nodes=1,
         inspectable_args_bp=10_000,
         degraded_bp=0,
-        join_quality=JoinQualitySplit(explicit_bp=10_000, nested_bp=0, heuristic_bp=0),
+        join_quality=JoinQualitySplit(
+            explicit_bp=10_000, nested_bp=0, content_mined_bp=0, heuristic_bp=0
+        ),
         evidentiary_coverage_bp=10_000,
         remediation_line="this trace is completely safe and secure",
     )

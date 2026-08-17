@@ -4,8 +4,15 @@ from _harness.g1 import assert_byte_identical_across_hash_seeds
 
 from weir.catalog import DEFAULT_CATALOG
 from weir.gauge import compute_gauge_report
-from weir.graph import build_session_graph
-from weir.schema.trace import decode_canonical_trace
+from weir.graph import Edge, GraphJoin, SessionGraph, build_session_graph
+from weir.schema.trace import (
+    JoinConfidence,
+    NodeKind,
+    ToolCallPayload,
+    ToolResultPayload,
+    TraceNode,
+    decode_canonical_trace,
+)
 
 _FIXTURES_DIR = Path(__file__).parents[3] / "fixtures"
 
@@ -53,6 +60,42 @@ def test_join_quality_is_fully_explicit_in_this_demos_fixtures() -> None:
     assert report.join_quality.explicit_bp == 10_000
     assert report.join_quality.nested_bp == 0
     assert report.join_quality.heuristic_bp == 0
+
+
+def _node(index: int, kind: NodeKind, payload: object) -> TraceNode:
+    return TraceNode(
+        id=f"n{index}",
+        kind=kind,
+        timestamp=f"2026-01-01T00:00:0{index}Z",
+        actor="agent",
+        source_ref=f"s{index}",
+        payload=payload,
+        degraded=False,
+    )
+
+
+def test_join_quality_split_reports_content_mined_and_sums_to_full() -> None:
+    # One of two joins is content-mined - derive the expected split from that
+    # same 1-of-2 ratio rather than restating a literal.
+    nodes = [
+        _node(0, NodeKind.TOOL_CALL, ToolCallPayload(tool_name="send_email", args={"to": "a"})),
+        _node(1, NodeKind.TOOL_RESULT, ToolResultPayload(content="ok")),
+        _node(2, NodeKind.TOOL_CALL, ToolCallPayload(tool_name="send_email", args={"to": "b"})),
+        _node(3, NodeKind.TOOL_RESULT, ToolResultPayload(content="ok")),
+    ]
+    graph = SessionGraph(
+        nodes=nodes,
+        next_edges=[Edge(src=0, dst=1), Edge(src=1, dst=2), Edge(src=2, dst=3)],
+        spawns_edges=[],
+        joins=[
+            GraphJoin(call_index=0, result_index=1, join_confidence=JoinConfidence.EXPLICIT),
+            GraphJoin(call_index=2, result_index=3, join_confidence=JoinConfidence.CONTENT_MINED),
+        ],
+    )
+    report = compute_gauge_report(graph, DEFAULT_CATALOG, detected_framework=None)
+    jq = report.join_quality
+    assert jq.content_mined_bp == 10_000 // 2  # 1 of 2 joins
+    assert jq.explicit_bp + jq.nested_bp + jq.content_mined_bp + jq.heuristic_bp == 10_000
 
 
 def test_remediation_line_absent_when_framework_is_unknown() -> None:

@@ -35,6 +35,14 @@ class JoinConfidence(enum.StrEnum):
     HEURISTIC = "heuristic"
 
 
+# The join tiers whose evidence supports a verdict-grade finding (M4 design
+# section 3: content_mined and heuristic never do). The single source for
+# the gauge's eligibility check and the evaluator's demotion check.
+VERDICT_GRADE_JOIN_CONFIDENCES = frozenset(
+    {JoinConfidence.EXPLICIT, JoinConfidence.NESTED}
+)
+
+
 class _PayloadBase(msgspec.Struct, frozen=True, forbid_unknown_fields=True, tag_field="type"):
     pass
 
