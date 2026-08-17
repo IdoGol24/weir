@@ -32,7 +32,11 @@ def capability_ladder_lines(
         "at your current telemetry: coverage YES - taint/scan "
         + ("YES" if taint_capable else "NO"),
     ]
-    if not taint_capable:
+    # The hardcoded unlock line exists for native traces, which carry no
+    # adapter ledger. When the adapter supplied remediation strings, its
+    # MISSING_CONTENT text covers the same ground more specifically, so the
+    # generic line yields.
+    if not taint_capable and not remediations:
         lines.append(
             "to unlock cross-step analysis: enable gen_ai.input.messages, "
             "gen_ai.output.messages capture in your instrumentation"
