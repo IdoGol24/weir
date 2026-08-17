@@ -59,7 +59,20 @@ def with_truncated_content(plan: ScenarioSpec, *, limit: int) -> ScenarioSpec:
 
 
 def with_clock_skew(plan: ScenarioSpec, *, step_index: int, offset_ns: int) -> ScenarioSpec:
-    """Clock skew on one step. Out-of-order timestamps are legal and real."""
+    """Clock skew on one step. Out-of-order timestamps are legal and real.
+
+    The offset must be a whole number of MICROSECONDS. Native timestamps are
+    ISO-8601, which carries no finer precision, so a sub-microsecond offset
+    would be exact in OTLP and invisible natively - the two renderers would
+    then disagree about what the same dialed plan means, which is precisely
+    what the one-plan-two-renderers law exists to prevent. A dial neither
+    renderer can express identically is not a legal dial.
+    """
+    if offset_ns % 1000 != 0:
+        raise ValueError(
+            f"clock offset must be a whole number of microseconds; {offset_ns} ns "
+            "is not representable identically by both renderers"
+        )
     steps = list(plan.steps)
     steps[step_index] = msgspec.structs.replace(steps[step_index], clock_offset_ns=offset_ns)
     return _replace_steps(plan, steps)

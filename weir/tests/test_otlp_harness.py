@@ -78,3 +78,36 @@ def test_validator_does_not_mutate_the_document() -> None:
     before = _spans(doc)[0]["spanId"]
     assert_accept_side(doc)
     assert _spans(doc)[0]["spanId"] == before
+
+
+def test_accept_side_holds_under_full_dial_composition() -> None:
+    # Each dial is tested alone elsewhere; nothing pinned them COMPOSED. The
+    # razor has to survive the worst legal plan, not just one dial at a time.
+    from weir_tracegen.scenarios.dials import (
+        drop_step,
+        with_clock_skew,
+        with_truncated_content,
+        without_content,
+        without_linkage,
+    )
+
+    for scenario in ("injection-exfil", "injection-exfil-benign"):
+        base = instantiate(scenario, seed=1)
+        dialed = without_content(base)
+        dialed = without_linkage(dialed)
+        dialed = with_truncated_content(dialed, limit=5)
+        dialed = with_clock_skew(dialed, step_index=3, offset_ns=-3_000_000_000)
+        dialed = drop_step(dialed, index=7)
+        assert_accept_side(render_otlp(dialed, preset="default-realistic"))
+
+
+def test_accept_side_holds_for_every_legal_single_drop() -> None:
+    from weir_tracegen.scenarios.dials import drop_step
+
+    for scenario in ("injection-exfil", "injection-exfil-benign"):
+        base = instantiate(scenario, seed=1)
+        joined_calls = {join.call_index for join in base.joins}
+        for index in range(len(base.steps)):
+            if index in joined_calls:
+                continue  # refused by the orphan guard, covered in test_dials
+            assert_accept_side(render_otlp(drop_step(base, index=index), preset="full"))

@@ -73,3 +73,20 @@ def test_drop_step_refuses_to_orphan_a_join_target() -> None:
 def test_dropping_a_later_step_leaves_earlier_joins_alone() -> None:
     dialed = drop_step(_plan(), index=7)
     assert (dialed.joins[0].call_index, dialed.joins[0].result_index) == (1, 2)
+
+
+def test_sub_microsecond_skew_is_rejected() -> None:
+    # The native renderer's ISO-8601 timestamps cannot express it, so allowing
+    # it would let the two renderers disagree about the same dialed plan.
+    with pytest.raises(ValueError, match="whole number of microseconds"):
+        with_clock_skew(_plan(), step_index=3, offset_ns=5)
+
+
+def test_whole_microsecond_skew_is_accepted() -> None:
+    dialed = with_clock_skew(_plan(), step_index=3, offset_ns=5000)
+    assert dialed.steps[3].clock_offset_ns == 5000
+
+
+def test_negative_whole_microsecond_skew_is_accepted() -> None:
+    dialed = with_clock_skew(_plan(), step_index=3, offset_ns=-2000)
+    assert dialed.steps[3].clock_offset_ns == -2000

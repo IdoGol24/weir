@@ -34,8 +34,8 @@
         {
           "schemaUrl": "https://opentelemetry.io/schemas/1.42.0",
           "scope": {
-            "name": "weir-tracegen",
-            "version": "0.1.0"
+            "name": "opentelemetry.instrumentation.langchain",
+            "version": "0.3"
           },
           "spans": [
             {

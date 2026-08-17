@@ -109,9 +109,20 @@ def test_without_content_omits_every_content_bearing_key() -> None:
 def test_clock_offset_shifts_the_span() -> None:
     from weir_tracegen.scenarios.dials import with_clock_skew
 
-    plan = with_clock_skew(instantiate("injection-exfil", seed=1), step_index=2, offset_ns=5)
+    plan = with_clock_skew(instantiate("injection-exfil", seed=1), step_index=2, offset_ns=5000)
     shifted = _spans(_doc(plan))[2]["startTimeUnixNano"]
-    assert shifted == str(BASE_UNIX_NANOS + 2 * 1_000_000_000 + 5)
+    assert shifted == str(BASE_UNIX_NANOS + 2 * 1_000_000_000 + 5000)
+
+
+def test_scope_carries_framework_identity_so_it_can_round_trip() -> None:
+    # framework_version is on no attribute; the instrumentation scope is its
+    # only carrier, and an adapter needs it to satisfy the drift-detection
+    # requirement the native metadata exists for.
+    from weir_tracegen.emitter import FRAMEWORK_NAME, FRAMEWORK_VERSION
+
+    scope = _doc()["resourceSpans"][0]["scopeSpans"][0]["scope"]
+    assert scope["version"] == FRAMEWORK_VERSION
+    assert FRAMEWORK_NAME in scope["name"]
 
 
 def test_attribute_order_is_pinned() -> None:

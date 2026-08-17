@@ -25,16 +25,21 @@ import hashlib
 import json
 
 from weir.schema.dialect import OTEL_GENAI_1_42_0, DialectProfile, profile_digest
-from weir_tracegen.emitter import step_source_ref
+from weir_tracegen.emitter import FRAMEWORK_NAME, FRAMEWORK_VERSION, step_source_ref
 from weir_tracegen.scenarios._types import ScenarioSpec, StepSpec
 
 # 2026-01-01T00:00:00Z, matching the native seeded clock's base instant.
 BASE_UNIX_NANOS = 1767225600000000000
 _STEP_NANOS = 1_000_000_000
 
-SCOPE_NAME = "weir-tracegen"
-SCOPE_VERSION = "0.1.0"
-PROVIDER_NAME = "langchain"
+# The instrumentation scope is where real OTel records the library that
+# produced the spans, so it is the correct carrier for framework identity -
+# and it is what makes `framework_version` recoverable by an adapter, which
+# nothing else on the wire does. Emitting a tracegen-specific scope here would
+# both waste the slot and make the corpus less like real telemetry.
+SCOPE_NAME = f"opentelemetry.instrumentation.{FRAMEWORK_NAME}"
+SCOPE_VERSION = FRAMEWORK_VERSION
+PROVIDER_NAME = FRAMEWORK_NAME
 
 _OPERATION_BY_KIND = {
     "llm_call": "chat",

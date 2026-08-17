@@ -60,3 +60,15 @@ def test_render_needs_no_network() -> None:
     # NetworkAccessBlocked if the renderer reached out. Asserted explicitly
     # because "it happens to be offline" should be a checked property.
     assert render_all()
+
+
+def test_write_all_writes_lf_newlines_to_a_fresh_directory(tmp_path: Path) -> None:
+    # write_all's platform-independence claim is otherwise untested: only
+    # render_all is covered, and it is render_all's OUTPUT that is committed.
+    from weir_tracegen.otlp_fixtures import write_all
+
+    write_all(tmp_path)
+    for rel in sorted(_EXPECTED_FILES):
+        raw = (tmp_path / rel).read_bytes()
+        assert b"\r\n" not in raw
+        assert raw.endswith(b"\n")

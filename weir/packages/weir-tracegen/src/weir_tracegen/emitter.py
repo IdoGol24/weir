@@ -72,9 +72,15 @@ def _build_payload(step: StepSpec) -> Payload:
 
 def _offset_iso(timestamp: str, offset_ns: int) -> str:
     """Apply a plan-declared clock offset to a seeded timestamp. Pure
-    arithmetic on the parsed instant; never reads a wall clock."""
+    arithmetic on the parsed instant; never reads a wall clock.
+
+    `offset_ns` is guaranteed a whole number of microseconds by
+    `dials.with_clock_skew`, so this division is exact rather than lossy.
+    """
     if offset_ns == 0:
         return timestamp
+    if offset_ns % 1000 != 0:
+        raise ValueError(f"clock offset {offset_ns} ns is not a whole microsecond")
     instant = datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     shifted = instant + datetime.timedelta(microseconds=offset_ns // 1000)
     return shifted.isoformat().replace("+00:00", "Z")
