@@ -129,6 +129,37 @@ def test_mixed_jsonl_counts_non_trace_lines() -> None:
     assert entry.note == "1"
 
 
+def test_undecodable_scope_degrades_not_silent() -> None:
+    doc = _minimal_doc()
+    doc["resourceSpans"][0]["scopeSpans"][0]["scope"] = {"name": ["not", "a", "string"]}
+    wire = decode_input(json.dumps(doc).encode())
+    assert len(wire.spans) == 1
+    assert DegradationReason.UNDECODABLE_SCOPE in [d.reason for d in wire.degradations]
+
+
+def test_non_trace_batches_skipped_counts_malformed_traces_batch() -> None:
+    good = json.dumps(_minimal_doc())
+    garbage_line = json.dumps({"resourceSpans": "garbage"})
+    data = (good + "\n" + garbage_line + "\n").encode()
+    wire = decode_input(data)
+    assert len(wire.spans) == 1
+    entry = next(
+        d for d in wire.degradations
+        if d.reason == DegradationReason.NON_TRACE_BATCHES_SKIPPED
+    )
+    assert entry.note == "1"
+
+
+def test_scope_level_schema_url_overrides_resource_level() -> None:
+    doc = _minimal_doc()
+    doc["resourceSpans"][0]["schemaUrl"] = "https://opentelemetry.io/schemas/1.0.0"
+    doc["resourceSpans"][0]["scopeSpans"][0]["schemaUrl"] = (
+        "https://opentelemetry.io/schemas/1.42.0"
+    )
+    wire = decode_input(json.dumps(doc).encode())
+    assert wire.spans[0].schema_url == "https://opentelemetry.io/schemas/1.42.0"
+
+
 def test_attribute_values_are_not_key_normalized() -> None:
     # A user kvlist keyed `span_id` inside attribute VALUES must survive
     # untouched - normalization is bounded to the structural depth.

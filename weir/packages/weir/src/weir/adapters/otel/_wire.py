@@ -161,8 +161,8 @@ def decode_input(data: bytes) -> WireInput:
         for rs in cast("list[object]", resource_spans):
             if not isinstance(rs, dict):
                 continue
-            rs_dict = cast("dict[str, object]", rs)
-            resource = rs_dict.get("resource")
+            rs = cast("dict[str, object]", rs)
+            resource = rs.get("resource")
             resource_attrs: object = (
                 cast("dict[str, object]", resource).get("attributes", [])
                 if isinstance(resource, dict)
@@ -170,32 +170,43 @@ def decode_input(data: bytes) -> WireInput:
             )
             if not isinstance(resource_attrs, list):
                 resource_attrs = []
-            rs_schema_url = rs_dict.get("schemaUrl", "")
-            scope_spans = rs_dict.get("scopeSpans", [])
+            rs_schema_url = rs.get("schemaUrl", "")
+            scope_spans = rs.get("scopeSpans", [])
             if not isinstance(scope_spans, list):
                 continue
             for ss in cast("list[object]", scope_spans):
                 if not isinstance(ss, dict):
                     continue
-                ss_dict = cast("dict[str, object]", ss)
+                ss = cast("dict[str, object]", ss)
                 try:
-                    scope = msgspec.convert(ss_dict.get("scope", {}), type=WireScope)
-                except msgspec.ValidationError:
+                    scope = msgspec.convert(ss.get("scope", {}), type=WireScope)
+                except msgspec.ValidationError as exc:
+                    degradations.append(
+                        Degradation(
+                            reason=DegradationReason.UNDECODABLE_SCOPE,
+                            subject="scope",
+                            note=str(exc),
+                        )
+                    )
                     scope = WireScope()
-                schema_url = ss_dict.get("schemaUrl") or rs_schema_url
+                schema_url = ss.get("schemaUrl") or rs_schema_url
                 if not isinstance(schema_url, str):
                     schema_url = ""
-                raw_spans = ss_dict.get("spans", [])
+                raw_spans = ss.get("spans", [])
                 if not isinstance(raw_spans, list):
                     continue
                 for raw in cast("list[object]", raw_spans):
                     try:
                         span = msgspec.convert(raw, type=WireSpan, strict=False)
                     except msgspec.ValidationError as exc:
+                        try:
+                            subject = json.dumps(raw)[:80]
+                        except TypeError:
+                            subject = str(raw)[:80]
                         degradations.append(
                             Degradation(
                                 reason=DegradationReason.UNDECODABLE_SPAN,
-                                subject=str(raw)[:80],
+                                subject=subject,
                                 note=str(exc),
                             )
                         )
@@ -205,6 +216,8 @@ def decode_input(data: bytes) -> WireInput:
                             span=span,
                             scope=scope,
                             schema_url=schema_url,
+                            # Element types are unverified by design: raw
+                            # pass-through, stage 2 guards element access.
                             resource_attributes=cast(
                                 "list[dict[str, object]]", resource_attrs
                             ),

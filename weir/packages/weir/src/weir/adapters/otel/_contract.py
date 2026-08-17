@@ -19,6 +19,7 @@ class DegradationReason(enum.StrEnum):
     UNDECODABLE_BATCH = "undecodable_batch"
     NON_TRACE_BATCHES_SKIPPED = "non_trace_batches_skipped"
     UNDECODABLE_SPAN = "undecodable_span"
+    UNDECODABLE_SCOPE = "undecodable_scope"
     ORPHANED_PARENT = "orphaned_parent"
     DUPLICATE_SPAN_ID = "duplicate_span_id"
     MISSING_SPAN_ID = "missing_span_id"
@@ -41,9 +42,9 @@ REMEDIATION: dict[DegradationReason, str] = {
         "taint payloads - fix the exporter's encoding"
     ),
     DegradationReason.NON_TRACE_BATCHES_SKIPPED: (
-        "JSONL lines that decoded but are not trace payloads (logs/metrics "
-        "in a mixed export) were skipped; export traces to their own file "
-        "or ignore this if the mix is intentional"
+        "lines that decoded but carry no resourceSpans list (logs/metrics "
+        "in a mixed export, or a malformed traces batch) were skipped; "
+        "export traces to their own well-formed file"
     ),
     DegradationReason.UNDECODABLE_BATCH: (
         "one or more JSONL lines could not be decoded; re-export the batch or "
@@ -52,6 +53,11 @@ REMEDIATION: dict[DegradationReason, str] = {
     DegradationReason.UNDECODABLE_SPAN: (
         "a span failed structural decode and was quarantined; check the "
         "exporter for schema-violating span serialization"
+    ),
+    DegradationReason.UNDECODABLE_SCOPE: (
+        "an instrumentation scope failed structural decode and was dropped; "
+        "framework identity for its spans is lost - check the exporter's "
+        "scope serialization"
     ),
     DegradationReason.ORPHANED_PARENT: (
         "a span references a parent absent from this export; include the full "
