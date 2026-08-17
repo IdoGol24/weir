@@ -421,6 +421,7 @@ def map_wire(wire: WireInput) -> AdapterResult:
         by_token.setdefault(token, []).append((token, ctx))
     deduped: list[tuple[str, SpanInContext]] = []
     ambiguous_tokens: set[str] = set()
+    ambiguous_refs: set[str] = set()
     for token, group in sorted(by_token.items()):
         if len(group) == 1:
             deduped.append(group[0])
@@ -441,7 +442,9 @@ def map_wire(wire: WireInput) -> AdapterResult:
             note="differing spans share an id; digest-suffixed"))
         for digest in sorted(digests):
             g_token, g_ctx = digests[digest]
-            deduped.append((f"{g_token}#{digest[:8]}", g_ctx))
+            ref = f"{g_token}#{digest[:8]}"
+            ambiguous_refs.add(ref)
+            deduped.append((ref, g_ctx))
 
     # Order-independent node ordering: (start_nanos, source_ref token).
     def _sort_key(item: tuple[str, SpanInContext]):
@@ -472,7 +475,12 @@ def map_wire(wire: WireInput) -> AdapterResult:
         payload, content_degraded, mined_id = _payload_for(
             ctx, kind, degradations, token)
         parent = ctx.span.parent_span_id.strip().lower()
-        if parent and parent not in known_tokens:
+        if parent and parent in ambiguous_tokens:
+            degradations.append(Degradation(
+                reason=DegradationReason.AMBIGUOUS_JOIN, subject=token,
+                note=f"parent {parent} is a duplicated span id"))
+            parent = ""
+        elif parent and parent not in known_tokens:
             degradations.append(Degradation(
                 reason=DegradationReason.ORPHANED_PARENT, subject=token,
                 note=f"parent {parent} absent from export"))
@@ -496,12 +504,23 @@ def map_wire(wire: WireInput) -> AdapterResult:
 
     joins, join_degradations = build_joins(mapped_spans)
     degradations.extend(join_degradations)
-    # Joins touching an ambiguous duplicated raw token are ambiguous.
-    joins = [
-        j for j in joins
-        if j.tool_call_source_ref not in ambiguous_tokens
-        and j.tool_result_source_ref not in ambiguous_tokens
-    ]
+    # Joins touching a digest-suffixed duplicated span id are ambiguous: a
+    # pick between differing twins is a silent resolution of ambiguous
+    # evidence, never allowed to stand. Never silent - the drop is ledgered.
+    kept_joins: list[JoinRecord] = []
+    for j in joins:
+        touched = next(
+            (ref for ref in (j.tool_call_source_ref, j.tool_result_source_ref)
+             if ref in ambiguous_refs),
+            None,
+        )
+        if touched is not None:
+            degradations.append(Degradation(
+                reason=DegradationReason.AMBIGUOUS_JOIN, subject=touched,
+                note="join evidence touches a duplicated span id"))
+            continue
+        kept_joins.append(j)
+    joins = kept_joins
 
     trace = CanonicalTrace(
         schema_version=SCHEMA_VERSION,

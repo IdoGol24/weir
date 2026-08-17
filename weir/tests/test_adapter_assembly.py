@@ -77,3 +77,48 @@ def test_empty_string_wire_ids_do_not_join() -> None:
     assert not any(
         d.reason == DegradationReason.AMBIGUOUS_JOIN for d in result.degradations
     )
+
+
+def test_join_onto_duplicated_span_id_is_ambiguous_not_picked() -> None:
+    # Two DIFFERING results share a span id; a call's explicit id matches one
+    # of them. No join may form - a pick between digest-suffixed twins is a
+    # silent resolution of ambiguous evidence.
+    doc = json.loads(_render("partial"))
+    spans = doc["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    call = next(s for s in spans if any(
+        a["key"] == "gen_ai.tool.call.arguments" for a in s["attributes"]))
+    result = next(s for s in spans if any(
+        a["key"] == "gen_ai.tool.call.result" for a in s["attributes"]))
+    call["attributes"].append(
+        {"key": "gen_ai.tool.call.id", "value": {"stringValue": "c9"}})
+    result["attributes"].append(
+        {"key": "gen_ai.tool.call.id", "value": {"stringValue": "c9"}})
+    twin = json.loads(json.dumps(result))
+    twin["name"] = twin["name"] + " TWIN"
+    spans.append(twin)  # differing span sharing the result's spanId
+    for s in spans:
+        s.pop("parentSpanId", None)  # kill nesting so explicit is the only tier
+    out = adapt_otlp(json.dumps(doc).encode())
+    assert all(
+        "c9" != j.join_source for j in out.trace.joins  # no join formed on c9 evidence
+    )
+    assert not any(
+        j.tool_call_source_ref == call["spanId"] for j in out.trace.joins
+    )
+    assert any(d.reason == DegradationReason.AMBIGUOUS_JOIN for d in out.degradations)
+    assert any(d.reason == DegradationReason.DUPLICATE_SPAN_ID for d in out.degradations)
+
+
+def test_parent_pointing_at_duplicated_id_is_ambiguous_not_orphaned() -> None:
+    doc = json.loads(_render("partial"))
+    spans = doc["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    result = next(s for s in spans if "parentSpanId" in s)
+    parent_id = result["parentSpanId"]
+    parent_span = next(s for s in spans if s["spanId"] == parent_id)
+    twin = json.loads(json.dumps(parent_span))
+    twin["name"] = twin["name"] + " TWIN"
+    spans.append(twin)
+    out = adapt_otlp(json.dumps(doc).encode())
+    reasons = [d.reason for d in out.degradations]
+    assert DegradationReason.AMBIGUOUS_JOIN in reasons
+    assert DegradationReason.ORPHANED_PARENT not in reasons
