@@ -4,7 +4,7 @@ requires-python = ">=3.12"
 
 [manifest]
 members = [
-    "weir",
+    "weir-scan",
     "weir-tracegen",
 ]
 
@@ -465,7 +465,7 @@ wheels = [
 ]
 
 [[package]]
-name = "weir"
+name = "weir-scan"
 version = "0.1.0"
 source = { editable = "packages/weir" }
 dependencies = [
@@ -487,11 +487,11 @@ version = "0.1.0"
 source = { editable = "packages/weir-tracegen" }
 dependencies = [
     { name = "click" },
-    { name = "weir" },
+    { name = "weir-scan" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "weir", editable = "packages/weir" },
+    { name = "weir-scan", editable = "packages/weir" },
 ]

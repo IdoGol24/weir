@@ -1,7 +1,8 @@
 [project]
-name = "weir"
+name = "weir-scan"
 version = "0.1.0"
 description = "weir - deterministic, post-hoc verification engine for AI-agent sessions"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "msgspec>=0.18",

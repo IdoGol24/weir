@@ -55,7 +55,7 @@ _EXPECTED_FILES = frozenset(
 def _rendered() -> dict[str, str]:
     return render_all(
         catalog_digest=catalog_digest(DEFAULT_CATALOG),
-        weir_version=importlib.metadata.version("weir"),
+        weir_version=importlib.metadata.version("weir-scan"),
     )
 
 

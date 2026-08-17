@@ -4,12 +4,12 @@ version = "0.1.0"
 description = "weir-tracegen - dev-side deterministic synthetic trace generator (never runtime code)"
 requires-python = ">=3.12"
 dependencies = [
-    "weir",
+    "weir-scan",
     "click>=8.1",
 ]
 
 [tool.uv.sources]
-weir = { workspace = true }
+weir-scan = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
