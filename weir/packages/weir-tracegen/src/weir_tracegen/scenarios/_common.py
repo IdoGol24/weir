@@ -68,7 +68,7 @@ def agent_sends_email(body: str, to: str = "user@acme.example") -> StepSpec:
         kind="tool_call",
         actor="agent",
         tool_name="send_email",
-        args={"to": to, "subject": "Ticket summary", "body": body},
+        args={"body": body, "subject": "Ticket summary", "to": to},
     )
 
 

@@ -125,7 +125,10 @@ def render_otlp(
     parent_of: dict[int, int] = {}
     call_id_of: dict[int, str] = {}
     for join in plan.joins:
-        parent_of[join.result_index] = join.call_index
+        # content_mined joins are FLAT on the wire: no parent link, no id
+        # attribute - the id lives only inside the content the plan carries.
+        if join.join_confidence in ("explicit", "nested"):
+            parent_of[join.result_index] = join.call_index
         if join.join_confidence == "explicit":
             call_id = _hex_id(f"call-{plan.name}-{join.call_index}", 16)
             call_id_of[join.call_index] = call_id

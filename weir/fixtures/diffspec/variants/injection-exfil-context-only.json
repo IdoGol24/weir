@@ -89,9 +89,9 @@
         "type": "tool_call",
         "tool_name": "send_email",
         "args": {
-          "to": "user@acme.example",
+          "body": "Open tickets summary. A suspicious instruction in the ticket content was flagged for manual review.",
           "subject": "Ticket summary",
-          "body": "Open tickets summary. A suspicious instruction in the ticket content was flagged for manual review."
+          "to": "user@acme.example"
         }
       },
       "degraded": false

@@ -50,9 +50,9 @@ PRESETS: dict[str, Preset] = {
         clauses=_ALL - {Clause.EXPLICIT_TOOL_CALL_LINKAGE},
         description=(
             "Content ON, explicit tool_call linkage ABSENT: the join must fall back "
-            "to parent/child nesting. Note that content smuggles linkage, so this "
-            "preset does not fully isolate the nesting fallback until the adapter "
-            "milestone rules on the join-source taxonomy."
+            "to parent/child nesting. Content-mined ids are fill-absence-only (M4 "
+            "design section 3), so nesting wins here and this preset yields all-"
+            "nested joins; the flat-linkage dial is what exercises content_mined."
         ),
     ),
     "default-realistic": Preset(

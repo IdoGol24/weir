@@ -85,9 +85,9 @@
         "type": "tool_call",
         "tool_name": "send_email",
         "args": {
-          "to": "user@acme.example",
+          "body": "Open tickets summary: 1 ticket, no action needed.",
           "subject": "Ticket summary",
-          "body": "Open tickets summary: 1 ticket, no action needed."
+          "to": "user@acme.example"
         }
       },
       "degraded": false

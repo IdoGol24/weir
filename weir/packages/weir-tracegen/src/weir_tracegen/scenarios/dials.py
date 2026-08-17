@@ -15,6 +15,8 @@ absent parent is reject-adjacent. That case belongs to the corrupt corpus.
 
 from __future__ import annotations
 
+import json
+
 import msgspec.structs
 
 from weir_tracegen.scenarios._types import JoinSpec, ScenarioSpec, StepSpec
@@ -106,4 +108,36 @@ def drop_step(plan: ScenarioSpec, *, index: int) -> ScenarioSpec:
         for join in plan.joins
         if index not in (join.call_index, join.result_index)
     ]
+    return msgspec.structs.replace(plan, steps=steps, joins=joins)
+
+
+def with_flat_linkage(plan: ScenarioSpec) -> ScenarioSpec:
+    """No explicit id attribute, no parent/child nesting: the join survives
+    only inside content, at the dialect-pinned paths (call args key
+    `tool_call_id`; result content JSON key `tool_call_id`). This is the one
+    corpus that exercises the CONTENT_MINED tier - fill-absences-only means
+    mined ids are ignored wherever an envelope join exists, so `partial`
+    never reaches it. Plan transform: BOTH renderers carry the same token,
+    which is what keeps the M4 equivalence by-construction."""
+    steps = list(plan.steps)
+    joins: list[JoinSpec] = []
+    for join in plan.joins:
+        token = f"mined-{plan.name}-{join.call_index}"
+        call = steps[join.call_index]
+        steps[join.call_index] = msgspec.structs.replace(
+            call,
+            # Sorted so the native payload's key order matches what the
+            # adapter recovers from the sort_keys=True OTLP rendering
+            # (the sorted-args invariant).
+            args=dict(sorted({**(call.args or {}), "tool_call_id": token}.items())),
+        )
+        result = steps[join.result_index]
+        steps[join.result_index] = msgspec.structs.replace(
+            result,
+            content=json.dumps(
+                {"content": result.content or "", "tool_call_id": token},
+                sort_keys=True, separators=(",", ":"),
+            ),
+        )
+        joins.append(msgspec.structs.replace(join, join_confidence="content_mined"))
     return msgspec.structs.replace(plan, steps=steps, joins=joins)
