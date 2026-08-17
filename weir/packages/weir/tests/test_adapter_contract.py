@@ -1,6 +1,12 @@
 """The reject-vs-degrade contract, executable form (M4 design section 2)."""
 
-from weir.adapters.otel._contract import REMEDIATION, Degradation, DegradationReason
+from weir.adapters.otel._contract import (
+    DISPOSITION,
+    REMEDIATION,
+    TRIGGER,
+    Degradation,
+    DegradationReason,
+)
 
 
 def test_every_reason_has_a_remediation_string() -> None:
@@ -8,6 +14,16 @@ def test_every_reason_has_a_remediation_string() -> None:
     # malformation the capability ladder cannot explain to a user.
     assert set(REMEDIATION) == set(DegradationReason)
     assert all(isinstance(v, str) and v for v in REMEDIATION.values())
+
+
+def test_every_reason_has_a_trigger_and_disposition_string() -> None:
+    # Same completeness law as REMEDIATION: contract.md's trigger and
+    # "what weir does" columns must cover the whole enum, or a row is
+    # unexplained in the reference doc.
+    assert set(TRIGGER) == set(DegradationReason)
+    assert all(isinstance(v, str) and v for v in TRIGGER.values())
+    assert set(DISPOSITION) == set(DegradationReason)
+    assert all(isinstance(v, str) and v for v in DISPOSITION.values())
 
 
 def test_degradation_is_frozen_and_carries_reason_subject_note() -> None:
