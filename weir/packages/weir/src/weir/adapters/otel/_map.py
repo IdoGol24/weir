@@ -136,8 +136,11 @@ def build_joins(
     an id shared by multiple CALLS is exactly as ambiguous as an id matching
     multiple results, because a positional pick on the call side would be
     silent greedy stealing in the one place an injected document can
-    manufacture the duplicate. HEURISTIC is never assigned. Deterministic:
-    spans arrive in the caller's order-independent sort (time, then id)."""
+    manufacture the duplicate. Envelope tiers run for ALL calls before any
+    content-mined tier runs, so mined evidence can never claim a result out
+    from under envelope evidence regardless of call order. HEURISTIC is
+    never assigned. Deterministic: spans arrive in the caller's
+    order-independent sort (time, then id)."""
     degradations: list[Degradation] = []
     calls = [s for s in spans if s.kind == NodeKind.TOOL_CALL]
     results = [s for s in spans if s.kind == NodeKind.TOOL_RESULT]
@@ -145,7 +148,7 @@ def build_joins(
     def duplicated(values: list[str | None]) -> set[str]:
         counts: dict[str, int] = {}
         for v in values:
-            if v is not None:
+            if v:
                 counts[v] = counts.get(v, 0) + 1
         return {v for v, n in counts.items() if n > 1}
 
@@ -174,13 +177,17 @@ def build_joins(
             )
         return None
 
-    joins: list[JoinRecord] = []
+    records: list[JoinRecord | None] = [None] * len(calls)
     joined_results: set[str] = set()
-    for call in calls:
+
+    # Pass 1: envelope tiers (explicit, nested) for every call, in order -
+    # this claims results before any content-mined evidence is consulted.
+    for i, call in enumerate(calls):
         record: JoinRecord | None = None
         # Tier 1: explicit attribute (skipped when the id is call-side
-        # ambiguous - already ledgered above).
-        if call.call_id_attr is not None and call.call_id_attr not in ambiguous_explicit:
+        # ambiguous - already ledgered above - or empty, which is
+        # semantically absent, never evidence).
+        if call.call_id_attr and call.call_id_attr not in ambiguous_explicit:
             matches = [r for r in results if r.call_id_attr == call.call_id_attr
                        and r.source_ref not in joined_results]
             found = unique_match(
@@ -208,10 +215,16 @@ def build_joins(
                     join_confidence=JoinConfidence.NESTED,
                     join_source=JOIN_SOURCE_NESTED,
                 )
-        # Tier 3: content-mined - fills absences only (and never from a
-        # call-side-ambiguous mined id).
-        if (record is None and call.mined_id is not None
-                and call.mined_id not in ambiguous_mined):
+        if record is not None:
+            records[i] = record
+            joined_results.add(record.tool_result_source_ref)
+
+    # Pass 2: content-mined - fills absences only (and never from a
+    # call-side-ambiguous or empty mined id) - and the conflict check for
+    # calls the envelope already claimed.
+    for i, call in enumerate(calls):
+        record = records[i]
+        if record is None and call.mined_id and call.mined_id not in ambiguous_mined:
             matches = [r for r in results if r.mined_id == call.mined_id
                        and r.source_ref not in joined_results]
             found = unique_match(
@@ -224,8 +237,9 @@ def build_joins(
                     join_confidence=JoinConfidence.CONTENT_MINED,
                     join_source=JOIN_SOURCE_MINED,
                 )
-        elif (record is not None and call.mined_id is not None
-                and call.mined_id not in ambiguous_mined):
+                records[i] = record
+                joined_results.add(record.tool_result_source_ref)
+        elif record is not None and call.mined_id and call.mined_id not in ambiguous_mined:
             # Envelope join exists AND mined evidence points elsewhere:
             # resolved per precedence, conflict named, never silent.
             mined_elsewhere = [
@@ -245,7 +259,6 @@ def build_joins(
                         ),
                     )
                 )
-        if record is not None:
-            joins.append(record)
-            joined_results.add(record.tool_result_source_ref)
+
+    joins = [r for r in records if r is not None]
     return joins, degradations

@@ -140,3 +140,27 @@ def test_heuristic_is_never_assigned() -> None:
     result = _mapped("bb", NodeKind.TOOL_RESULT)
     joins, degradations = build_joins([call, result])
     assert joins == [] and degradations == []
+
+
+def test_empty_string_ids_are_not_join_evidence() -> None:
+    # Semantically absent ids ("") must not create joins at any tier.
+    call = _mapped("aa", NodeKind.TOOL_CALL, call_id="")
+    result = _mapped("bb", NodeKind.TOOL_RESULT, call_id="")
+    assert build_joins([call, result]) == ([], [])
+    call = _mapped("aa", NodeKind.TOOL_CALL, mined="")
+    result = _mapped("bb", NodeKind.TOOL_RESULT, mined="")
+    assert build_joins([call, result]) == ([], [])
+
+
+def test_envelope_beats_mined_regardless_of_call_order() -> None:
+    # A mined call that sorts EARLIER must not steal a result whose envelope
+    # evidence points at a later call - precedence is global, not positional.
+    mined_call = _mapped("aa", NodeKind.TOOL_CALL, mined="m1")
+    env_call = _mapped("bb", NodeKind.TOOL_CALL)
+    result = _mapped("cc", NodeKind.TOOL_RESULT, parent="bb", mined="m1")
+    joins, degradations = build_joins([mined_call, env_call, result])
+    assert [(j.tool_call_source_ref, j.tool_result_source_ref, j.join_confidence)
+            for j in joins] == [("bb", "cc", JoinConfidence.NESTED)]
+    # aa's mined id points at a claimed result: fill-absences leaves it
+    # unjoined, silently (the result is not absent - it is claimed).
+    assert degradations == []
