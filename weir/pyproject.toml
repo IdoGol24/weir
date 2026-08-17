@@ -9,6 +9,8 @@ dev = [
     "hypothesis>=6",
     "import-linter>=2",
     "opentelemetry-proto>=1.44",
+    "opentelemetry-sdk>=1.44",
+    "opentelemetry-exporter-otlp-proto-common>=1.44",
 ]
 
 [tool.ruff]
