@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "nodes": [
     {
       "id": "n0",
@@ -141,22 +141,26 @@
     {
       "tool_call_source_ref": "native-injection-exfil-webhook-1",
       "tool_result_source_ref": "native-injection-exfil-webhook-2",
-      "join_confidence": "explicit"
+      "join_confidence": "explicit",
+      "join_source": null
     },
     {
       "tool_call_source_ref": "native-injection-exfil-webhook-4",
       "tool_result_source_ref": "native-injection-exfil-webhook-5",
-      "join_confidence": "explicit"
+      "join_confidence": "explicit",
+      "join_source": null
     },
     {
       "tool_call_source_ref": "native-injection-exfil-webhook-6",
       "tool_result_source_ref": "native-injection-exfil-webhook-7",
-      "join_confidence": "explicit"
+      "join_confidence": "explicit",
+      "join_source": null
     },
     {
       "tool_call_source_ref": "native-injection-exfil-webhook-8",
       "tool_result_source_ref": "native-injection-exfil-webhook-9",
-      "join_confidence": "explicit"
+      "join_confidence": "explicit",
+      "join_source": null
     }
   ],
   "metadata": {

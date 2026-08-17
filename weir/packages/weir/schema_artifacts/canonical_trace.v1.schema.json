@@ -32,8 +32,9 @@
       "type": "object"
     },
     "JoinConfidence": {
-      "description": "Join precedence per R1.4: explicit id > parent/child nesting > heuristic.",
+      "description": "Join precedence per R1.4, amended by the M4 design (section 3):\n    explicit id > parent/child nesting > content-mined > heuristic.\n    CONTENT_MINED never competes with the envelope tiers - it fills absences\n    only, and any finding whose witness path traverses it is never\n    verdict-grade. HEURISTIC is named by R1.4 but nothing assigns it in M4.",
       "enum": [
+        "content_mined",
         "explicit",
         "heuristic",
         "nested"
@@ -42,10 +43,21 @@
     },
     "JoinRecord": {
       "additionalProperties": false,
-      "description": "Ties a tool_call node to its tool_result node (R1.4). `join_confidence`\n    is carried permanently - never discarded after joining - because it feeds\n    the \u00a77 verdict-grade decision downstream.",
+      "description": "Ties a tool_call node to its tool_result node (R1.4). `join_confidence`\n    is carried permanently - never discarded after joining - because it feeds\n    the \u00a77 verdict-grade decision downstream. `join_source` is the MECHANISM\n    detail (which attribute / which mined pattern, per dialect); it is\n    adapter-determined provenance and sits in the M4 equivalence\n    normalization set, so the enum never grows for mechanism reasons.",
       "properties": {
         "join_confidence": {
           "$ref": "#/$defs/JoinConfidence"
+        },
+        "join_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tool_call_source_ref": {
           "type": "string"

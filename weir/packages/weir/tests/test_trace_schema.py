@@ -109,3 +109,24 @@ def test_rejects_unknown_field() -> None:
 def test_rejects_malformed_json() -> None:
     with pytest.raises(msgspec.DecodeError):
         decode_canonical_trace(b"not json at all")
+
+
+def test_content_mined_tier_and_join_source_field() -> None:
+    join = JoinRecord(
+        tool_call_source_ref="span-1",
+        tool_result_source_ref="span-2",
+        join_confidence=JoinConfidence.CONTENT_MINED,
+        join_source="content:tool_call_id",
+    )
+    assert join.join_source == "content:tool_call_id"
+    # join_source is optional and defaults to None: existing producers are untouched.
+    bare = JoinRecord(
+        tool_call_source_ref="a", tool_result_source_ref="b",
+        join_confidence=JoinConfidence.EXPLICIT,
+    )
+    assert bare.join_source is None
+
+
+def test_schema_version_is_1_1_0() -> None:
+    from weir.schema.trace import SCHEMA_VERSION
+    assert SCHEMA_VERSION == "1.1.0"
