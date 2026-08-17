@@ -81,3 +81,19 @@ forbidden_modules = [
     "weir.rules_commons",
     "weir.cli",
 ]
+
+[[tool.importlinter.contracts]]
+name = "adapters reach only the schema seam"
+type = "forbidden"
+source_modules = ["weir.adapters"]
+forbidden_modules = [
+    "weir.catalog",
+    "weir.graph",
+    "weir.gauge",
+    "weir.label",
+    "weir.taint",
+    "weir.evaluate",
+    "weir.report",
+    "weir.rules_commons",
+    "weir.cli",
+]
