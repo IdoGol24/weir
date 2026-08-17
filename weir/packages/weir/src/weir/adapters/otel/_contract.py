@@ -85,10 +85,12 @@ REMEDIATION: dict[DegradationReason, str] = {
         "is normal and not a defect"
     ),
     DegradationReason.MISSING_CONTENT: (
-        "content capture is off; enable gen_ai.input.messages / "
-        "gen_ai.output.messages / gen_ai.tool.call.arguments capture "
-        "(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY in OTel "
-        "GenAI instrumentations) to unlock cross-step analysis"
+        "content capture is off; for OTel GenAI instrumentations built on the "
+        "util-genai layer, set "
+        "OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental and "
+        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY to capture "
+        "gen_ai.input.messages / gen_ai.output.messages / "
+        "gen_ai.tool.call.arguments and unlock cross-step analysis"
     ),
     DegradationReason.UNPARSEABLE_CONTENT: (
         "a content attribute was present but not parseable; check the "

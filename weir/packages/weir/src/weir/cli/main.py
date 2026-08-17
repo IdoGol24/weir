@@ -130,7 +130,12 @@ def gauge_command(
     else:
         raise click.UsageError("provide a trace file or --sample")
     graph = build_session_graph(trace)
-    report = compute_gauge_report(graph, DEFAULT_CATALOG, detected_framework=detected_framework)
+    report = compute_gauge_report(
+        graph,
+        DEFAULT_CATALOG,
+        detected_framework=detected_framework,
+        instrumentation_scope=trace.metadata.instrumentation_scope,
+    )
 
     if as_json:
         click.echo(msgspec.json.encode(report).decode())
@@ -186,7 +191,10 @@ def scan_command(
     rules = load_rules()
     findings = evaluate(tainted, rules).findings
     gauge_report = compute_gauge_report(
-        graph, DEFAULT_CATALOG, detected_framework=detected_framework
+        graph,
+        DEFAULT_CATALOG,
+        detected_framework=detected_framework,
+        instrumentation_scope=trace.metadata.instrumentation_scope,
     )
 
     verdict_grade_findings = [f for f in findings if f.is_verdict_grade]

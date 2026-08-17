@@ -26,11 +26,11 @@ No export handy? A sample ships in the wheel:
 evidentiary coverage: 0%
 argument capture: 0%
 degraded: 100%
-tool arguments not captured - enable content capture in your OTel GenAI instrumentation: set OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY (content is off by default; weir reads span attributes)
+tool arguments not captured - this scope is emitted by Traceloop/OpenLLMetry's LangChain instrumentation, which captures content to span attributes by default; check TRACELOOP_TRACE_CONTENT (false disables capture) in the traced service's environment
   linkage: explicit (gen_ai.tool.call.id present)
   payloads: absent - content capture is off
 at your current telemetry: coverage reporting YES - taint/scan NO
-content capture is off; enable gen_ai.input.messages / gen_ai.output.messages / gen_ai.tool.call.arguments capture (OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY in OTel GenAI instrumentations) to unlock cross-step analysis
+content capture is off; for OTel GenAI instrumentations built on the util-genai layer, set OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental and OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY to capture gen_ai.input.messages / gen_ai.output.messages / gen_ai.tool.call.arguments and unlock cross-step analysis
 ```
 
 That is `weir gauge --sample`, and it is the whole product in nine lines:

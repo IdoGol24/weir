@@ -3,6 +3,7 @@ from _harness.g1 import assert_byte_identical_across_hash_seeds
 from click.testing import CliRunner
 
 from weir.schema.trace import ToolCallPayload, decode_canonical_trace, encode_canonical_trace
+from weir_tracegen import otlp
 from weir_tracegen.cli import main
 from weir_tracegen.emitter import emit, emit_degraded
 from weir_tracegen.scenarios import SCENARIOS
@@ -38,6 +39,15 @@ def test_emit_is_hash_seed_independent() -> None:
         "sys.stdout.buffer.write(encode_canonical_trace(trace))\n"
     )
     assert_byte_identical_across_hash_seeds(code)
+
+
+@pytest.mark.parametrize("name", list(SCENARIOS))
+def test_emit_instrumentation_scope_matches_otlp_scope_name(name: str) -> None:
+    # The native emitter and the OTLP renderer must stamp the exact same
+    # instrumentation scope string, or the adapter equivalence test's two
+    # sides would silently disagree about framework identity.
+    trace = emit(name, seed=1)
+    assert trace.metadata.instrumentation_scope == otlp.SCOPE_NAME
 
 
 def test_emit_degraded_marks_node_and_empties_args() -> None:

@@ -127,6 +127,6 @@ def test_content_mined_tier_and_join_source_field() -> None:
     assert bare.join_source is None
 
 
-def test_schema_version_is_1_1_0() -> None:
+def test_schema_version_is_1_2_0() -> None:
     from weir.schema.trace import SCHEMA_VERSION
-    assert SCHEMA_VERSION == "1.1.0"
+    assert SCHEMA_VERSION == "1.2.0"
