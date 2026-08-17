@@ -18,8 +18,22 @@ from typing import cast
 import msgspec
 
 from weir.adapters.otel._contract import Degradation, DegradationReason
-from weir.adapters.otel._wire import WireSpan
-from weir.schema.trace import JoinConfidence, JoinRecord, NodeKind
+from weir.adapters.otel._wire import SpanInContext, WireInput, WireSpan
+from weir.schema.dialect import DIALECT_REGISTRY, OTEL_GENAI_1_42_0, DialectProfile
+from weir.schema.trace import (
+    SCHEMA_VERSION,
+    CanonicalTrace,
+    JoinConfidence,
+    JoinRecord,
+    LlmCallPayload,
+    NodeKind,
+    Payload,
+    ToolCallPayload,
+    ToolResultPayload,
+    TraceMetadata,
+    TraceNode,
+    UserInputPayload,
+)
 
 _SPAN_KIND_CLIENT = 3
 
@@ -262,3 +276,245 @@ def build_joins(
 
     joins = [r for r in records if r is not None]
     return joins, degradations
+
+
+ADAPTER_NAME = "otel"
+ADAPTER_VERSION = "0.1.0"
+_SCOPE_PREFIX = "opentelemetry.instrumentation."
+_HEX_ID_WIDTHS = {16, 32}
+
+
+class AdapterResult(msgspec.Struct, frozen=True):
+    trace: CanonicalTrace
+    degradations: list[Degradation]
+
+
+def _select_profile(
+    spans: list[SpanInContext], degradations: list[Degradation]
+) -> tuple[DialectProfile, bool]:
+    """schemaUrl + structural fingerprint ONLY - never weir.* (untrusted).
+    Returns (profile, unknown_dialect_flag)."""
+    for ctx in spans:
+        for profile in DIALECT_REGISTRY.values():
+            if ctx.schema_url == profile.schema_url:
+                return profile, False
+    # Structural fingerprint: any registered-profile attribute key present.
+    profile_keys = {spec.key for spec in OTEL_GENAI_1_42_0.attributes}
+    for ctx in spans:
+        for raw_entry in cast("list[object]", ctx.span.attributes):
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = cast("dict[str, object]", raw_entry)
+            if entry.get("key") in profile_keys:
+                return OTEL_GENAI_1_42_0, False
+    degradations.append(
+        Degradation(
+            reason=DegradationReason.UNKNOWN_DIALECT,
+            subject="resource",
+            note="no schemaUrl or attribute fingerprint matched a registered "
+                 "dialect; mapped under the default row",
+        )
+    )
+    return OTEL_GENAI_1_42_0, True
+
+
+def _is_hex_id(token: str) -> bool:
+    return len(token) in _HEX_ID_WIDTHS and all(
+        c in "0123456789abcdef" for c in token
+    )
+
+
+def _payload_for(
+    ctx: SpanInContext, kind: NodeKind, degradations: list[Degradation],
+    subject: str,
+) -> tuple[Payload, bool, str | None]:
+    """Returns (payload, degraded, mined_id)."""
+    attrs = ctx.span.attributes
+    degraded = False
+    mined_id: str | None = None
+    if kind == NodeKind.TOOL_CALL:
+        tool_name = attr_str(attrs, "gen_ai.tool.name") or ""
+        raw_args = attr_str(attrs, "gen_ai.tool.call.arguments")
+        args: dict[str, object] = {}
+        if raw_args is None:
+            degraded = True
+            degradations.append(Degradation(
+                reason=DegradationReason.MISSING_CONTENT, subject=subject))
+        else:
+            parsed, truncated = parse_json_object(raw_args)
+            if parsed is None:
+                degraded = True
+                degradations.append(Degradation(
+                    reason=(DegradationReason.TRUNCATED_CONTENT if truncated
+                            else DegradationReason.UNPARSEABLE_CONTENT),
+                    subject=subject))
+            else:
+                args = parsed
+                token = parsed.get("tool_call_id")
+                # AMENDMENT 2: empty string never becomes a mined id.
+                mined_id = token if isinstance(token, str) and token else None
+        return ToolCallPayload(tool_name=tool_name, args=args), degraded, mined_id
+
+    key_by_kind = {
+        NodeKind.TOOL_RESULT: "gen_ai.tool.call.result",
+        NodeKind.LLM_CALL: "gen_ai.output.messages",
+        NodeKind.USER_INPUT: "gen_ai.input.messages",
+    }
+    raw = attr_str(attrs, key_by_kind[kind])
+    if raw is None:
+        degraded = True
+        degradations.append(Degradation(
+            reason=DegradationReason.MISSING_CONTENT, subject=subject))
+        raw = ""
+    if kind == NodeKind.TOOL_RESULT and raw.startswith("{"):
+        parsed, _ = parse_json_object(raw)
+        if parsed is not None:
+            token = parsed.get("tool_call_id")
+            # AMENDMENT 2: empty string never becomes a mined id.
+            mined_id = token if isinstance(token, str) and token else None
+    payload: Payload
+    if kind == NodeKind.TOOL_RESULT:
+        payload = ToolResultPayload(content=raw)
+    elif kind == NodeKind.LLM_CALL:
+        payload = LlmCallPayload(content=raw)
+    else:
+        payload = UserInputPayload(content=raw)
+    return payload, degraded, mined_id
+
+
+def map_wire(wire: WireInput) -> AdapterResult:
+    degradations = list(wire.degradations)
+    profile, all_degraded = _select_profile(wire.spans, degradations)
+    del profile  # single-row registry: row data already drives attr keys above
+
+    genai = [c for c in wire.spans if has_genai_marker(c.span.attributes)]
+    filtered = len(wire.spans) - len(genai)
+    if filtered:
+        degradations.append(Degradation(
+            reason=DegradationReason.NON_GENAI_SPANS_FILTERED,
+            subject="resource", note=str(filtered)))
+
+    # source_ref = raw wire token, case-normalized. Hex validity is
+    # COMMENTARY; joins always match on the raw token (M4 design section 2).
+    nonstandard = False
+    prepared: list[tuple[str, SpanInContext]] = []
+    for ctx in genai:
+        token = ctx.span.span_id.strip().lower()
+        if token and not _is_hex_id(token):
+            nonstandard = True
+        if not token:
+            surrogate = "surrogate-" + span_content_digest(
+                (ctx.span.trace_id, ctx.span.name,
+                 str(ctx.span.start_time_unix_nano),
+                 json.dumps(ctx.span.attributes, sort_keys=True)))[:16]
+            degradations.append(Degradation(
+                reason=DegradationReason.MISSING_SPAN_ID, subject=surrogate))
+            token = surrogate
+        prepared.append((token, ctx))
+    if nonstandard:
+        degradations.append(Degradation(
+            reason=DegradationReason.NONSTANDARD_ID_ENCODING, subject="resource"))
+
+    # Duplicate ids: byte-identical -> dedupe; differing -> digest suffix.
+    by_token: dict[str, list[tuple[str, SpanInContext]]] = {}
+    for token, ctx in prepared:
+        by_token.setdefault(token, []).append((token, ctx))
+    deduped: list[tuple[str, SpanInContext]] = []
+    ambiguous_tokens: set[str] = set()
+    for token, group in sorted(by_token.items()):
+        if len(group) == 1:
+            deduped.append(group[0])
+            continue
+        digests = {span_content_digest(
+            (g[1].span.name, str(g[1].span.start_time_unix_nano),
+             json.dumps(g[1].span.attributes, sort_keys=True))): g
+            for g in group}
+        if len(digests) == 1:
+            deduped.append(group[0])
+            degradations.append(Degradation(
+                reason=DegradationReason.DUPLICATE_SPAN_ID, subject=token,
+                note="byte-identical duplicates deduplicated"))
+            continue
+        ambiguous_tokens.add(token)
+        degradations.append(Degradation(
+            reason=DegradationReason.DUPLICATE_SPAN_ID, subject=token,
+            note="differing spans share an id; digest-suffixed"))
+        for digest in sorted(digests):
+            g_token, g_ctx = digests[digest]
+            deduped.append((f"{g_token}#{digest[:8]}", g_ctx))
+
+    # Order-independent node ordering: (start_nanos, source_ref token).
+    def _sort_key(item: tuple[str, SpanInContext]):
+        token, ctx = item
+        iso = iso_from_nanos(ctx.span.start_time_unix_nano)
+        return (iso is None, iso or "", token)
+
+    ordered = sorted(deduped, key=_sort_key)
+
+    known_tokens = {token for token, _ in ordered}
+    nodes: list[TraceNode] = []
+    mapped_spans: list[MappedSpan] = []
+    framework_name: str | None = None
+    framework_version: str | None = None
+    for token, ctx in ordered:
+        kind = derive_kind(ctx.span)
+        if kind is None:
+            degradations.append(Degradation(
+                reason=DegradationReason.UNMAPPABLE_GENAI_SPAN, subject=token))
+            continue
+        iso = iso_from_nanos(ctx.span.start_time_unix_nano)
+        node_degraded = all_degraded
+        if iso is None:
+            degradations.append(Degradation(
+                reason=DegradationReason.INVALID_TIMESTAMP, subject=token))
+            iso = "1970-01-01T00:00:00Z"
+            node_degraded = True
+        payload, content_degraded, mined_id = _payload_for(
+            ctx, kind, degradations, token)
+        parent = ctx.span.parent_span_id.strip().lower()
+        if parent and parent not in known_tokens:
+            degradations.append(Degradation(
+                reason=DegradationReason.ORPHANED_PARENT, subject=token,
+                note=f"parent {parent} absent from export"))
+            parent = ""
+        provider = attr_str(ctx.span.attributes, "gen_ai.provider.name")
+        if provider and framework_name is None:
+            framework_name = provider
+        if ctx.scope.name.startswith(_SCOPE_PREFIX) and framework_version is None:
+            framework_version = ctx.scope.version or None
+        nodes.append(TraceNode(
+            id=f"n{len(nodes)}", kind=kind, timestamp=iso,
+            actor=actor_for(kind), source_ref=token, payload=payload,
+            degraded=node_degraded or content_degraded,
+        ))
+        mapped_spans.append(MappedSpan(
+            source_ref=token, kind=kind,
+            # AMENDMENT 1: empty string maps to None (semantically absent).
+            call_id_attr=attr_str(ctx.span.attributes, "gen_ai.tool.call.id") or None,
+            parent_token=parent, mined_id=mined_id,
+        ))
+
+    joins, join_degradations = build_joins(mapped_spans)
+    degradations.extend(join_degradations)
+    # Joins touching an ambiguous duplicated raw token are ambiguous.
+    joins = [
+        j for j in joins
+        if j.tool_call_source_ref not in ambiguous_tokens
+        and j.tool_result_source_ref not in ambiguous_tokens
+    ]
+
+    trace = CanonicalTrace(
+        schema_version=SCHEMA_VERSION,
+        nodes=nodes,
+        joins=joins,
+        metadata=TraceMetadata(
+            adapter_name=ADAPTER_NAME, adapter_version=ADAPTER_VERSION,
+            framework_name=framework_name, framework_version=framework_version,
+        ),
+    )
+    # Canonical ledger order (amendment C applies to the commentary too):
+    # wire- and map-stage entries are emitted in traversal order, which span
+    # reordering would permute while the trace held. line:N subjects are
+    # legitimately per-input facts; everything else must be re-export-stable.
+    degradations.sort(key=lambda d: (d.reason, d.subject, d.note))
+    return AdapterResult(trace=trace, degradations=degradations)
