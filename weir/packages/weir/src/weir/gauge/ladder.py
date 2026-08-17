@@ -29,7 +29,7 @@ def capability_ladder_lines(
         f"  linkage: {linkage}",
         "  payloads: "
         + ("present" if taint_capable else "absent - content capture is off"),
-        "at your current telemetry: coverage YES - taint/scan "
+        "at your current telemetry: coverage reporting YES - taint/scan "
         + ("YES" if taint_capable else "NO"),
     ]
     # The hardcoded unlock line exists for native traces, which carry no

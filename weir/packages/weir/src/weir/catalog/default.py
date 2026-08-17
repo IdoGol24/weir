@@ -27,8 +27,10 @@ DEFAULT_CATALOG = Catalog(
     ],
     remediations={
         "langchain": (
-            "tool arguments not captured - enable full-payload logging in "
-            "LangChain: set return_intermediate_steps=True and log intermediate_steps"
+            "tool arguments not captured - enable content capture in your OTel "
+            "GenAI instrumentation: set "
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY (content "
+            "is off by default; weir reads span attributes)"
         ),
     },
 )

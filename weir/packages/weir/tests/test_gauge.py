@@ -52,7 +52,7 @@ def test_degraded_fixture_reports_low_coverage_and_a_real_remediation_line() -> 
     assert report.evidentiary_coverage_bp == 3_333
     assert report.remediation_line is not None
     assert report.remediation_line.strip() != ""
-    assert "langchain" in report.remediation_line.lower()
+    assert "enable content capture" in report.remediation_line.lower()
 
 
 def test_join_quality_is_fully_explicit_in_this_demos_fixtures() -> None:

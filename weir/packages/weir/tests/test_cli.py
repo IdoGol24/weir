@@ -24,7 +24,7 @@ def test_gauge_on_degraded_trace_shows_remediation_and_exits_zero() -> None:
     )
     assert result.exit_code == 0
     assert "evidentiary coverage: 33%" in result.output
-    assert "langchain" in result.output.lower()
+    assert "enable content capture" in result.output.lower()
 
 
 def test_gauge_json_output_is_valid_json_with_expected_fields() -> None:
@@ -108,7 +108,7 @@ def test_the_three_demo_commands_run_end_to_end() -> None:
         )
         assert gauge_result.exit_code == 0
         assert "evidentiary coverage:" in gauge_result.output
-        assert "langchain" in gauge_result.output.lower()
+        assert "enable content capture" in gauge_result.output.lower()
 
         red_result = runner.invoke(
             main,

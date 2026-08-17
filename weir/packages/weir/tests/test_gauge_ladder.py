@@ -19,7 +19,7 @@ def _report(inspectable_bp: int, explicit_bp: int = 10_000) -> GaugeReport:
 def test_content_off_telemetry_reads_as_a_ladder_not_a_bare_number() -> None:
     lines = capability_ladder_lines(_report(0), remediations=["enable capture"])
     text = "\n".join(lines)
-    assert "coverage YES" in text and "taint/scan NO" in text
+    assert "coverage reporting YES" in text and "taint/scan NO" in text
     assert "enable capture" in text
 
 

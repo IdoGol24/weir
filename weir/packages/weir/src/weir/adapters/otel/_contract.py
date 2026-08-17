@@ -86,8 +86,9 @@ REMEDIATION: dict[DegradationReason, str] = {
     ),
     DegradationReason.MISSING_CONTENT: (
         "content capture is off; enable gen_ai.input.messages / "
-        "gen_ai.output.messages / gen_ai.tool.call.arguments capture to "
-        "unlock cross-step analysis"
+        "gen_ai.output.messages / gen_ai.tool.call.arguments capture "
+        "(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY in OTel "
+        "GenAI instrumentations) to unlock cross-step analysis"
     ),
     DegradationReason.UNPARSEABLE_CONTENT: (
         "a content attribute was present but not parseable; check the "
@@ -116,6 +117,26 @@ REMEDIATION: dict[DegradationReason, str] = {
         "instrumentation produced it"
     ),
 }
+
+
+def render_contract_doc() -> str:
+    """The reject-vs-degrade contract as markdown, generated from the enum
+    so the committed doc (docs/contract.md) cannot drift from the code."""
+    lines = [
+        "# The reject-vs-degrade contract",
+        "",
+        "Exit-2 rejects are exactly two conditions: the input is not JSON at "
+        "all (neither a JSON document nor JSON Lines), or the input is JSON "
+        "but not OTLP-shaped (no `resourceSpans` list found anywhere). "
+        "Everything else degrades, named by one of the rows below.",
+        "",
+        "| reason | remediation |",
+        "| --- | --- |",
+    ]
+    for reason in DegradationReason:
+        remediation = REMEDIATION[reason].replace("|", "\\|")
+        lines.append(f"| {reason.value} | {remediation} |")
+    return "\n".join(lines) + "\n"
 
 
 class Degradation(msgspec.Struct, frozen=True):

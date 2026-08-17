@@ -55,7 +55,7 @@ def test_benign_report_shows_the_designed_green_screen() -> None:
 
 def test_red_report_includes_remediation_line() -> None:
     html = _render_for("injection-exfil-benign.degraded.json")
-    assert "langchain" in html.lower()
+    assert "enable content capture" in html.lower()
 
 
 def test_reports_pass_the_g5_lexicon_lint() -> None:
