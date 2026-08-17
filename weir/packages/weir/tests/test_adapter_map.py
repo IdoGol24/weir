@@ -2,7 +2,13 @@
 invariant), payloads with named degradations."""
 
 from weir.adapters.otel._contract import DegradationReason
-from weir.adapters.otel._map import MappedSpan, attr_str, build_joins, derive_kind
+from weir.adapters.otel._map import (
+    MappedSpan,
+    attr_str,
+    build_joins,
+    derive_kind,
+    parse_json_object,
+)
 from weir.adapters.otel._wire import WireSpan
 from weir.schema.trace import JoinConfidence, NodeKind
 
@@ -164,3 +170,16 @@ def test_envelope_beats_mined_regardless_of_call_order() -> None:
     # aa's mined id points at a claimed result: fill-absences leaves it
     # unjoined, silently (the result is not absent - it is claimed).
     assert degradations == []
+
+
+def test_truncation_fingerprint_catches_mid_string_cut() -> None:
+    # A payload limit usually cuts inside an open string; json reports the
+    # error at the OPENING quote, so the fingerprint must not rely on
+    # position alone.
+    parsed, truncated = parse_json_object('{"mailbox":"suppo')
+    assert parsed is None and truncated is True
+
+
+def test_mid_string_garbage_is_not_truncation() -> None:
+    parsed, truncated = parse_json_object('{"query": nope, "x": 1}')
+    assert parsed is None and truncated is False

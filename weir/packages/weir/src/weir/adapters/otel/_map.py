@@ -112,13 +112,19 @@ def iso_from_nanos(value: str | int) -> str | None:
 
 
 def parse_json_object(text: str) -> tuple[dict[str, object] | None, bool]:
-    """(parsed, truncation_fingerprint). The fingerprint: decode fails AND
-    the error position is end-of-string - the shape a payload limit leaves.
-    Anything else unparseable is UNPARSEABLE_CONTENT, not TRUNCATED_CONTENT."""
+    """(parsed, truncation_fingerprint). The fingerprint covers the two
+    shapes a payload limit leaves: the decode error sits at end-of-input
+    (cut between tokens), or the input ends inside an unterminated string
+    (cut mid-value - json reports these at the OPENING quote, so position
+    alone cannot catch them). Anything else unparseable is
+    UNPARSEABLE_CONTENT, not TRUNCATED_CONTENT."""
     try:
         parsed: object = json.loads(text)
     except json.JSONDecodeError as exc:
-        return None, exc.pos >= len(text.rstrip())
+        truncated = exc.pos >= len(text.rstrip()) or exc.msg.startswith(
+            "Unterminated string"
+        )
+        return None, truncated
     if isinstance(parsed, dict):
         return cast("dict[str, object]", parsed), False
     return None, False
