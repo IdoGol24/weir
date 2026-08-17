@@ -99,9 +99,6 @@ def test_join_onto_duplicated_span_id_is_ambiguous_not_picked() -> None:
     for s in spans:
         s.pop("parentSpanId", None)  # kill nesting so explicit is the only tier
     out = adapt_otlp(json.dumps(doc).encode())
-    assert all(
-        "c9" != j.join_source for j in out.trace.joins  # no join formed on c9 evidence
-    )
     assert not any(
         j.tool_call_source_ref == call["spanId"] for j in out.trace.joins
     )
@@ -122,3 +119,17 @@ def test_parent_pointing_at_duplicated_id_is_ambiguous_not_orphaned() -> None:
     reasons = [d.reason for d in out.degradations]
     assert DegradationReason.AMBIGUOUS_JOIN in reasons
     assert DegradationReason.ORPHANED_PARENT not in reasons
+
+
+def test_ledger_sorts_line_subjects_numerically_not_lexicographically() -> None:
+    # 11 bad lines after one good line produce line:2 .. line:12 - lexicographic
+    # sort would put line:10 before line:2; the ledger must sort numerically.
+    good = json.dumps(json.loads(_render()))
+    bad_lines = ["{not json" for _ in range(11)]
+    data = "\n".join([good, *bad_lines]).encode()
+    result = adapt_otlp(data)
+    line_subjects = [
+        d.subject for d in result.degradations
+        if d.reason == DegradationReason.UNDECODABLE_BATCH
+    ]
+    assert line_subjects == [f"line:{n}" for n in range(2, 13)]

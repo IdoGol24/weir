@@ -384,8 +384,10 @@ def _payload_for(
 
 def map_wire(wire: WireInput) -> AdapterResult:
     degradations = list(wire.degradations)
-    profile, all_degraded = _select_profile(wire.spans, degradations)
-    del profile  # single-row registry: row data already drives attr keys above
+    # single-row registry: row data already drives attr keys above, so the
+    # profile itself is unused here (pinned by test_adapter_contract.py's
+    # test_mapper_attribute_keys_come_from_the_profile).
+    _profile, all_degraded = _select_profile(wire.spans, degradations)
 
     genai = [c for c in wire.spans if has_genai_marker(c.span.attributes)]
     filtered = len(wire.spans) - len(genai)
@@ -535,5 +537,13 @@ def map_wire(wire: WireInput) -> AdapterResult:
     # wire- and map-stage entries are emitted in traversal order, which span
     # reordering would permute while the trace held. line:N subjects are
     # legitimately per-input facts; everything else must be re-export-stable.
-    degradations.sort(key=lambda d: (d.reason, d.subject, d.note))
+    def _ledger_key(d: Degradation) -> tuple[str, str, str]:
+        subject = d.subject
+        if subject.startswith("line:"):
+            suffix = subject.removeprefix("line:")
+            if suffix.isdigit():
+                subject = f"line:{int(suffix):09d}"
+        return (d.reason, subject, d.note)
+
+    degradations.sort(key=_ledger_key)
     return AdapterResult(trace=trace, degradations=degradations)
