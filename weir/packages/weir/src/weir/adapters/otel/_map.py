@@ -15,8 +15,11 @@ import hashlib
 import json
 from typing import cast
 
+import msgspec
+
+from weir.adapters.otel._contract import Degradation, DegradationReason
 from weir.adapters.otel._wire import WireSpan
-from weir.schema.trace import NodeKind
+from weir.schema.trace import JoinConfidence, JoinRecord, NodeKind
 
 _SPAN_KIND_CLIENT = 3
 
@@ -105,3 +108,144 @@ def parse_json_object(text: str) -> tuple[dict[str, object] | None, bool]:
     if isinstance(parsed, dict):
         return cast("dict[str, object]", parsed), False
     return None, False
+
+
+JOIN_SOURCE_EXPLICIT = "attr:gen_ai.tool.call.id"
+JOIN_SOURCE_NESTED = "parent_span"
+JOIN_SOURCE_MINED = "content:tool_call_id"
+
+
+class MappedSpan(msgspec.Struct, frozen=True):
+    """The join-relevant projection of one mapped span. `mined_id` is the
+    dialect-pinned content path (tool_call args key `tool_call_id`; result
+    content JSON key `tool_call_id`) - never a regex over a blob."""
+
+    source_ref: str
+    kind: NodeKind
+    call_id_attr: str | None
+    parent_token: str
+    mined_id: str | None
+
+
+def build_joins(
+    spans: list[MappedSpan],
+) -> tuple[list[JoinRecord], list[Degradation]]:
+    """Precedence per R1.4 + M4 section 3: explicit > nested > content_mined.
+    Content-mined fills ABSENCES only; the envelope wins conflicts, named on
+    the ledger. Ambiguity yields no join, never a pick - and it is SYMMETRIC:
+    an id shared by multiple CALLS is exactly as ambiguous as an id matching
+    multiple results, because a positional pick on the call side would be
+    silent greedy stealing in the one place an injected document can
+    manufacture the duplicate. HEURISTIC is never assigned. Deterministic:
+    spans arrive in the caller's order-independent sort (time, then id)."""
+    degradations: list[Degradation] = []
+    calls = [s for s in spans if s.kind == NodeKind.TOOL_CALL]
+    results = [s for s in spans if s.kind == NodeKind.TOOL_RESULT]
+
+    def duplicated(values: list[str | None]) -> set[str]:
+        counts: dict[str, int] = {}
+        for v in values:
+            if v is not None:
+                counts[v] = counts.get(v, 0) + 1
+        return {v for v, n in counts.items() if n > 1}
+
+    # Call-side ambiguity, precomputed per tier: one ledger entry per
+    # duplicated id, and the tier that carried it is dead for every call
+    # involved - but the call's OTHER, unambiguous tiers still apply.
+    ambiguous_explicit = duplicated([c.call_id_attr for c in calls])
+    ambiguous_mined = duplicated([c.mined_id for c in calls])
+    for value in sorted(ambiguous_explicit):
+        degradations.append(Degradation(
+            reason=DegradationReason.AMBIGUOUS_JOIN, subject=value,
+            note="gen_ai.tool.call.id shared by multiple calls"))
+    for value in sorted(ambiguous_mined):
+        degradations.append(Degradation(
+            reason=DegradationReason.AMBIGUOUS_JOIN, subject=value,
+            note="mined id shared by multiple calls"))
+
+    def unique_match(candidates: list[MappedSpan], *, subject: str,
+                     note: str) -> MappedSpan | None:
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            degradations.append(
+                Degradation(reason=DegradationReason.AMBIGUOUS_JOIN,
+                            subject=subject, note=note)
+            )
+        return None
+
+    joins: list[JoinRecord] = []
+    joined_results: set[str] = set()
+    for call in calls:
+        record: JoinRecord | None = None
+        # Tier 1: explicit attribute (skipped when the id is call-side
+        # ambiguous - already ledgered above).
+        if call.call_id_attr is not None and call.call_id_attr not in ambiguous_explicit:
+            matches = [r for r in results if r.call_id_attr == call.call_id_attr
+                       and r.source_ref not in joined_results]
+            found = unique_match(
+                matches, subject=call.source_ref,
+                note=f"gen_ai.tool.call.id {call.call_id_attr!r} matches "
+                     f"{len(matches)} results")
+            if found is not None:
+                record = JoinRecord(
+                    tool_call_source_ref=call.source_ref,
+                    tool_result_source_ref=found.source_ref,
+                    join_confidence=JoinConfidence.EXPLICIT,
+                    join_source=JOIN_SOURCE_EXPLICIT,
+                )
+        # Tier 2: parent/child nesting.
+        if record is None:
+            matches = [r for r in results if r.parent_token == call.source_ref
+                       and r.source_ref not in joined_results]
+            found = unique_match(
+                matches, subject=call.source_ref,
+                note=f"{len(matches)} results parent to this call")
+            if found is not None:
+                record = JoinRecord(
+                    tool_call_source_ref=call.source_ref,
+                    tool_result_source_ref=found.source_ref,
+                    join_confidence=JoinConfidence.NESTED,
+                    join_source=JOIN_SOURCE_NESTED,
+                )
+        # Tier 3: content-mined - fills absences only (and never from a
+        # call-side-ambiguous mined id).
+        if (record is None and call.mined_id is not None
+                and call.mined_id not in ambiguous_mined):
+            matches = [r for r in results if r.mined_id == call.mined_id
+                       and r.source_ref not in joined_results]
+            found = unique_match(
+                matches, subject=call.source_ref,
+                note=f"mined id {call.mined_id!r} matches {len(matches)} results")
+            if found is not None:
+                record = JoinRecord(
+                    tool_call_source_ref=call.source_ref,
+                    tool_result_source_ref=found.source_ref,
+                    join_confidence=JoinConfidence.CONTENT_MINED,
+                    join_source=JOIN_SOURCE_MINED,
+                )
+        elif (record is not None and call.mined_id is not None
+                and call.mined_id not in ambiguous_mined):
+            # Envelope join exists AND mined evidence points elsewhere:
+            # resolved per precedence, conflict named, never silent.
+            mined_elsewhere = [
+                r for r in results
+                if r.mined_id == call.mined_id
+                and r.source_ref != record.tool_result_source_ref
+            ]
+            if mined_elsewhere:
+                degradations.append(
+                    Degradation(
+                        reason=DegradationReason.CONFLICTING_JOIN_EVIDENCE,
+                        subject=call.source_ref,
+                        note=(
+                            f"envelope join to {record.tool_result_source_ref} "
+                            f"but mined id {call.mined_id!r} also matches "
+                            + ",".join(r.source_ref for r in mined_elsewhere)
+                        ),
+                    )
+                )
+        if record is not None:
+            joins.append(record)
+            joined_results.add(record.tool_result_source_ref)
+    return joins, degradations
