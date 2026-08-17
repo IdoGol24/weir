@@ -2,18 +2,15 @@
 
 A deterministic, post-hoc verification engine for AI-agent sessions.
 
-Point it at the traces your agent already emits. It tells you two things,
-in this order:
-
-1. **What your telemetry can prove** (`weir gauge`) - an evidentiary
-   coverage report with a concrete remediation for every gap.
-2. **What actually happened** (`weir scan`) - findings with witness paths,
-   graded by the strength of the evidence behind them, with a CI-ready
-   exit code.
-
-No capture component, no proxy, no SDK to wire in. Weir reads OpenTelemetry
-GenAI OTLP-JSON exports and its own native trace format, and it never runs
-your agent.
+No LLM in the loop: every run is byte-identical and replayable, and the
+analysis path opens no network sockets (both are tested guarantees, not
+aspirations). Weir runs entirely in your environment, on the traces your
+agent already emits - it never runs your agent and ships no capture
+component. The pipeline is short: your trace becomes a session graph;
+tool calls join to their results through explicit tiers of evidence; data
+rules evaluate over the tainted graph; every finding carries a witness
+path you can walk. A weir, in the older sense, is a low dam built to
+measure a river's flow without stopping it.
 
 ## Five minutes to your first coverage report
 
@@ -22,45 +19,63 @@ pip install weir-scan
 weir gauge your-export.jsonl
 ```
 
-Most real exports have content capture off (the ecosystem's privacy
-default). This is what weir says about one:
+No export handy? A sample ships in the wheel:
 
+<!-- verify: gauge --sample -->
 ```
 evidentiary coverage: 0%
 argument capture: 0%
 degraded: 100%
-tool arguments not captured - enable full-payload logging in LangChain: set return_intermediate_steps=True and log intermediate_steps
+tool arguments not captured - enable content capture in your OTel GenAI instrumentation: set OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY (content is off by default; weir reads span attributes)
   linkage: explicit (gen_ai.tool.call.id present)
   payloads: absent - content capture is off
-at your current telemetry: coverage YES - taint/scan NO
-content capture is off; enable gen_ai.input.messages / gen_ai.output.messages / gen_ai.tool.call.arguments capture to unlock cross-step analysis
+at your current telemetry: coverage reporting YES - taint/scan NO
+content capture is off; enable gen_ai.input.messages / gen_ai.output.messages / gen_ai.tool.call.arguments capture (OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY in OTel GenAI instrumentations) to unlock cross-step analysis
 ```
 
-That is the whole product in eight lines: what your telemetry supports
-today, and the exact attributes to enable to climb to the next rung.
-Enable capture, re-run, and the ladder reads `taint/scan YES` - at which
-point `weir scan` can gate your CI:
+That is `weir gauge --sample`, and it is the whole product in nine lines:
+what your telemetry supports today (most real exports have content capture
+off - the ecosystem's privacy default), and the exact switch that unlocks
+the next rung. Flip it, re-run, and the ladder reads `taint/scan YES` - at
+which point `weir scan` can gate your CI. Here it is catching a planted
+injection-to-exfiltration flow, witness path included:
 
+<!-- verify: scan fixtures/injection-exfil.json -->
 ```
-weir scan your-export.jsonl
 1 verdict-grade finding(s)
-# exit code 1 - fail the build
+finding: injection-exfil-to-outbound-sink
+  source: financial_account_identifier at node 2 (tool_result)
+  sink: send_email at node 6
+  witness path: n2 -> n3 -> n4 -> n5 -> n6
+  join tiers crossed: explicit
+  verdict grade: yes
+  matched value: 22 chars
 ```
 
-Exit codes are a contract: `0` clean, `1` at least one verdict-grade
-finding, `2` the input is not telemetry at all. Nothing else exits `2`.
+Exit code `1` - fail the build. Note what is on the finding: the source
+class, the sink, the path node by node, the evidence tier of every join it
+crossed, and a redacted match (weir never prints captured secrets into
+your CI logs). Exit codes are a contract: `0` clean, `1` at least one
+verdict-grade finding, `2` the input is not telemetry at all. Nothing else
+exits `2`, and a test proves it across the whole committed corpus.
 
 ## It reads traces weir did not generate
 
-This repository's test suite includes a frozen JSONL capture produced by
+This repository's suite includes a frozen JSONL capture produced by
 `opentelemetry-sdk` and Google's protojson encoder - base64 span ids,
 camelCase keys, string nanosecond fields, one export batch per line. No
 weir code touched those bytes (`fixtures/foreign/PROVENANCE.md` records
-exactly how they were made and what that does and does not prove). The
-adapter maps them at full fidelity and reports the one real deviation as
-commentary:
+how they were made and what that does and does not prove). Weir maps them
+at full fidelity and reports the one real deviation as commentary:
 
+<!-- verify: gauge fixtures/foreign/capture.jsonl -->
 ```
+evidentiary coverage: 100%
+argument capture: 100%
+degraded: 0%
+  linkage: explicit (gen_ai.tool.call.id present)
+  payloads: present
+at your current telemetry: coverage reporting YES - taint/scan YES
 span ids are not OTLP/JSON lowercase hex (base64 protojson output is the usual cause); linkage is unaffected, but spec-true hex ids are recommended
 ```
 
@@ -70,9 +85,12 @@ Everything else - invalid UTF-8, undecodable lines or spans, duplicate or
 missing span ids, orphaned parents, truncated or unparseable payloads,
 clock garbage, unknown dialects, mixed logs/metrics files - degrades under
 one of 18 named contract rows, each carrying a user-facing remediation
-string, each exercised by committed corpora (a corrupt-input corpus plus
-the capture presets). A malformation without a named row is treated as a
-bug in the contract, not a judgment call in the parser.
+string, each exercised by committed corpora. The full table is generated
+from the code and drift-tested: [docs/contract.md](docs/contract.md). A
+malformation without a named row is treated as a bug in the contract, not
+a judgment call in the parser. Every remediation string that makes a claim
+about someone else's software carries a recorded source and check date in
+[REMEDIATION_SOURCES.md](REMEDIATION_SOURCES.md).
 
 ## Evidence tiers, not vibes
 
@@ -89,9 +107,11 @@ has teeth:
 - a finding whose witness path crosses a content-mined join is **never
   verdict-grade**. The finding states its demotion reason on its face.
 
-The consequence: the worst an attacker-controlled document can do to the
-session graph is add visible, low-confidence noise. It cannot silently
-rewire a witness path or suppress a high-confidence finding.
+The design intent: the worst an attacker-controlled document should be
+able to do to the session graph is add visible, low-confidence noise -
+never silently rewire a witness path or suppress a high-confidence
+finding. If you can make attacker content do more than that, that is a
+security bug and we want to hear about it: see [SECURITY.md](SECURITY.md).
 
 ## Calibrated against known ground truth
 
@@ -109,15 +129,15 @@ calibrated against corpora with known degradation:
 | `default-realistic` | absent   | explicit      | 0%                   | no            |
 | flat-linkage dial   | captured | content-mined | 0%                   | yes           |
 
-That last row is deliberate: content-mined linkage supports analysis but
-never counts toward verdict-eligible coverage, because its evidence source
-is the one an attacker can reach. Every number in this table is enforced
-by tests that derive their expectations from the preset definitions and
-are mutation-proven (break the source, watch the test fail, revert).
-
-Determinism is a tested guarantee, not an aspiration: identical inputs
-produce byte-identical outputs across processes and hash seeds, and the
-analysis paths are proven to open no network sockets.
+The presets are deliberately all-or-nothing so each row isolates one
+clause; the metrics themselves aggregate per node, so real, mixed
+telemetry (some calls captured, some not) lands between the rows. The
+flat-linkage row is deliberate policy: content-mined linkage supports
+analysis but never counts toward verdict-eligible coverage, because its
+evidence source is the one an attacker can reach. Every number in this
+table is enforced by tests that derive their expectations from the preset
+definitions and are mutation-proven (break the source, watch the test
+fail, revert).
 
 ## Design notes: the four objections
 
@@ -160,9 +180,10 @@ artifact), the OTel GenAI OTLP-JSON adapter (dialect-pinned to
 `otel-genai/1.42.0`, the last versioned GenAI snapshot with a servable
 schema URL), graph/label/taint/evaluate over verbatim evidence, the gauge
 with its capability ladder, HTML reports, the paired generator, and the
-corpora above. The bundled rule set is a small teaching family
-(injection-to-exfiltration); rules are data files loaded from disk with a
-deterministic global order - never fabricated in code.
+corpora above. The bundled rule set is a single teaching rule
+(injection-to-exfiltration), deliberately small until the contribution
+gate ships; rules are data files loaded from disk with a deterministic
+global order - never fabricated in code.
 
 Roadmap, labeled as such: the golden-diff baseline gate (`weir diff` /
 `weir baseline`; the fact schema and baseline format are shipped, the diff
