@@ -3,11 +3,21 @@ name = "weir-scan"
 version = "0.1.0"
 description = "weir - deterministic, post-hoc verification engine for AI-agent sessions"
 license = "Apache-2.0"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "msgspec>=0.18",
     "click>=8.1",
     "jinja2>=3.1",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Security",
+    "Typing :: Typed",
 ]
 
 [build-system]
