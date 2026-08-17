@@ -15,7 +15,7 @@ Exit-2 rejects are exactly two conditions: the input is not JSON at all (neither
 | nonstandard_id_encoding | span ids are not OTLP/JSON lowercase hex (base64 protojson output is the usual cause); linkage is unaffected, but spec-true hex ids are recommended |
 | unmappable_genai_span | a GenAI span's operation could not be derived; set gen_ai.operation.name on every GenAI span |
 | non_genai_spans_filtered | non-GenAI spans (http/db/plumbing) were filtered from analysis; this is normal and not a defect |
-| missing_content | content capture is off; enable gen_ai.input.messages / gen_ai.output.messages / gen_ai.tool.call.arguments capture (OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY in OTel GenAI instrumentations) to unlock cross-step analysis |
+| missing_content | content capture is off; for OTel GenAI instrumentations built on the util-genai layer, set OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental and OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY to capture gen_ai.input.messages / gen_ai.output.messages / gen_ai.tool.call.arguments and unlock cross-step analysis |
 | unparseable_content | a content attribute was present but not parseable; check the instrumentation's payload serialization |
 | truncated_content | a content attribute appears truncated (payload limit hit); raise the exporter's attribute length limit |
 | invalid_timestamp | a span timestamp was unparseable; ordering fell back to span id - fix the exporter's clock fields |

@@ -34,7 +34,11 @@ def _has_inspectable_args(graph: SessionGraph, index: int) -> bool:
 
 
 def compute_gauge_report(
-    graph: SessionGraph, catalog: Catalog, *, detected_framework: str | None
+    graph: SessionGraph,
+    catalog: Catalog,
+    *,
+    detected_framework: str | None,
+    instrumentation_scope: str | None = None,
 ) -> GaugeReport:
     tool_call_indices = [i for i, n in enumerate(graph.nodes) if n.kind == NodeKind.TOOL_CALL]
     total = len(tool_call_indices)
@@ -78,11 +82,16 @@ def compute_gauge_report(
     # (constitution #5 cuts both ways: silence isn't safety, but a spurious
     # remediation isn't honest either).
     has_capture_gap = _basis_points(inspectable_count, total) < _BASIS_POINTS_SCALE
-    remediation_line = (
-        catalog.remediations.get(detected_framework)
-        if detected_framework and has_capture_gap
-        else None
-    )
+    remediation_line = None
+    if has_capture_gap:
+        # Evidence-keyed: the instrumentation scope RECORDED on the trace
+        # names the package that actually emitted it, so its remediation is
+        # package-precise. The `--framework` CLI guess is only a fallback for
+        # traces (or callers) that carry no scope evidence.
+        if instrumentation_scope is not None:
+            remediation_line = catalog.scope_remediations.get(instrumentation_scope)
+        if remediation_line is None and detected_framework:
+            remediation_line = catalog.remediations.get(detected_framework)
 
     return GaugeReport(
         total_tool_call_nodes=total,

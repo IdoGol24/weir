@@ -6,12 +6,12 @@ indistinguishable from an agent regression.
 
 Two deliberate scoping decisions:
 
-- `remediations` is EXCLUDED. It is advisory prose rendered into the gauge
-  line; it cannot reclassify a flow, so a reworded sentence must not force
-  every user through a spurious re-capture. The exclusion is a DENYLIST, not
-  an allowlist, so any field added to the catalog later is digested by
-  default: a new analytical field silently escaping the skew gate is the far
-  worse failure.
+- `remediations` and `scope_remediations` are EXCLUDED. Both are advisory
+  prose rendered into the gauge line; neither can reclassify a flow, so a
+  reworded sentence must not force every user through a spurious re-capture.
+  The exclusion is a DENYLIST, not an allowlist, so any field added to the
+  catalog later is digested by default: a new analytical field silently
+  escaping the skew gate is the far worse failure.
 - List ORDER is significant here, unlike the sorted fact lists in
   `weir.schema.baseline`. A catalog is a hand-authored ordered document and
   its order is meaning-bearing - the labeler returns the FIRST match in
@@ -28,7 +28,7 @@ import msgspec
 from weir.catalog._types import Catalog
 
 # Advisory presentation copy; see the module docstring.
-_NON_CLASSIFYING_FIELDS = frozenset({"remediations"})
+_NON_CLASSIFYING_FIELDS = frozenset({"remediations", "scope_remediations"})
 
 
 def canonical_catalog_bytes(catalog: Catalog) -> bytes:

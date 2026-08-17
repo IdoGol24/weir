@@ -488,6 +488,11 @@ def map_wire(wire: WireInput) -> AdapterResult:
     mapped_spans: list[MappedSpan] = []
     framework_name: str | None = None
     framework_version: str | None = None
+    # Evidence for remediation selection (not analysis): the first GenAI
+    # span's scope name, verbatim, no prefix filter - any scope name is
+    # recorded, unlike framework_version above which only reads scopes
+    # already known to be an instrumentation scope.
+    instrumentation_scope: str | None = None
     for token, ctx in ordered:
         kind = derive_kind(ctx.span)
         if kind is None:
@@ -519,6 +524,8 @@ def map_wire(wire: WireInput) -> AdapterResult:
             framework_name = provider
         if ctx.scope.name.startswith(_SCOPE_PREFIX) and framework_version is None:
             framework_version = ctx.scope.version or None
+        if ctx.scope.name and instrumentation_scope is None:
+            instrumentation_scope = ctx.scope.name
         nodes.append(TraceNode(
             id=f"n{len(nodes)}", kind=kind, timestamp=iso,
             actor=actor_for(kind), source_ref=token, payload=payload,
@@ -558,6 +565,7 @@ def map_wire(wire: WireInput) -> AdapterResult:
         metadata=TraceMetadata(
             adapter_name=ADAPTER_NAME, adapter_version=ADAPTER_VERSION,
             framework_name=framework_name, framework_version=framework_version,
+            instrumentation_scope=instrumentation_scope,
         ),
     )
     # Canonical ledger order (amendment C applies to the commentary too):

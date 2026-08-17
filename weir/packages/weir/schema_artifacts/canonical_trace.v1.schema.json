@@ -186,6 +186,17 @@
             }
           ],
           "default": null
+        },
+        "instrumentation_scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

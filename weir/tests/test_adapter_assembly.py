@@ -19,7 +19,7 @@ def test_full_preset_maps_cleanly() -> None:
     result = adapt_otlp(_render())
     assert isinstance(result, AdapterResult)
     trace = result.trace
-    assert trace.schema_version == "1.1.0"
+    assert trace.schema_version == "1.2.0"
     assert trace.metadata.adapter_name == "otel"
     assert trace.metadata.framework_name == "langchain"
     assert trace.metadata.framework_version == "0.3"

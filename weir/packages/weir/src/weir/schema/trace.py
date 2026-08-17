@@ -12,7 +12,7 @@ import enum
 
 import msgspec
 
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 
 
 class NodeKind(enum.StrEnum):
@@ -92,6 +92,9 @@ class TraceMetadata(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     adapter_version: str
     framework_name: str | None = None
     framework_version: str | None = None
+    # The scope NAME of the library that produced the spans - the evidence
+    # key for remediation selection (R1.6-adjacent).
+    instrumentation_scope: str | None = None
 
 
 class TraceNode(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

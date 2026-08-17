@@ -17,10 +17,20 @@ from weir.schema.trace import (
 _FIXTURES_DIR = Path(__file__).parents[3] / "fixtures"
 
 
-def _gauge_for(filename: str, *, detected_framework: str | None = "langchain"):  # noqa: ANN201
+def _gauge_for(
+    filename: str,
+    *,
+    detected_framework: str | None = "langchain",
+    instrumentation_scope: str | None = None,
+):  # noqa: ANN201
     trace = decode_canonical_trace((_FIXTURES_DIR / filename).read_bytes())
     graph = build_session_graph(trace)
-    return compute_gauge_report(graph, DEFAULT_CATALOG, detected_framework=detected_framework)
+    return compute_gauge_report(
+        graph,
+        DEFAULT_CATALOG,
+        detected_framework=detected_framework,
+        instrumentation_scope=instrumentation_scope,
+    )
 
 
 def test_full_capture_red_fixture_reports_full_coverage() -> None:
@@ -52,7 +62,11 @@ def test_degraded_fixture_reports_low_coverage_and_a_real_remediation_line() -> 
     assert report.evidentiary_coverage_bp == 3_333
     assert report.remediation_line is not None
     assert report.remediation_line.strip() != ""
-    assert "enable content capture" in report.remediation_line.lower()
+    # This helper does not thread instrumentation_scope through (see
+    # compute_gauge_report's default), so the framework-keyed fallback line
+    # is what fires here - the scope-keyed line is exercised via the CLI
+    # tests instead, where the trace's real scope reaches the gauge.
+    assert "capture mechanisms vary by instrumentation package" in report.remediation_line
 
 
 def test_join_quality_is_fully_explicit_in_this_demos_fixtures() -> None:
@@ -101,6 +115,33 @@ def test_join_quality_split_reports_content_mined_and_sums_to_full() -> None:
 def test_remediation_line_absent_when_framework_is_unknown() -> None:
     report = _gauge_for("injection-exfil.json", detected_framework="some-unregistered-framework")
     assert report.remediation_line is None
+
+
+def test_scope_keyed_remediation_wins_over_framework_fallback() -> None:
+    # Both the scope and the framework key a remediation entry in
+    # DEFAULT_CATALOG - evidence (the recorded instrumentation scope) must
+    # win over the CLI-flag-style framework guess.
+    report = _gauge_for(
+        "injection-exfil-benign.degraded.json",
+        detected_framework="langchain",
+        instrumentation_scope="opentelemetry.instrumentation.langchain",
+    )
+    assert report.remediation_line is not None
+    assert "TRACELOOP_TRACE_CONTENT" in report.remediation_line
+    assert report.remediation_line == DEFAULT_CATALOG.scope_remediations[
+        "opentelemetry.instrumentation.langchain"
+    ]
+
+
+def test_framework_fallback_used_when_scope_is_unknown() -> None:
+    # A scope not present in scope_remediations must fall back to the
+    # framework-keyed line rather than surfacing nothing.
+    report = _gauge_for(
+        "injection-exfil-benign.degraded.json",
+        detected_framework="langchain",
+        instrumentation_scope="opentelemetry.instrumentation.some_other_framework",
+    )
+    assert report.remediation_line == DEFAULT_CATALOG.remediations["langchain"]
 
 
 def test_remediation_line_absent_when_framework_not_detected() -> None:

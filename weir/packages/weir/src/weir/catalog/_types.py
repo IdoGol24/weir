@@ -42,3 +42,9 @@ class Catalog(msgspec.Struct, frozen=True):
     sources: list[SourceSpec]
     sinks: list[SinkSpec]
     remediations: dict[str, str]
+    # Keyed by exact instrumentation scope name (the evidence key TraceMetadata
+    # carries) - package-precise remediation, preferred over the `remediations`
+    # framework-keyed fallback whenever the trace's scope is known. Defaulted
+    # so existing Catalog(...) construction sites (tests building a custom
+    # catalog to vary one field) do not all need updating for this addition.
+    scope_remediations: dict[str, str] = msgspec.field(default_factory=dict[str, str])

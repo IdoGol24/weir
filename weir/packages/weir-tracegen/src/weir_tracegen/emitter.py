@@ -37,6 +37,11 @@ ADAPTER_VERSION = "0.1.0"
 # bundled "langchain" remediation entry (weir.catalog.default).
 FRAMEWORK_NAME = "langchain"
 FRAMEWORK_VERSION = "0.3"
+# Must stay equal to weir_tracegen.otlp.SCOPE_NAME - both are the same
+# f-string over FRAMEWORK_NAME, so the two renderers stamp the same
+# instrumentation scope without either importing the other (see
+# test_emit_instrumentation_scope_matches_otlp_scope_name in test_emitter.py).
+INSTRUMENTATION_SCOPE = f"opentelemetry.instrumentation.{FRAMEWORK_NAME}"
 
 _KIND_MAP = {
     "user_input": NodeKind.USER_INPUT,
@@ -121,6 +126,7 @@ def emit_scenario(spec: ScenarioSpec) -> CanonicalTrace:
             adapter_version=ADAPTER_VERSION,
             framework_name=FRAMEWORK_NAME,
             framework_version=FRAMEWORK_VERSION,
+            instrumentation_scope=INSTRUMENTATION_SCOPE,
         ),
     )
 

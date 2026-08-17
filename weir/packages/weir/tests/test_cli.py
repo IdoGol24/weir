@@ -24,7 +24,10 @@ def test_gauge_on_degraded_trace_shows_remediation_and_exits_zero() -> None:
     )
     assert result.exit_code == 0
     assert "evidentiary coverage: 33%" in result.output
-    assert "enable content capture" in result.output.lower()
+    # The native fixture carries the langchain instrumentation scope, so the
+    # gauge selects the scope-keyed (Traceloop-precise) line, not the
+    # framework-keyed fallback.
+    assert "TRACELOOP_TRACE_CONTENT" in result.output
 
 
 def test_gauge_json_output_is_valid_json_with_expected_fields() -> None:
@@ -108,7 +111,7 @@ def test_the_three_demo_commands_run_end_to_end() -> None:
         )
         assert gauge_result.exit_code == 0
         assert "evidentiary coverage:" in gauge_result.output
-        assert "enable content capture" in gauge_result.output.lower()
+        assert "TRACELOOP_TRACE_CONTENT" in gauge_result.output
 
         red_result = runner.invoke(
             main,
@@ -181,6 +184,16 @@ def test_gauge_sample_runs_with_zero_setup() -> None:
     result = runner.invoke(main, ["gauge", "--sample"])
     assert result.exit_code == 0
     assert "at your current telemetry" in result.output
+
+
+def test_gauge_sample_selects_the_scope_precise_traceloop_remediation() -> None:
+    # The bundled sample carries the Traceloop/OpenLLMetry langchain
+    # instrumentation scope, not a weir-guessed framework - evidence-keying
+    # must select the scope-precise line over the generic --framework guess.
+    runner = CliRunner()
+    result = runner.invoke(main, ["gauge", "--sample"])
+    assert result.exit_code == 0
+    assert "TRACELOOP_TRACE_CONTENT" in result.output
 
 
 def test_gauge_with_no_argument_and_no_sample_flag_is_a_usage_error() -> None:

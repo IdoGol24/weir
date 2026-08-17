@@ -27,10 +27,21 @@ DEFAULT_CATALOG = Catalog(
     ],
     remediations={
         "langchain": (
-            "tool arguments not captured - enable content capture in your OTel "
-            "GenAI instrumentation: set "
-            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY (content "
-            "is off by default; weir reads span attributes)"
+            "tool arguments not captured - capture mechanisms vary by "
+            "instrumentation package; for OTel GenAI instrumentations built on "
+            "the util-genai layer, set "
+            "OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental and "
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY "
+            "(content is off by default; weir reads span attributes)"
+        ),
+    },
+    scope_remediations={
+        "opentelemetry.instrumentation.langchain": (
+            "tool arguments not captured - this scope is emitted by "
+            "Traceloop/OpenLLMetry's LangChain instrumentation, which captures "
+            "content to span attributes by default; check "
+            "TRACELOOP_TRACE_CONTENT (false disables capture) in the traced "
+            "service's environment"
         ),
     },
 )
