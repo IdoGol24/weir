@@ -13,6 +13,7 @@ rule exists.
 
 from __future__ import annotations
 
+import importlib.resources
 import json as _json
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from weir.gauge import compute_gauge_report
 from weir.gauge.ladder import capability_ladder_lines
 from weir.graph import build_session_graph
 from weir.label import label_graph
-from weir.report import render_html_report
+from weir.report import finding_lines, render_html_report
 from weir.rules_commons import load_rules
 from weir.schema.trace import CanonicalTrace, decode_canonical_trace
 from weir.taint import build_tainted_graph
@@ -57,14 +58,18 @@ def _looks_like_otlp(data: bytes) -> bool:
 
 
 def _load_input_or_exit(
-    trace_path: str, input_format: str
+    trace_path: str | None, input_format: str, *, data: bytes | None = None
 ) -> tuple[CanonicalTrace, list[str]]:
-    """Returns (trace, remediation strings from the adapter ledger)."""
-    try:
-        data = Path(trace_path).read_bytes()
-    except OSError as exc:
-        click.echo(f"error: cannot read trace file {trace_path!r}: {exc}", err=True)
-        raise SystemExit(2) from exc
+    """Returns (trace, remediation strings from the adapter ledger). Pass
+    `data` directly (e.g. the bundled `--sample` bytes) to skip the filesystem
+    read; otherwise `trace_path` is read from disk."""
+    if data is None:
+        assert trace_path is not None
+        try:
+            data = Path(trace_path).read_bytes()
+        except OSError as exc:
+            click.echo(f"error: cannot read trace file {trace_path!r}: {exc}", err=True)
+            raise SystemExit(2) from exc
     use_otlp = input_format == "otlp" or (
         input_format == "auto" and _looks_like_otlp(data)
     )
@@ -86,7 +91,12 @@ def _load_input_or_exit(
 
 
 @main.command("gauge")
-@click.argument("trace_path", type=click.Path(exists=False))
+@click.argument("trace_path", type=click.Path(exists=False), required=False)
+@click.option(
+    "--sample",
+    is_flag=True,
+    help="Run on the bundled sample export (a content-off OTLP trace) - zero setup.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON (R3.8 seed).")
 @click.option(
     "--framework",
@@ -103,10 +113,22 @@ def _load_input_or_exit(
     help="Input format; auto sniffs for a resourceSpans key.",
 )
 def gauge_command(
-    trace_path: str, as_json: bool, detected_framework: str, input_format: str
+    trace_path: str | None,
+    sample: bool,
+    as_json: bool,
+    detected_framework: str,
+    input_format: str,
 ) -> None:
     """Standalone (R3.5): no rules, no catalog customization needed."""
-    trace, remediations = _load_input_or_exit(trace_path, input_format)
+    if sample:
+        sample_bytes = importlib.resources.files("weir.data").joinpath(
+            "sample-export.json"
+        ).read_bytes()
+        trace, remediations = _load_input_or_exit(None, input_format, data=sample_bytes)
+    elif trace_path:
+        trace, remediations = _load_input_or_exit(trace_path, input_format)
+    else:
+        raise click.UsageError("provide a trace file or --sample")
     graph = build_session_graph(trace)
     report = compute_gauge_report(graph, DEFAULT_CATALOG, detected_framework=detected_framework)
 
@@ -183,9 +205,17 @@ def scan_command(
 
     if verdict_grade_findings:
         click.echo(f"{len(verdict_grade_findings)} verdict-grade finding(s)")
-        raise SystemExit(1)
-    click.echo("0 verdict-grade findings")
-    raise SystemExit(0)
+        exit_code = 1
+    else:
+        click.echo("0 verdict-grade findings")
+        exit_code = 0
+
+    rules_by_id = {rule.id: rule for rule in rules}
+    for finding in findings:
+        for line in finding_lines(finding, graph, rules_by_id):
+            click.echo(line)
+
+    raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":

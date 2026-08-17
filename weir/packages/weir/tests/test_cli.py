@@ -174,3 +174,35 @@ def test_gauge_sniffs_otlp_when_the_first_line_is_corrupt_mid_write() -> None:
         )
         result = runner.invoke(main, ["gauge", "bad-first-line.jsonl"])
     assert result.exit_code == 0
+
+
+def test_gauge_sample_runs_with_zero_setup() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["gauge", "--sample"])
+    assert result.exit_code == 0
+    assert "at your current telemetry" in result.output
+
+
+def test_gauge_with_no_argument_and_no_sample_flag_is_a_usage_error() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["gauge"])
+    assert result.exit_code == 2
+
+
+def test_scan_red_trace_finding_block_shows_witness_path_without_leaking_the_iban() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["scan", str(_FIXTURES_DIR / "injection-exfil.json")])
+    assert result.exit_code == 1
+    assert "finding: injection-exfil-to-outbound-sink" in result.output
+    assert "witness path:" in result.output
+    assert "join tiers crossed:" in result.output
+    assert _PLANTED_IBAN not in result.output
+
+
+def test_scan_benign_trace_prints_no_finding_blocks() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["scan", str(_FIXTURES_DIR / "injection-exfil-benign.json")]
+    )
+    assert result.exit_code == 0
+    assert "finding:" not in result.output
