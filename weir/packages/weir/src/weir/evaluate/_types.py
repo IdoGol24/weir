@@ -16,6 +16,9 @@ class Finding(msgspec.Struct, frozen=True):
     matched_value: str
     witness_path: list[int]
     is_verdict_grade: bool
+    # Why a finding is NOT verdict-grade, stated on the finding itself (M4
+    # design section 3 rule 2). Empty for verdict-grade findings.
+    demotion_reasons: list[str] = []
 
 
 class EvaluationResult(msgspec.Struct, frozen=True):

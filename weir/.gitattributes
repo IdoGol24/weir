@@ -1,0 +1,4 @@
+# Fixtures are byte-exact artifacts compared by drift tests via read_bytes();
+# EOL smudging on checkout (core.autocrlf) would break every byte-compare on
+# a fresh Windows clone. No conversion, ever.
+fixtures/** -text

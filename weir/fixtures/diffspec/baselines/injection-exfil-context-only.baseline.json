@@ -53,7 +53,7 @@
         "5f406b9f0b935aea730d043f18e60ba5aab891a5d52e42bc8ae84bb9eaf8f767": 1
       },
       "source_trace_digests": [
-        "89cd6172a09e690260b8207a8b3713d4b38e764337e30dd319172df5b191c6a0"
+        "d99aab48f02680b1110a20c6db8c7189c72efc73aaaa462e1ee94947686313c0"
       ],
       "accepted": []
     }
@@ -61,6 +61,8 @@
   "metadata": {
     "weir_version": "0.1.0",
     "catalog_digest": "babe824ce7a873e6a356cfe9dfc6704d35e349c1652cae0afb6d874e0f3546fe",
+    "dialect_profile_id": "native-seam1/1",
+    "dialect_profile_digest": "591e4e1827e11f1079b08b1b06e778fe75d90c5317cab888831c17b603d3e08e",
     "parent_digest": null
   }
 }

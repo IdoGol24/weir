@@ -12,6 +12,7 @@ import msgspec
 class JoinQualitySplit(msgspec.Struct, frozen=True):
     explicit_bp: int
     nested_bp: int
+    content_mined_bp: int
     heuristic_bp: int
 
 

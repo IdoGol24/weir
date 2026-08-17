@@ -76,7 +76,11 @@ REPORT_TEMPLATE = """<!doctype html>
 {% endif %}
 
 <footer>{{ steps_scanned }} steps scanned, {{ rules_evaluated }} rules evaluated,
-  {{ arg_capture_pct }}% argument capture.</footer>
+  {{ arg_capture_pct }}% argument capture.
+  {% for line in ladder_lines %}
+  <div>{{ line }}</div>
+  {% endfor %}
+</footer>
 </body>
 </html>
 """

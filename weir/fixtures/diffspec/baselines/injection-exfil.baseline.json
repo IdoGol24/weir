@@ -53,11 +53,11 @@
         "5f406b9f0b935aea730d043f18e60ba5aab891a5d52e42bc8ae84bb9eaf8f767": 5
       },
       "source_trace_digests": [
-        "2b399fcbfc9bfac0e625a1d21d2619b09accad041157d0f41f84549706b5e952",
-        "30dfa4770ea91380c02a523f2d876484a5315837d0f0e787fc23bf0075395e42",
-        "6e14d0140db5b05658ee40b7e6abfe726c04574ccd30e85a39bd0198b719a533",
-        "95aa5867732ec4aa4200494245d2c11a35b72cf4d91eca5b7ebb709b25ac10af",
-        "a7fb2021c4a0f163dbc716260da454203bf4ba11e4b10647efb90147899dfc3a"
+        "5056864906ad84ab2d01fecadb834ebac3ac60604640844dfb0fe372d62f4861",
+        "62bfaeab1379851881af134ea9746861a41c5c92120fe813d46415bf3b785025",
+        "9b7943f7f7645a3a54d66f1786f780e26bfa88789aae6191f817f317df81e2a5",
+        "cc548feb449def11bee856cce898243e6eba8be78e7cc97a796ce71981a7f5f2",
+        "e4d2686972665977f166eca8478750cc5ed6dc54ddaa719dcb047070f370d2fb"
       ],
       "accepted": []
     }
@@ -65,6 +65,8 @@
   "metadata": {
     "weir_version": "0.1.0",
     "catalog_digest": "babe824ce7a873e6a356cfe9dfc6704d35e349c1652cae0afb6d874e0f3546fe",
+    "dialect_profile_id": "native-seam1/1",
+    "dialect_profile_digest": "591e4e1827e11f1079b08b1b06e778fe75d90c5317cab888831c17b603d3e08e",
     "parent_digest": null
   }
 }

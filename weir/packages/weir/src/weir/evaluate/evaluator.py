@@ -24,10 +24,8 @@ from __future__ import annotations
 from weir.evaluate._types import EvaluationResult, Finding
 from weir.evaluate.witness import joins_on_path, shortest_witness_path
 from weir.rules_commons import RuleSpec
-from weir.schema.trace import JoinConfidence, ToolCallPayload
+from weir.schema.trace import VERDICT_GRADE_JOIN_CONFIDENCES, ToolCallPayload
 from weir.taint import TaintedGraph
-
-_VERDICT_GRADE_JOIN_CONFIDENCES = frozenset({JoinConfidence.EXPLICIT, JoinConfidence.NESTED})
 
 
 def evaluate(tainted: TaintedGraph, rules: list[RuleSpec]) -> EvaluationResult:
@@ -49,13 +47,23 @@ def evaluate(tainted: TaintedGraph, rules: list[RuleSpec]) -> EvaluationResult:
         if path is None:
             continue  # shouldn't happen: L15 only records matches within the reachable set
 
-        no_degraded_witness_node = not any(graph.nodes[i].degraded for i in path)
-        joins_ok = all(
-            j.join_confidence in _VERDICT_GRADE_JOIN_CONFIDENCES
-            for j in joins_on_path(graph, path)
+        demotion_reasons: list[str] = []
+        if any(graph.nodes[i].degraded for i in path):
+            demotion_reasons.append("degraded node on witness path")
+        bad_tiers = sorted(
+            {
+                j.join_confidence.value
+                for j in joins_on_path(graph, path)
+                if j.join_confidence not in VERDICT_GRADE_JOIN_CONFIDENCES
+            }
         )
-        rule_active = rule.stage == "active"
-        is_verdict_grade = no_degraded_witness_node and joins_ok and rule_active
+        if bad_tiers:
+            demotion_reasons.append(
+                "non-verdict join tier on witness path: " + ",".join(bad_tiers)
+            )
+        if rule.stage != "active":
+            demotion_reasons.append(f"rule stage is {rule.stage!r}, not active")
+        is_verdict_grade = not demotion_reasons
 
         findings.append(
             Finding(
@@ -66,6 +74,7 @@ def evaluate(tainted: TaintedGraph, rules: list[RuleSpec]) -> EvaluationResult:
                 matched_value=match.matched_value,
                 witness_path=path,
                 is_verdict_grade=is_verdict_grade,
+                demotion_reasons=demotion_reasons,
             )
         )
 

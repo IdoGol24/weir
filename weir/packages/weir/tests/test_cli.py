@@ -7,6 +7,7 @@ from weir.cli.main import main
 
 _FIXTURES_DIR = Path(__file__).parents[3] / "fixtures"
 _PLANTED_IBAN = "DE89370400440532013000"
+_OTLP_FIXTURE = Path(__file__).parents[3] / "fixtures" / "otlp" / "injection-exfil.full.json"
 
 
 def test_gauge_on_full_capture_trace_exits_zero() -> None:
@@ -129,3 +130,47 @@ def test_the_three_demo_commands_run_end_to_end() -> None:
         assert green_result.exit_code == 0
         green_html = Path("green.html").read_text(encoding="utf-8")
         assert "0 verdict-grade findings" in green_html
+
+
+def test_gauge_sniffs_otlp_and_exits_zero() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["gauge", str(_OTLP_FIXTURE)])
+    assert result.exit_code == 0
+    assert "evidentiary coverage" in result.output
+    assert "at your current telemetry" in result.output
+
+
+def test_scan_sniffs_otlp_and_exits_one_on_injection() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["scan", str(_OTLP_FIXTURE)])
+    assert result.exit_code == 1  # the injection scenario has a verdict finding
+
+
+def test_input_format_native_rejects_otlp_file() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["gauge", str(_OTLP_FIXTURE), "--input-format", "native"]
+    )
+    assert result.exit_code == 2
+
+
+def test_scan_report_includes_the_capability_ladder_footer() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            main, ["scan", str(_OTLP_FIXTURE), "--report", "report.html"]
+        )
+        html = Path("report.html").read_text(encoding="utf-8")
+    assert result.exit_code == 1
+    assert "at your current telemetry" in html
+
+
+def test_gauge_sniffs_otlp_when_the_first_line_is_corrupt_mid_write() -> None:
+    good_line = json.dumps(json.loads(_OTLP_FIXTURE.read_bytes()))
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("bad-first-line.jsonl").write_text(
+            "{corrupt mid-write\n" + good_line + "\n"
+        )
+        result = runner.invoke(main, ["gauge", "bad-first-line.jsonl"])
+    assert result.exit_code == 0

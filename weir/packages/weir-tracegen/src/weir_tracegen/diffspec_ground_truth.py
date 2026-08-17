@@ -29,6 +29,7 @@ from weir.schema.baseline import (
     FlowBaseline,
     ScenarioBaseline,
 )
+from weir.schema.dialect import NATIVE_SEAM1, profile_digest
 from weir.schema.flowfact import (
     FACT_SCHEMA_VERSION,
     EvidenceConfidence,
@@ -106,5 +107,7 @@ def red_baseline(
         metadata=BaselineMetadata(
             weir_version=weir_version,
             catalog_digest=catalog_digest,
+            dialect_profile_id=NATIVE_SEAM1.profile_id,
+            dialect_profile_digest=profile_digest(NATIVE_SEAM1),
         ),
     )

@@ -171,6 +171,30 @@ def test_finding_demoted_when_rule_stage_is_shadow() -> None:
     assert finding.is_verdict_grade is False
 
 
+def test_content_mined_edge_demotes_with_stated_reason() -> None:
+    tainted = _synthetic_tainted(
+        next_edges=[Edge(src=1, dst=2)],
+        joins=[
+            GraphJoin(
+                call_index=0, result_index=1,
+                join_confidence=JoinConfidence.CONTENT_MINED,
+            )
+        ],
+    )
+    (finding,) = evaluate(tainted, [_ACTIVE_RULE]).findings
+    assert finding.is_verdict_grade is False
+    assert any("content_mined" in r for r in finding.demotion_reasons)
+
+
+def test_verdict_grade_finding_has_no_demotion_reasons() -> None:
+    tainted = _synthetic_tainted(
+        next_edges=[Edge(src=0, dst=1), Edge(src=1, dst=2)], joins=[]
+    )
+    (finding,) = evaluate(tainted, [_ACTIVE_RULE]).findings
+    assert finding.is_verdict_grade is True
+    assert finding.demotion_reasons == []
+
+
 def test_evaluate_output_is_deterministically_ordered() -> None:
     first = _end_to_end_findings("injection-exfil.json")
     second = _end_to_end_findings("injection-exfil.json")

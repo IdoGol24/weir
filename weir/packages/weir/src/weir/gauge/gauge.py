@@ -14,7 +14,12 @@ from __future__ import annotations
 from weir.catalog import Catalog
 from weir.gauge._types import GaugeReport, JoinQualitySplit
 from weir.graph import SessionGraph
-from weir.schema.trace import JoinConfidence, NodeKind, ToolCallPayload
+from weir.schema.trace import (
+    VERDICT_GRADE_JOIN_CONFIDENCES,
+    JoinConfidence,
+    NodeKind,
+    ToolCallPayload,
+)
 
 _BASIS_POINTS_SCALE = 10_000
 
@@ -44,7 +49,7 @@ def compute_gauge_report(
         confidence = join_confidence_by_call_index.get(i)
         return (
             _has_inspectable_args(graph, i)
-            and confidence in (JoinConfidence.EXPLICIT, JoinConfidence.NESTED)
+            and confidence in VERDICT_GRADE_JOIN_CONFIDENCES
             and not graph.nodes[i].degraded
         )
 
@@ -58,6 +63,9 @@ def compute_gauge_report(
         ),
         nested_bp=_basis_points(
             sum(1 for c in confidences if c == JoinConfidence.NESTED), join_total
+        ),
+        content_mined_bp=_basis_points(
+            sum(1 for c in confidences if c == JoinConfidence.CONTENT_MINED), join_total
         ),
         heuristic_bp=_basis_points(
             sum(1 for c in confidences if c == JoinConfidence.HEURISTIC), join_total

@@ -36,7 +36,8 @@ class EvidenceConfidence(enum.StrEnum):
     """Ordered evidence tiers (derivation is post-M4 engine work; documented
     mapping: FULL = explicit joins only, no degraded node, args inspectable
     along the witness; PARTIAL = a nested join on the path; DEGRADED = a
-    heuristic join, a degraded node, or missing args on the path)."""
+    heuristic or content_mined join, a degraded node, or missing args on the
+    path)."""
 
     FULL = "full"
     PARTIAL = "partial"

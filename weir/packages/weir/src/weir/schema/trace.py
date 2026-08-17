@@ -12,7 +12,7 @@ import enum
 
 import msgspec
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 
 class NodeKind(enum.StrEnum):
@@ -23,11 +23,24 @@ class NodeKind(enum.StrEnum):
 
 
 class JoinConfidence(enum.StrEnum):
-    """Join precedence per R1.4: explicit id > parent/child nesting > heuristic."""
+    """Join precedence per R1.4, amended by the M4 design (section 3):
+    explicit id > parent/child nesting > content-mined > heuristic.
+    CONTENT_MINED never competes with the envelope tiers - it fills absences
+    only, and any finding whose witness path traverses it is never
+    verdict-grade. HEURISTIC is named by R1.4 but nothing assigns it in M4."""
 
     EXPLICIT = "explicit"
     NESTED = "nested"
+    CONTENT_MINED = "content_mined"
     HEURISTIC = "heuristic"
+
+
+# The join tiers whose evidence supports a verdict-grade finding (M4 design
+# section 3: content_mined and heuristic never do). The single source for
+# the gauge's eligibility check and the evaluator's demotion check.
+VERDICT_GRADE_JOIN_CONFIDENCES = frozenset(
+    {JoinConfidence.EXPLICIT, JoinConfidence.NESTED}
+)
 
 
 class _PayloadBase(msgspec.Struct, frozen=True, forbid_unknown_fields=True, tag_field="type"):
@@ -61,11 +74,15 @@ Payload = ToolCallPayload | ToolResultPayload | LlmCallPayload | UserInputPayloa
 class JoinRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Ties a tool_call node to its tool_result node (R1.4). `join_confidence`
     is carried permanently - never discarded after joining - because it feeds
-    the §7 verdict-grade decision downstream."""
+    the §7 verdict-grade decision downstream. `join_source` is the MECHANISM
+    detail (which attribute / which mined pattern, per dialect); it is
+    adapter-determined provenance and sits in the M4 equivalence
+    normalization set, so the enum never grows for mechanism reasons."""
 
     tool_call_source_ref: str
     tool_result_source_ref: str
     join_confidence: JoinConfidence
+    join_source: str | None = None
 
 
 class TraceMetadata(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

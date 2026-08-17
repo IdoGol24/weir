@@ -13,14 +13,17 @@ rule exists.
 
 from __future__ import annotations
 
+import json as _json
 from pathlib import Path
 
 import click
 import msgspec
 
+from weir.adapters.otel import REMEDIATION, OtlpRejectError, adapt_otlp
 from weir.catalog import DEFAULT_CATALOG
 from weir.evaluate import evaluate
 from weir.gauge import compute_gauge_report
+from weir.gauge.ladder import capability_ladder_lines
 from weir.graph import build_session_graph
 from weir.label import label_graph
 from weir.report import render_html_report
@@ -28,20 +31,55 @@ from weir.rules_commons import load_rules
 from weir.schema.trace import CanonicalTrace, decode_canonical_trace
 from weir.taint import build_tainted_graph
 
+_BOM = b"\xef\xbb\xbf"
+
 
 @click.group()
 def main() -> None:
     pass
 
 
-def _load_trace_or_exit(trace_path: str) -> CanonicalTrace:
+def _looks_like_otlp(data: bytes) -> bool:
+    text = data.removeprefix(_BOM).decode("utf-8", errors="replace")
+    try:
+        parsed = _json.loads(text)
+    except _json.JSONDecodeError:
+        parsed = None
+        for line in text.splitlines():
+            try:
+                parsed = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            break
+    if isinstance(parsed, dict):
+        return "resourceSpans" in parsed or "resource_spans" in parsed
+    return False
+
+
+def _load_input_or_exit(
+    trace_path: str, input_format: str
+) -> tuple[CanonicalTrace, list[str]]:
+    """Returns (trace, remediation strings from the adapter ledger)."""
     try:
         data = Path(trace_path).read_bytes()
     except OSError as exc:
         click.echo(f"error: cannot read trace file {trace_path!r}: {exc}", err=True)
         raise SystemExit(2) from exc
+    use_otlp = input_format == "otlp" or (
+        input_format == "auto" and _looks_like_otlp(data)
+    )
+    if use_otlp:
+        try:
+            result = adapt_otlp(data)
+        except OtlpRejectError as exc:
+            click.echo(f"error: invalid OTLP input: {exc}", err=True)
+            raise SystemExit(2) from exc
+        remediations = list(
+            dict.fromkeys(REMEDIATION[d.reason] for d in result.degradations)
+        )
+        return result.trace, remediations
     try:
-        return decode_canonical_trace(data)
+        return decode_canonical_trace(data), []
     except (msgspec.ValidationError, msgspec.DecodeError) as exc:
         click.echo(f"error: invalid trace: {exc}", err=True)
         raise SystemExit(2) from exc
@@ -57,9 +95,18 @@ def _load_trace_or_exit(trace_path: str) -> CanonicalTrace:
     show_default=True,
     help="Framework to key the R3.4 remediation line off of.",
 )
-def gauge_command(trace_path: str, as_json: bool, detected_framework: str) -> None:
+@click.option(
+    "--input-format",
+    type=click.Choice(["auto", "native", "otlp"]),
+    default="auto",
+    show_default=True,
+    help="Input format; auto sniffs for a resourceSpans key.",
+)
+def gauge_command(
+    trace_path: str, as_json: bool, detected_framework: str, input_format: str
+) -> None:
     """Standalone (R3.5): no rules, no catalog customization needed."""
-    trace = _load_trace_or_exit(trace_path)
+    trace, remediations = _load_input_or_exit(trace_path, input_format)
     graph = build_session_graph(trace)
     report = compute_gauge_report(graph, DEFAULT_CATALOG, detected_framework=detected_framework)
 
@@ -71,6 +118,8 @@ def gauge_command(trace_path: str, as_json: bool, detected_framework: str) -> No
         click.echo(f"degraded: {report.degraded_bp // 100}%")
         if report.remediation_line:
             click.echo(report.remediation_line)
+        for line in capability_ladder_lines(report, remediations=remediations):
+            click.echo(line)
     raise SystemExit(0)
 
 
@@ -94,13 +143,21 @@ def gauge_command(trace_path: str, as_json: bool, detected_framework: str) -> No
     show_default=True,
     help="Framework to key the R3.4 remediation line off of.",
 )
+@click.option(
+    "--input-format",
+    type=click.Choice(["auto", "native", "otlp"]),
+    default="auto",
+    show_default=True,
+    help="Input format; auto sniffs for a resourceSpans key.",
+)
 def scan_command(
     trace_path: str,
     report_path: str | None,
     fail_on: str,  # noqa: ARG001 - accepted for CLI-surface fidelity (G6); see help text
     detected_framework: str,
+    input_format: str,
 ) -> None:
-    trace = _load_trace_or_exit(trace_path)
+    trace, remediations = _load_input_or_exit(trace_path, input_format)
     graph = build_session_graph(trace)
     labeled = label_graph(graph, DEFAULT_CATALOG)
     tainted = build_tainted_graph(labeled, DEFAULT_CATALOG)
@@ -113,12 +170,14 @@ def scan_command(
     verdict_grade_findings = [f for f in findings if f.is_verdict_grade]
 
     if report_path is not None:
+        ladder = capability_ladder_lines(gauge_report, remediations=remediations)
         html = render_html_report(
             scenario_name=Path(trace_path).stem,
             graph=graph,
             gauge=gauge_report,
             findings=findings,
             rules=rules,
+            ladder_lines=ladder,
         )
         Path(report_path).write_text(html, encoding="utf-8")
 

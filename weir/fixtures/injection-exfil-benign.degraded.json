@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "nodes": [
     {
       "id": "n0",
@@ -85,9 +85,9 @@
         "type": "tool_call",
         "tool_name": "send_email",
         "args": {
-          "to": "user@acme.example",
+          "body": "Open tickets summary: 1 ticket, no action needed.",
           "subject": "Ticket summary",
-          "body": "Open tickets summary: 1 ticket, no action needed."
+          "to": "user@acme.example"
         }
       },
       "degraded": false
@@ -109,17 +109,20 @@
     {
       "tool_call_source_ref": "native-injection-exfil-benign-1",
       "tool_result_source_ref": "native-injection-exfil-benign-2",
-      "join_confidence": "explicit"
+      "join_confidence": "explicit",
+      "join_source": null
     },
     {
       "tool_call_source_ref": "native-injection-exfil-benign-4",
       "tool_result_source_ref": "native-injection-exfil-benign-5",
-      "join_confidence": "explicit"
+      "join_confidence": "explicit",
+      "join_source": null
     },
     {
       "tool_call_source_ref": "native-injection-exfil-benign-6",
       "tool_result_source_ref": "native-injection-exfil-benign-7",
-      "join_confidence": "explicit"
+      "join_confidence": "explicit",
+      "join_source": null
     }
   ],
   "metadata": {

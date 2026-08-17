@@ -13,6 +13,7 @@ from weir.schema.baseline import (
     decode_flow_baseline,
     validate_flow_baseline,
 )
+from weir.schema.dialect import NATIVE_SEAM1, profile_digest
 from weir.schema.flowfact import (
     FACT_SCHEMA_VERSION,
     EvidenceConfidence,
@@ -70,7 +71,12 @@ def _baseline(
                 accepted=sorted(accepted),
             )
         ],
-        metadata=BaselineMetadata(weir_version="0.1.0", catalog_digest="a" * 64),
+        metadata=BaselineMetadata(
+            weir_version="0.1.0",
+            catalog_digest="a" * 64,
+            dialect_profile_id=NATIVE_SEAM1.profile_id,
+            dialect_profile_digest=profile_digest(NATIVE_SEAM1),
+        ),
     )
 
 
@@ -175,9 +181,20 @@ def test_orphan_observation_count_rejected() -> None:
 
 def test_malformed_digests_rejected() -> None:
     with pytest.raises(ValueError, match="catalog_digest"):
-        BaselineMetadata(weir_version="0.1.0", catalog_digest="short")
+        BaselineMetadata(
+            weir_version="0.1.0",
+            catalog_digest="short",
+            dialect_profile_id=NATIVE_SEAM1.profile_id,
+            dialect_profile_digest=profile_digest(NATIVE_SEAM1),
+        )
     with pytest.raises(ValueError, match="parent_digest"):
-        BaselineMetadata(weir_version="0.1.0", catalog_digest="a" * 64, parent_digest="nope")
+        BaselineMetadata(
+            weir_version="0.1.0",
+            catalog_digest="a" * 64,
+            dialect_profile_id=NATIVE_SEAM1.profile_id,
+            dialect_profile_digest=profile_digest(NATIVE_SEAM1),
+            parent_digest="nope",
+        )
 
 
 def test_scenarios_must_be_sorted_and_unique() -> None:
@@ -239,4 +256,19 @@ def test_source_trace_digests_must_match_n_runs() -> None:
             observations=BaselineObservations(uncataloged_tools_on_tainted_paths=[]),
             observation_counts={},
             source_trace_digests=["b" * 64],
+        )
+
+
+def test_baseline_metadata_carries_dialect_profile_provenance() -> None:
+    metadata = BaselineMetadata(
+        weir_version="0.1.0",
+        catalog_digest="a" * 64,
+        dialect_profile_id=NATIVE_SEAM1.profile_id,
+        dialect_profile_digest=profile_digest(NATIVE_SEAM1),
+    )
+    assert metadata.dialect_profile_id == "native-seam1/1"
+    with pytest.raises(ValueError, match="dialect_profile_digest"):
+        BaselineMetadata(
+            weir_version="0.1.0", catalog_digest="a" * 64,
+            dialect_profile_id="native-seam1/1", dialect_profile_digest="short",
         )
