@@ -90,3 +90,14 @@ def profile_digest(profile: DialectProfile) -> str:
     and same skew-policy purpose as the catalog digest: facts derived under
     different dialect profiles are not comparable."""
     return content_digest(profile)
+
+
+# The pseudo-profile for native Seam-1 traces, so baseline provenance is
+# ALWAYS populated (M4 design section 6: no real baseline may predate the
+# profile-provenance field). Not in DIALECT_REGISTRY: it is not an OTLP
+# dialect and nothing may select it from wire input.
+NATIVE_SEAM1 = DialectProfile(
+    profile_id="native-seam1/1",
+    schema_url="",
+    attributes=[],
+)

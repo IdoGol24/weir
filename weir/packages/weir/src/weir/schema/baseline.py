@@ -97,15 +97,22 @@ class ScenarioBaseline(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 class BaselineMetadata(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Baseline-wide facts: the tooling that produced it, the skew-policy
     input, and the accept-chain link. Per-scenario capture facts live on
-    ScenarioBaseline."""
+    ScenarioBaseline.
+
+    `dialect_profile_id`/`digest` are the third skew axis (M4 design section
+    6): facts derived under different dialect profiles are not comparable,
+    same family as catalog_digest."""
 
     weir_version: str
     catalog_digest: str
+    dialect_profile_id: str
+    dialect_profile_digest: str
     # accept-chain parent (spec section 5); None for a fresh capture
     parent_digest: str | None = None
 
     def __post_init__(self) -> None:
         _require_digest("catalog_digest", self.catalog_digest)
+        _require_digest("dialect_profile_digest", self.dialect_profile_digest)
         if self.parent_digest is not None:
             _require_digest("parent_digest", self.parent_digest)
 
