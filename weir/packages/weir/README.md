@@ -193,6 +193,18 @@ rule bundles with offline verification, and additional dialect rows (the
 registry names the GenAI semconv repo's first release, legacy event-style
 `gen_ai.*`, OpenLLMetry, OpenInference, and Langfuse; none are built).
 
+## Open core, in writing
+
+The engine is Apache-2.0 permanently - schema, adapters, graph, taint,
+evaluation, gauge, reporters, generator, teaching rules, and the future
+diff/baseline gate. The loader enforces authenticity, never entitlement:
+no license check in evaluation, no feature gate in the analysis path, and
+no telemetry phoning home (the analysis path opens no sockets - tested;
+fetching rule bundles is a separate, explicit command). The commercial
+layer is content and services around the engine - signed, maintained rule
+bundles and support - never capability withheld from it. The full signed
+boundary: [docs/open-core.md](docs/open-core.md).
+
 ## Names, so nothing surprises you
 
 The PyPI distribution is **`weir-scan`** (the name `weir` was taken). The

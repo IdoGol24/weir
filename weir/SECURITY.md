@@ -27,6 +27,11 @@ especially wanted:
 Determinism violations (same input, different output) are bugs and may be
 security-relevant; report them too.
 
+Out of scope: resource exhaustion from pathological input sizes (a
+multi-gigabyte file exhausting memory is a capacity concern, not a
+contract violation - the no-crash contract covers malformed telemetry,
+not unbounded telemetry).
+
 ## Supported versions
 
 Pre-1.0: only the latest release is supported.
