@@ -18,6 +18,17 @@ from weir_tracegen.scenarios.presets import apply_preset
 
 _SEED = 1
 
+# Reverse of weir.adapters.otel._map._SPAN_KIND_NAMES, inlined: tracegen may
+# only reach weir.schema, never weir.adapters.
+_SPAN_KIND_TO_NAME = {
+    0: "SPAN_KIND_UNSPECIFIED",
+    1: "SPAN_KIND_INTERNAL",
+    2: "SPAN_KIND_SERVER",
+    3: "SPAN_KIND_CLIENT",
+    4: "SPAN_KIND_PRODUCER",
+    5: "SPAN_KIND_CONSUMER",
+}
+
 
 def _doc() -> dict[str, Any]:
     plan = apply_preset(instantiate("injection-exfil", seed=_SEED), "full")
@@ -181,6 +192,13 @@ def render_corrupt_corpus() -> dict[str, bytes]:
     doc = _doc()
     doc["resourceSpans"][0]["scopeSpans"][0]["scope"] = {"name": ["not", "a", "string"]}
     items["undecodable-scope.json"] = _dumps(doc)
+
+    # Vanilla protojson (default MessageToJson options): span kind rendered
+    # as its proto enum NAME, not the OTLP/JSON-mandated int.
+    doc = _doc()
+    for span in _spans(doc):
+        span["kind"] = _SPAN_KIND_TO_NAME[span["kind"]]
+    items["string-enum-kinds.json"] = _dumps(doc)
 
     # Top-level array wrapper: accepted shape, zero degradations expected.
     items["array-wrapped.json"] = (

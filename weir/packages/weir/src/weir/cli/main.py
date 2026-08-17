@@ -41,13 +41,18 @@ def main() -> None:
 
 def _looks_like_otlp(data: bytes) -> bool:
     text = data.removeprefix(_BOM).decode("utf-8", errors="replace")
-    for candidate in (text, *text.splitlines()[:1]):
-        try:
-            parsed = _json.loads(candidate)
-        except _json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return "resourceSpans" in parsed or "resource_spans" in parsed
+    try:
+        parsed = _json.loads(text)
+    except _json.JSONDecodeError:
+        parsed = None
+        for line in text.splitlines():
+            try:
+                parsed = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            break
+    if isinstance(parsed, dict):
+        return "resourceSpans" in parsed or "resource_spans" in parsed
     return False
 
 
@@ -152,7 +157,7 @@ def scan_command(
     detected_framework: str,
     input_format: str,
 ) -> None:
-    trace, _remediations = _load_input_or_exit(trace_path, input_format)
+    trace, remediations = _load_input_or_exit(trace_path, input_format)
     graph = build_session_graph(trace)
     labeled = label_graph(graph, DEFAULT_CATALOG)
     tainted = build_tainted_graph(labeled, DEFAULT_CATALOG)
@@ -165,12 +170,14 @@ def scan_command(
     verdict_grade_findings = [f for f in findings if f.is_verdict_grade]
 
     if report_path is not None:
+        ladder = capability_ladder_lines(gauge_report, remediations=remediations)
         html = render_html_report(
             scenario_name=Path(trace_path).stem,
             graph=graph,
             gauge=gauge_report,
             findings=findings,
             rules=rules,
+            ladder_lines=ladder,
         )
         Path(report_path).write_text(html, encoding="utf-8")
 

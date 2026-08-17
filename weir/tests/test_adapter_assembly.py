@@ -121,6 +121,60 @@ def test_parent_pointing_at_duplicated_id_is_ambiguous_not_orphaned() -> None:
     assert DegradationReason.ORPHANED_PARENT not in reasons
 
 
+def test_duplicate_id_differing_only_in_parent_is_kept_not_deduped() -> None:
+    # Full-span dedup digest (M4 final-review fix): the "byte-identical"
+    # tie-break must cover the WHOLE wire span, not a chosen subset of
+    # fields - two spans sharing an id that differ ONLY in parentSpanId are
+    # DIFFERING, not identical, and silently dropping one is exactly the
+    # input-order-dependent bug the fix closes.
+    doc = json.loads(_render())
+    spans = doc["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    idx = next(i for i, s in enumerate(spans) if s.get("parentSpanId"))
+    original = spans[idx]
+    twin = json.loads(json.dumps(original))
+    other_parent = next(
+        s["spanId"] for s in spans
+        if s["spanId"] not in (original["spanId"], original["parentSpanId"])
+    )
+    twin["parentSpanId"] = other_parent
+    dup_token = original["spanId"]
+    base_spans = spans[:idx] + spans[idx + 1 :]
+
+    def _with_order(tail: list[dict[str, object]]) -> bytes:
+        d = json.loads(json.dumps(doc))
+        d["resourceSpans"][0]["scopeSpans"][0]["spans"] = base_spans + tail
+        return json.dumps(d).encode()
+
+    out_a = adapt_otlp(_with_order([original, twin]))
+    out_b = adapt_otlp(_with_order([twin, original]))
+
+    # Order-independence: swapping the two duplicate spans' array position
+    # must not change the output.
+    assert out_a.trace == out_b.trace
+    assert out_a.degradations == out_b.degradations
+
+    dup_refs = {
+        n.source_ref for n in out_a.trace.nodes
+        if n.source_ref.startswith(f"{dup_token}#")
+    }
+    assert len(dup_refs) == 2  # both kept, digest-suffixed
+
+    dup_degradations = [
+        d for d in out_a.degradations
+        if d.reason == DegradationReason.DUPLICATE_SPAN_ID and d.subject == dup_token
+    ]
+    assert len(dup_degradations) == 1
+    assert "differing" in dup_degradations[0].note
+
+    assert any(
+        d.reason == DegradationReason.AMBIGUOUS_JOIN for d in out_a.degradations
+    )
+    assert not any(
+        j.tool_result_source_ref in dup_refs or j.tool_call_source_ref in dup_refs
+        for j in out_a.trace.joins
+    )
+
+
 def test_ledger_sorts_line_subjects_numerically_not_lexicographically() -> None:
     # 11 bad lines after one good line produce line:2 .. line:12 - lexicographic
     # sort would put line:10 before line:2; the ledger must sort numerically.

@@ -11,6 +11,8 @@ a stub. The green state (R7.6) is a designed screen, not a blank page.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import jinja2
 
 from weir.evaluate import Finding
@@ -61,6 +63,7 @@ def render_html_report(
     gauge: GaugeReport,
     findings: list[Finding],
     rules: list[RuleSpec],
+    ladder_lines: Sequence[str] = (),
 ) -> str:
     rules_by_id = {rule.id: rule for rule in rules}
     verdict_grade = [f for f in findings if f.is_verdict_grade]
@@ -88,6 +91,7 @@ def render_html_report(
         steps_scanned=len(graph.nodes),
         rules_evaluated=len(rules),
         remediation_line=gauge.remediation_line,
+        ladder_lines=list(ladder_lines),
         verdict_grade_findings=[_render(f) for f in verdict_grade],
         review_queue=[_render(f) for f in review_queue],
     )

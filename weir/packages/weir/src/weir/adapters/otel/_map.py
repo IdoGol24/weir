@@ -37,6 +37,24 @@ from weir.schema.trace import (
 
 _SPAN_KIND_CLIENT = 3
 
+_SPAN_KIND_NAMES = {
+    "SPAN_KIND_UNSPECIFIED": 0,
+    "SPAN_KIND_INTERNAL": 1,
+    "SPAN_KIND_SERVER": 2,
+    "SPAN_KIND_CLIENT": 3,
+    "SPAN_KIND_PRODUCER": 4,
+    "SPAN_KIND_CONSUMER": 5,
+}
+
+
+def span_kind_int(kind: str | int) -> int:
+    """Permissive like the nano fields: OTLP/JSON mandates int enums, but
+    default-options protojson emits the proto enum NAMES; both are real."""
+    if isinstance(kind, int):
+        return kind
+    return _SPAN_KIND_NAMES.get(kind, 0)
+
+
 _ACTOR_BY_KIND = {
     NodeKind.USER_INPUT: "user",
     NodeKind.LLM_CALL: "agent",
@@ -75,7 +93,7 @@ def has_genai_marker(attributes: list[dict[str, object]]) -> bool:
 def derive_kind(span: WireSpan) -> NodeKind | None:
     """From real signals only; None means unmappable (a named degradation)."""
     operation = attr_str(span.attributes, "gen_ai.operation.name")
-    client = span.kind == _SPAN_KIND_CLIENT
+    client = span_kind_int(span.kind) == _SPAN_KIND_CLIENT
     if operation == "execute_tool":
         return NodeKind.TOOL_CALL if client else NodeKind.TOOL_RESULT
     if operation == "chat":
@@ -94,6 +112,15 @@ def span_content_digest(raw_token_fields: tuple[str, ...]) -> str:
     over the span's identifying content, never its input position."""
     joined = "\x1f".join(raw_token_fields)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def _wire_span_digest(span: WireSpan) -> str:
+    """Digest over the WHOLE wire span (M4 final-review fix): the identity
+    tie-break must cover every field (parentSpanId included), not a chosen
+    subset - two differing spans must never conflate as identical just
+    because the fields this module happened to hash agreed. msgspec struct
+    encoding has stable field order, so this is deterministic."""
+    return span_content_digest((msgspec.json.encode(span).decode(),))
 
 
 def iso_from_nanos(value: str | int) -> str | None:
@@ -411,10 +438,7 @@ def map_wire(wire: WireInput) -> AdapterResult:
         if token and not _is_hex_id(token):
             nonstandard = True
         if not token:
-            surrogate = "surrogate-" + span_content_digest(
-                (ctx.span.trace_id, ctx.span.name,
-                 str(ctx.span.start_time_unix_nano),
-                 json.dumps(ctx.span.attributes, sort_keys=True)))[:16]
+            surrogate = "surrogate-" + _wire_span_digest(ctx.span)[:16]
             degradations.append(Degradation(
                 reason=DegradationReason.MISSING_SPAN_ID, subject=surrogate))
             token = surrogate
@@ -434,10 +458,7 @@ def map_wire(wire: WireInput) -> AdapterResult:
         if len(group) == 1:
             deduped.append(group[0])
             continue
-        digests = {span_content_digest(
-            (g[1].span.name, str(g[1].span.start_time_unix_nano),
-             json.dumps(g[1].span.attributes, sort_keys=True))): g
-            for g in group}
+        digests = {_wire_span_digest(g[1].span): g for g in group}
         if len(digests) == 1:
             deduped.append(group[0])
             degradations.append(Degradation(

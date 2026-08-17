@@ -13,7 +13,7 @@ from weir.adapters.otel._wire import WireSpan
 from weir.schema.trace import JoinConfidence, NodeKind
 
 
-def _span(kind: int, attrs: dict[str, str]) -> WireSpan:
+def _span(kind: int | str, attrs: dict[str, str]) -> WireSpan:
     return WireSpan(
         trace_id="ab" * 16, span_id="cd" * 8, name="n", kind=kind,
         start_time_unix_nano="1", end_time_unix_nano="2",
@@ -35,6 +35,25 @@ def test_kind_falls_back_to_tool_name_presence_without_operation() -> None:
 
 def test_unknown_operation_is_unmappable() -> None:
     assert derive_kind(_span(3, {"gen_ai.operation.name": "embeddings"})) is None
+
+
+def test_kind_derivation_from_string_enum_span_kind() -> None:
+    # Vanilla protojson (default MessageToJson) emits proto enum NAMES for
+    # span kind, not the OTLP/JSON-mandated int - same permissive-scalar
+    # rationale as the nanos fields.
+    assert (
+        derive_kind(_span("SPAN_KIND_CLIENT", {"gen_ai.operation.name": "chat"}))
+        == NodeKind.LLM_CALL
+    )
+    assert (
+        derive_kind(_span("SPAN_KIND_INTERNAL", {"gen_ai.operation.name": "chat"}))
+        == NodeKind.USER_INPUT
+    )
+    # Unknown name treated as 0/unspecified: falls to the non-client branch.
+    assert (
+        derive_kind(_span("SPAN_KIND_MADE_UP", {"gen_ai.operation.name": "chat"}))
+        == NodeKind.USER_INPUT
+    )
 
 
 def test_kind_never_reads_weir_attributes() -> None:

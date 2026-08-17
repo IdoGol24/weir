@@ -30,6 +30,7 @@ _EXPECTED_REASONS: dict[str, set[DegradationReason]] = {
     "invalid-utf8.json": {DegradationReason.INVALID_ENCODING},
     "mixed-signals.jsonl": {DegradationReason.NON_TRACE_BATCHES_SKIPPED},
     "undecodable-scope.json": {DegradationReason.UNDECODABLE_SCOPE},
+    "string-enum-kinds.json": set(),  # permissive scalar: maps cleanly
     "array-wrapped.json": set(),  # accepted wrapper: no crash, no reject
 }
 # Every degrade-side DegradationReason must be exercised by the corpus or by
@@ -66,6 +67,16 @@ def test_base64_linkage_survives_intact() -> None:
     # Amendment B pinned: joins match on the raw wire token, so an
     # internally-consistent base64 export keeps ALL its joins.
     result = adapt_otlp((_CORPUS / "base64-ids.json").read_bytes())
+    clean = adapt_otlp(
+        (_CORPUS.parent / "otlp" / "injection-exfil.full.json").read_bytes()
+    )
+    assert len(result.trace.joins) == len(clean.trace.joins)
+
+
+def test_string_enum_kinds_join_exactly_as_the_clean_int_kind_fixture() -> None:
+    # Vanilla protojson emits SPAN_KIND_* names instead of ints; the
+    # permissive scalar must not quarantine (or misclassify) a single span.
+    result = adapt_otlp((_CORPUS / "string-enum-kinds.json").read_bytes())
     clean = adapt_otlp(
         (_CORPUS.parent / "otlp" / "injection-exfil.full.json").read_bytes()
     )

@@ -152,3 +152,25 @@ def test_input_format_native_rejects_otlp_file() -> None:
         main, ["gauge", str(_OTLP_FIXTURE), "--input-format", "native"]
     )
     assert result.exit_code == 2
+
+
+def test_scan_report_includes_the_capability_ladder_footer() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            main, ["scan", str(_OTLP_FIXTURE), "--report", "report.html"]
+        )
+        html = Path("report.html").read_text(encoding="utf-8")
+    assert result.exit_code == 1
+    assert "at your current telemetry" in html
+
+
+def test_gauge_sniffs_otlp_when_the_first_line_is_corrupt_mid_write() -> None:
+    good_line = json.dumps(json.loads(_OTLP_FIXTURE.read_bytes()))
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("bad-first-line.jsonl").write_text(
+            "{corrupt mid-write\n" + good_line + "\n"
+        )
+        result = runner.invoke(main, ["gauge", "bad-first-line.jsonl"])
+    assert result.exit_code == 0

@@ -49,7 +49,7 @@ class WireSpan(msgspec.Struct, frozen=True, rename="camel"):
     span_id: str = ""
     parent_span_id: str = ""
     name: str = ""
-    kind: int = 0
+    kind: str | int = 0
     start_time_unix_nano: str | int = 0
     end_time_unix_nano: str | int = 0
     attributes: list[dict[str, object]] = []
