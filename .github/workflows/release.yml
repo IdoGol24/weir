@@ -1,0 +1,45 @@
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync environment
+        working-directory: weir
+        run: uv sync
+      - name: Full test gate before anything is published
+        working-directory: weir
+        run: uv run pytest -q
+      - name: Import contracts
+        working-directory: weir
+        run: uv run lint-imports
+      - name: Build distributions
+        working-directory: weir
+        run: uv build packages/weir
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: weir/dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Trusted publishing (OIDC): the 'pypi' environment must exist in the
+    # repository settings and be registered as the trusted publisher on PyPI
+    # for the 'weir-scan' project. No API token is stored anywhere.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
