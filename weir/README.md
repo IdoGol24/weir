@@ -1,5 +1,7 @@
 # weir
 
+[![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 A deterministic, post-hoc verification engine for AI-agent sessions.
 
 No LLM in the loop: every run is byte-identical and replayable, and the

@@ -29,3 +29,10 @@ packages = ["src/weir"]
 
 [project.scripts]
 weir = "weir.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/IdoGol24/weir"
+Repository = "https://github.com/IdoGol24/weir"
+Issues = "https://github.com/IdoGol24/weir/issues"
+Changelog = "https://github.com/IdoGol24/weir/blob/main/weir/CHANGELOG.md"
+Security = "https://github.com/IdoGol24/weir/blob/main/weir/SECURITY.md"
