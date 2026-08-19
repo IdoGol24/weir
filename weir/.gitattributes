@@ -2,3 +2,7 @@
 # EOL smudging on checkout (core.autocrlf) would break every byte-compare on
 # a fresh Windows clone. No conversion, ever.
 fixtures/** -text
+# The bundled sample ships in the wheel and is byte-compared against the
+# corpus fixture; EOL smudging would both fail the drift test on fresh
+# Windows checkouts and make wheels platform-dependent.
+packages/weir/src/weir/data/** -text
