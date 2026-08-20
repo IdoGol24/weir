@@ -2,6 +2,15 @@
 
 [![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+<p align="center">
+  <img src="docs/assets/weir.jpg" alt="A weir: a low dam across a river, with water flowing evenly over its crest" width="720">
+  <br>
+  <em>A weir is a low dam built across a river to regulate and measure its
+  flow - the water keeps moving; the measurement happens anyway.</em>
+  <br>
+  <sub>Damhead Weir, Water of Leith. Photo by 501ghost, Wikimedia Commons, CC0.</sub>
+</p>
+
 You cannot unit-test an agent by string-matching its output, and an LLM
 judge drifts with its model. But what you actually need to assert is
 structural: did untrusted tool output reach an outbound sink, did the
@@ -12,8 +21,8 @@ Weir is that assertion. Point it at an OpenTelemetry GenAI export; it
 exits `1` if a forbidden flow happened - with a witness path you can walk
 node by node - and `0` if not. Deterministic and byte-identical on every
 run, no LLM in the loop, no network access, never runs your agent (all
-tested guarantees). A weir is a low dam built to measure a river's flow
-without stopping it.
+tested guarantees). Like its namesake: the session keeps flowing; the
+measurement happens anyway.
 
 ## Try it in two minutes
 
