@@ -36,6 +36,10 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
 # The one place a seeded `random.Random(seed)` is legitimate (L6 deterministic core).
 "packages/weir-tracegen/src/weir_tracegen/_rng.py" = ["TID251"]
+# Frozen generation provenance (byte-copy, never regenerate): imports are
+# deliberately after LangchainInstrumentor().instrument() so the instrumentor
+# patches langchain_core before it loads - real third-party script shape.
+"fixtures/foreign/langchain-collector/toy_agent.py" = ["E402"]
 
 [tool.pyright]
 include = ["packages/weir/src", "packages/weir-tracegen/src", "tests"]
