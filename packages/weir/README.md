@@ -1,7 +1,6 @@
 # Weir - unit tests for your agents
 
-A CI gate for AI agents: it reads the OpenTelemetry traces you already
-emit and exits `1` if a secret reached a sink it should not have.
+Weir is a CI gate for AI agents.
 
 [![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -9,14 +8,14 @@ emit and exits `1` if a secret reached a sink it should not have.
   <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/demo.svg" alt="Terminal recording: weir scan reports a verdict-grade finding with a witness path, then exits 1" width="620">
 </p>
 
-String-matching an agent's output tests nothing, and an LLM judge drifts
-with its model. The questions worth asking are structural: did untrusted
-tool output reach an outbound sink? Did the secret leave the session?
+It reads the OpenTelemetry traces your agent already emits and fails the build when sensitive data reaches a sink it should not reach.
 
-Your agent already answers them, in the traces it emits. Weir reads them
-and shows its work - that witness path is the evidence, node by node.
+Weir asks a structural question:
 
-No LLM. No network. It never runs your agent.
+### Did sensitive data flow through the agent to a sink it should never have reached?
+
+Your agent already answers that question in the traces it emits. Weir reconstructs the session graph, tracks taint through it, and shows the evidence node by node.
+
 
 ```mermaid
 flowchart LR
