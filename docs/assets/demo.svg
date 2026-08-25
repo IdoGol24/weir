@@ -1,21 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="565" height="283" viewBox="0 0 565 283" role="img" aria-label="Terminal showing weir scan reporting a verdict-grade finding and exiting 1">
+<svg xmlns="http://www.w3.org/2000/svg" width="565" height="283" viewBox="0 0 565 283" role="img" aria-label="Terminal recording: weir scan reports a verdict-grade finding with a witness path, and exits 1">
 <rect width="565" height="283" rx="8" fill="#0d1117"/>
 <path d="M0 8a8 8 0 0 1 8-8h549a8 8 0 0 1 8 8v26H0Z" fill="#161b22"/>
 <circle cx="20" cy="17" r="6" fill="#ff5f56"/>
 <circle cx="38" cy="17" r="6" fill="#ffbd2e"/>
 <circle cx="56" cy="17" r="6" fill="#27c93f"/>
+<defs><clipPath id="k0"><rect class="t t0" x="39" y="36" width="328" height="21"/></clipPath><clipPath id="k9"><rect class="t t9" x="39" y="225" width="59" height="21"/></clipPath></defs>
+<style>.r{opacity:0}.c{fill:#7ee787}@media (prefers-reduced-motion:reduce){.r{opacity:1;animation:none}.t{animation:none}}@keyframes a0{0%,4.44%{opacity:0}4.56%,95.56%{opacity:1}100%{opacity:0}}.r0{animation:a0 9.0s infinite}.t0{transform-box:view-box;transform-origin:39px 0;animation:k0 9.0s steps(39) infinite}@keyframes k0{0%,4.44%{transform:scaleX(0)}16.58%,100%{transform:scaleX(1)}}@keyframes a1{0%,20.47%{opacity:0}20.58%,95.56%{opacity:1}100%{opacity:0}}.r1{animation:a1 9.0s infinite}@keyframes a2{0%,22.24%{opacity:0}22.36%,95.56%{opacity:1}100%{opacity:0}}.r2{animation:a2 9.0s infinite}@keyframes a3{0%,24.02%{opacity:0}24.13%,95.56%{opacity:1}100%{opacity:0}}.r3{animation:a3 9.0s infinite}@keyframes a4{0%,25.8%{opacity:0}25.91%,95.56%{opacity:1}100%{opacity:0}}.r4{animation:a4 9.0s infinite}@keyframes a5{0%,27.58%{opacity:0}27.69%,95.56%{opacity:1}100%{opacity:0}}.r5{animation:a5 9.0s infinite}@keyframes a6{0%,29.36%{opacity:0}29.47%,95.56%{opacity:1}100%{opacity:0}}.r6{animation:a6 9.0s infinite}@keyframes a7{0%,31.13%{opacity:0}31.24%,95.56%{opacity:1}100%{opacity:0}}.r7{animation:a7 9.0s infinite}@keyframes a8{0%,32.91%{opacity:0}33.02%,95.56%{opacity:1}100%{opacity:0}}.r8{animation:a8 9.0s infinite}@keyframes a9{0%,34.69%{opacity:0}34.8%,95.56%{opacity:1}100%{opacity:0}}.r9{animation:a9 9.0s infinite}.t9{transform-box:view-box;transform-origin:39px 0;animation:k9 9.0s steps(7) infinite}@keyframes k9{0%,34.69%{transform:scaleX(0)}36.87%,100%{transform:scaleX(1)}}@keyframes a10{0%,40.76%{opacity:0}40.87%,95.56%{opacity:1}100%{opacity:0}}.r10{animation:a10 9.0s infinite}</style>
 <g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14">
-<text x="22" y="50" fill="#7ee787">$</text>
-<text x="39" y="50" fill="#e6edf3" xml:space="preserve">weir scan fixtures/injection-exfil.json</text>
-<text x="22" y="71" fill="#ff7b72" xml:space="preserve">1 verdict-grade finding(s)</text>
-<text x="22" y="92" fill="#d2a8ff" xml:space="preserve">finding: injection-exfil-to-outbound-sink</text>
-<text x="22" y="113" fill="#8b949e" xml:space="preserve">  source: financial_account_identifier at node 2 (tool_result)</text>
-<text x="22" y="134" fill="#8b949e" xml:space="preserve">  sink: send_email at node 6</text>
-<text x="22" y="155" fill="#79c0ff" xml:space="preserve">  witness path: n2 -&gt; n3 -&gt; n4 -&gt; n5 -&gt; n6</text>
-<text x="22" y="176" fill="#8b949e" xml:space="preserve">  join tiers crossed: explicit</text>
-<text x="22" y="197" fill="#8b949e" xml:space="preserve">  verdict grade: yes</text>
-<text x="22" y="218" fill="#8b949e" xml:space="preserve">  matched value: 22 chars</text>
-<text x="22" y="239" fill="#7ee787">$</text>
-<text x="39" y="239" fill="#e6edf3" xml:space="preserve">echo $?</text>
-<text x="22" y="260" fill="#ff7b72" xml:space="preserve">1</text>
+<text class="r r0 c" x="22" y="50">$</text>
+<text class="r r0" x="39" y="50" fill="#e6edf3" clip-path="url(#k0)" xml:space="preserve">weir scan fixtures/injection-exfil.json</text>
+<text class="r r1" x="22" y="71" fill="#ff7b72" xml:space="preserve">1 verdict-grade finding(s)</text>
+<text class="r r2" x="22" y="92" fill="#d2a8ff" xml:space="preserve">finding: injection-exfil-to-outbound-sink</text>
+<text class="r r3" x="22" y="113" fill="#8b949e" xml:space="preserve">  source: financial_account_identifier at node 2 (tool_result)</text>
+<text class="r r4" x="22" y="134" fill="#8b949e" xml:space="preserve">  sink: send_email at node 6</text>
+<text class="r r5" x="22" y="155" fill="#79c0ff" xml:space="preserve">  witness path: n2 -&gt; n3 -&gt; n4 -&gt; n5 -&gt; n6</text>
+<text class="r r6" x="22" y="176" fill="#8b949e" xml:space="preserve">  join tiers crossed: explicit</text>
+<text class="r r7" x="22" y="197" fill="#8b949e" xml:space="preserve">  verdict grade: yes</text>
+<text class="r r8" x="22" y="218" fill="#8b949e" xml:space="preserve">  matched value: 22 chars</text>
+<text class="r r9 c" x="22" y="239">$</text>
+<text class="r r9" x="39" y="239" fill="#e6edf3" clip-path="url(#k9)" xml:space="preserve">echo $?</text>
+<text class="r r10" x="22" y="260" fill="#ff7b72" xml:space="preserve">1</text>
 </g></svg>
