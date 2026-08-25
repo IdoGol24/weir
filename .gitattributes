@@ -6,3 +6,7 @@ fixtures/** -text
 # corpus fixture; EOL smudging would both fail the drift test on fresh
 # Windows checkouts and make wheels platform-dependent.
 packages/weir/src/weir/data/** -text
+# The README hero is generated from live CLI output and drift-compared. It
+# survives smudging today only because the test reads it as text; this keeps
+# it honest if that ever becomes a read_bytes() compare like the others.
+docs/assets/** -text
