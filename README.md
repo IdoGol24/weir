@@ -24,6 +24,16 @@ run, no LLM in the loop, no network access, never runs your agent (all
 tested guarantees). Like its namesake: the session keeps flowing; the
 measurement happens anyway.
 
+```mermaid
+flowchart LR
+  A["traces your agent<br/>already emits"] --> B{"weir gauge"}
+  B -->|"coverage too low"| C["names the exact<br/>instrumentation switch"]
+  C -.->|"flip it, re-run"| B
+  B -->|"coverage sufficient"| D{"weir scan"}
+  D -->|"no forbidden flow"| E["exit 0"]
+  D -->|"forbidden flow"| F["exit 1 + witness path<br/>n2 → n3 → n4 → n5 → n6"]
+```
+
 ## Try it in two minutes
 
 ```
@@ -60,6 +70,25 @@ finding: injection-exfil-to-outbound-sink
   verdict grade: yes
   matched value: 22 chars
 ```
+
+That finding came from one rule, and rules are data - this is the whole file:
+
+<!-- verify-file: packages/weir/src/weir/rules_commons/bundled/injection-exfil-to-outbound-sink.json -->
+```json
+{
+  "id": "injection-exfil-to-outbound-sink",
+  "version": "1.0.0",
+  "stage": "active",
+  "description": "Untrusted content reaches an outbound sink verbatim, carrying a source-class-eligible sensitive value (R5.9).",
+  "source_class": "financial_account_identifier",
+  "sink_tool_name": "send_email",
+  "mode": "verbatim"
+}
+```
+
+No code, no DSL. A rule names a source class from the catalog, a sink, and
+the propagation mode; the engine supplies the graph, the taint and the
+witness.
 
 Exit `1` - fail the build. The finding carries its evidence, with the
 matched secret redacted. Structural facts do not flap: rewording and
