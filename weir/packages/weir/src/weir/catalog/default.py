@@ -1,47 +1,34 @@
-"""The bundled default catalog (C1). Layered data, no tool names in engine
-code - L14's labeler and L15's taint engine consume this, never hardcode a
-tool name or pattern themselves."""
+"""The bundled default catalog (C1).
+
+The catalog itself lives in `bundled/catalog.json`. It used to be a Python
+literal here, which made constitution #4's "catalogs are data, never code"
+aspirational: adding a source class meant editing engine source. Keep it that
+way - if you are about to add a source-spec literal to this module, edit the
+JSON instead.
+
+Adding a source class needs three things, not one:
+
+1. The entry in `bundled/catalog.json`. Use `eligibility.pattern` unless the
+   type has a real checksum (IBAN's mod-97, PAN's Luhn), which needs a
+   `structure_class` validator in `structure_classes.py`.
+2. A fixture where the value reaches a sink and the finding fires.
+3. **A near-miss fixture that clears `content_pattern` and fails eligibility,
+   and must NOT fire.** `content_pattern` is deliberately loose, so without
+   the near-miss nothing proves eligibility is discriminating rather than
+   waving everything through.
+
+Three false-positive classes are worth knowing. A structural near-miss is what
+(3) catches. A structurally valid but non-secret value is not - weir's own demo
+secret is the well-known German test IBAN, and 4111111111111111 passes Luhn -
+so a production class wants a known-test-value denylist, which is catalog data.
+A legitimate flow (an invoice IBAN emailed to its own account holder) cannot be
+caught by structure at all; that is what guards are for, and guards are unbuilt,
+so weir over-reports on any type whose flow is sometimes authorized.
+"""
 
 from __future__ import annotations
 
-from weir.catalog._types import Catalog, SinkSpec, SourceSpec, VerbatimEligibility
+from weir.catalog._types import Catalog
+from weir.catalog.loader import load_catalog
 
-DEFAULT_CATALOG = Catalog(
-    sources=[
-        SourceSpec(
-            name="financial_account_identifier",
-            # Deliberately loose: catches IBAN-shaped tokens AND bare digit
-            # runs alike as raw candidates (see SourceSpec docstring) -
-            # `eligibility` below, keyed to the `iban` structure class, is
-            # what tells them apart, not this pattern.
-            content_pattern=r"\b[A-Z]{0,2}[0-9]{6,34}\b",
-            eligibility=VerbatimEligibility(structure_class="iban"),
-        ),
-    ],
-    sinks=[
-        SinkSpec(tool_name="send_email", destination_arg_keys=["to"]),
-        # A second outbound sink, so a fixture can exercise the same tainted
-        # value reaching a DIFFERENT sink (a new source-to-sink pair) rather
-        # than only a changed destination on the same one.
-        SinkSpec(tool_name="post_to_webhook", destination_arg_keys=["url"]),
-    ],
-    remediations={
-        "langchain": (
-            "tool arguments not captured - capture mechanisms vary by "
-            "instrumentation package; for OTel GenAI instrumentations built on "
-            "the util-genai layer, set "
-            "OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental and "
-            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY "
-            "(content is off by default; weir reads span attributes)"
-        ),
-    },
-    scope_remediations={
-        "opentelemetry.instrumentation.langchain": (
-            "tool arguments not captured - this scope is emitted by "
-            "Traceloop/OpenLLMetry's LangChain instrumentation, which captures "
-            "content to span attributes by default; check "
-            "TRACELOOP_TRACE_CONTENT (false disables capture) in the traced "
-            "service's environment"
-        ),
-    },
-)
+DEFAULT_CATALOG: Catalog = load_catalog()
