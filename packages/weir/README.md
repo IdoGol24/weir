@@ -6,7 +6,7 @@ emit and exits `1` if a secret reached a sink it should not have.
 [![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/demo.svg" alt="Terminal: weir scan reports a verdict-grade finding with a witness path, and exits 1" width="620">
+  <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/demo.svg" alt="Terminal recording: weir scan reports a verdict-grade finding with a witness path, then exits 1" width="620">
 </p>
 
 String-matching an agent's output tests nothing, and an LLM judge drifts
