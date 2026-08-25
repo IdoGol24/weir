@@ -12,21 +12,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: Sync environment
-        working-directory: weir
         run: uv sync
       - name: Full test gate before anything is published
-        working-directory: weir
         run: uv run pytest -q
       - name: Import contracts
-        working-directory: weir
         run: uv run lint-imports
       - name: Build distributions
-        working-directory: weir
         run: uv build packages/weir
       - uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: weir/dist/
+          path: dist/
 
   publish:
     needs: build

@@ -1,3 +1,16 @@
 SECRETS_DONT_COMMIT.md.txt
 # Engineering working docs stay local-only; removed from public history.
 docs/superpowers/
+# The private overlay. The tracked AGENTS.md is the curated public file; this
+# one is never merged into it and never published.
+CLAUDE.local.md
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.uv_cache/
+dist/
+build/
+*.egg-info/
