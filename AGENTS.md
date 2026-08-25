@@ -4,7 +4,10 @@
 - These rules bind human and agent contributors alike.
 - Never use the em dash "—". Use plain dash "-" instead
 - When writing commit messages, NEVER auto-add your agent name as co-author
-- Never manually modify CHANGELOG.md files or any files that are marked as auto-generated
+- Never modify files that are marked as auto-generated, or committed fixtures.
+  Regenerate them from their source instead. CHANGELOG.md is the exception:
+  there is no generator, so it is hand-maintained, and a release that changes
+  behaviour adds its entry in the same commit range.
 - When making technical decisions, do not give much weight to development cost.
   Instead, prefer quality, simplicity, robustness, scalability, and long term maintainability.
 - For one-off or infrequent operational work, start with the simplest direct end-to-end path. Do not build wrappers, control planes, policy layers, custom verifiers, or automation unless the direct path exposes a concrete blocker or repeated need that justifies the added machinery.

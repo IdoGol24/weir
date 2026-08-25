@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.0] - 2026-08-25
+
+### Added
+- `VerbatimEligibility.pattern`: a third eligibility option matched with
+  `re.fullmatch`, so a shape-shaped data type (an AWS key id, a GitHub token,
+  a PEM header, a JWT) needs no validator function. `structure_class` remains
+  for the few types with a real checksum.
+- The default catalog is now loaded from `catalog/bundled/catalog.json`
+  instead of a Python literal, with a loader mirroring `load_rules`. Adding a
+  source class is a JSON edit. Contributor-authored regexes are compiled at
+  load time and fail named by source and field, so a typo can never raise
+  mid-scan where a CI gate would read it as a finding.
+- `github_token` as the first source class contributed through that path
+  rather than authored alongside the engine, with its rule, a positive
+  fixture and a near-miss fixture.
+- `CONTRIBUTING.md`, documenting the add-a-data-type path that was walked and
+  the friction it turned up.
+
+### Changed
+- The project moved to the repository root; `weir/CLAUDE.md` is now
+  `AGENTS.md`. Corrects two project URLs that pointed into the old path.
+- A value repeated inside one node is labeled once. Identical labels carried
+  no distinguishing information and surfaced as byte-identical duplicate
+  findings on the same witness path.
+- Nothing in the repo is gated or held back. Everything is Apache-2.0,
+  permanently.
+
 ## [0.1.0] - 2026-08-17
 
 First public cut.
