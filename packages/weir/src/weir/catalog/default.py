@@ -11,6 +11,16 @@ Adding a source class needs three things, not one:
 1. The entry in `bundled/catalog.json`. Use `eligibility.pattern` unless the
    type has a real checksum (IBAN's mod-97, PAN's Luhn), which needs a
    `structure_class` validator in `structure_classes.py`.
+
+   **Your `content_pattern` must be strictly LOOSER than your
+   `eligibility.pattern`.** Copying the type's shape into both is the
+   obvious move and it is wrong: the labeler records `match.group(0)`, so
+   anything `content_pattern` matches would already satisfy an identical
+   `eligibility.pattern`. Eligibility becomes a tautology, and requirement
+   (3) below becomes impossible to satisfy, because a near-miss would never
+   be labeled at all. For `github_token` that means `\bghp_[A-Za-z0-9]+\b`
+   as the label and `ghp_[A-Za-z0-9]{36}` as the floor: the loose one finds
+   candidates, the strict one judges them.
 2. A fixture where the value reaches a sink and the finding fires.
 3. **A near-miss fixture that clears `content_pattern` and fails eligibility,
    and must NOT fire.** `content_pattern` is deliberately loose, so without

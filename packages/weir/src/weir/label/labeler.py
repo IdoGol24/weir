@@ -51,19 +51,28 @@ def _find_destination(args: dict[str, object], keys: list[str]) -> str | None:
 
 def label_graph(graph: SessionGraph, catalog: Catalog) -> LabeledGraph:
     source_labels: list[SourceLabel] = []
+    # A SourceLabel is (node_index, source_class, matched_value) and carries no
+    # position, so a value repeated inside one node would produce labels that
+    # are indistinguishable from each other. They add nothing and travel the
+    # whole pipeline, surfacing as byte-identical findings on the same witness
+    # path. First-seen order is preserved rather than sorting, because label
+    # order follows the catalog's meaning-bearing source order (G1).
+    seen: set[SourceLabel] = set()
     for i, node in enumerate(graph.nodes):
         content = _textual_content(node.payload)
         if content is None:
             continue
         for source in catalog.sources:
             for match in re.finditer(source.content_pattern, content):
-                source_labels.append(
-                    SourceLabel(
-                        node_index=i,
-                        source_class=source.name,
-                        matched_value=match.group(0),
-                    )
+                label = SourceLabel(
+                    node_index=i,
+                    source_class=source.name,
+                    matched_value=match.group(0),
                 )
+                if label in seen:
+                    continue
+                seen.add(label)
+                source_labels.append(label)
 
     sink_labels: list[SinkLabel] = []
     for i, node in enumerate(graph.nodes):
