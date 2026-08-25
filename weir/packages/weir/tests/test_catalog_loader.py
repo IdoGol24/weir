@@ -10,16 +10,19 @@ import weir.catalog.default as default_module
 from weir.catalog import DEFAULT_CATALOG, catalog_digest
 from weir.catalog.loader import load_catalog
 
-# Pinned from Task 1. Moving the catalog from a literal into JSON must not
-# change its content, and the digest is what proves that.
-_EXPECTED_DIGEST = "0d616619cd0b992faa10bfb26490738bc6c4b7195fce0937590e8e6e92795606"
+# A tripwire, not a restatement: the digest is derived from bundled/catalog.json,
+# and any edit to that file changes it. Every such edit also stales the diffspec
+# baselines that embed the digest, so this test failing is the reminder to
+# regenerate the corpus rather than discover the drift downstream. Update the
+# value only together with that regeneration.
+_EXPECTED_DIGEST = "873e59558e38967025ed32cc526ae12e493d2ec48a7f9bcadc41e1f860199b89"
 
 
 def test_default_catalog_is_the_loaded_one() -> None:
     assert DEFAULT_CATALOG == load_catalog()
 
 
-def test_the_move_did_not_change_the_catalog_content() -> None:
+def test_a_catalog_edit_is_a_deliberate_corpus_regeneration() -> None:
     assert catalog_digest(DEFAULT_CATALOG) == _EXPECTED_DIGEST
 
 

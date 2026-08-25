@@ -1,0 +1,9 @@
+{
+  "id": "github-token-to-outbound-sink",
+  "version": "1.0.0",
+  "stage": "active",
+  "description": "Untrusted content reaches an outbound sink verbatim, carrying a GitHub personal access token (R5.9).",
+  "source_class": "github_token",
+  "sink_tool_name": "send_email",
+  "mode": "verbatim"
+}

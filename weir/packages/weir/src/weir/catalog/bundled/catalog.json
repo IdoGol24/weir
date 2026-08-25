@@ -8,6 +8,15 @@
         "min_length": null,
         "pattern": null
       }
+    },
+    {
+      "name": "github_token",
+      "content_pattern": "\\bghp_[A-Za-z0-9]+\\b",
+      "eligibility": {
+        "structure_class": null,
+        "min_length": null,
+        "pattern": "ghp_[A-Za-z0-9]{36}"
+      }
     }
   ],
   "sinks": [
