@@ -12,10 +12,18 @@ import msgspec
 class VerbatimEligibility(msgspec.Struct, frozen=True):
     """R5.9: exactly one of these determines whether a value clears the
     floor for the source class it's attached to - a value long enough for
-    some *other* class is not automatically eligible for this one."""
+    some *other* class is not automatically eligible for this one.
+
+    `pattern` is the option that lets a contributor add a shape-shaped data
+    type (an AWS key id, a GitHub token, a PEM header, a JWT) as pure catalog
+    data. `structure_class` remains for the few types needing a real checksum,
+    IBAN's mod-97 and PAN's Luhn. `min_length` is the weakest and discriminates
+    badly, because `content_pattern` is deliberately loose.
+    """
 
     structure_class: str | None = None
     min_length: int | None = None
+    pattern: str | None = None
 
 
 class SourceSpec(msgspec.Struct, frozen=True):
