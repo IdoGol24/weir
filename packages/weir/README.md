@@ -1,28 +1,22 @@
 # Weir - unit tests for your agents
 
+A CI gate for AI agents: it reads the OpenTelemetry traces you already
+emit and exits `1` if a secret reached a sink it should not have.
+
 [![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 <p align="center">
-  <img src="docs/assets/weir.jpg" alt="A weir: a low dam across a river, with water flowing evenly over its crest" width="720">
-  <br>
-  <em>A weir is a low dam built across a river to regulate and measure its
-  flow - the water keeps moving; the measurement happens anyway.</em>
-  <br>
-  <sub>Damhead Weir, Water of Leith. Photo by 501ghost, Wikimedia Commons, CC0.</sub>
+  <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/demo.svg" alt="Terminal: weir scan reports a verdict-grade finding with a witness path, and exits 1" width="620">
 </p>
 
-You cannot unit-test an agent by string-matching its output, and an LLM
-judge drifts with its model. But what you actually need to assert is
-structural: did untrusted tool output reach an outbound sink, did the
-payment tool fire without its guard, did the secret leave the session.
-Those facts live in the traces your agent already emits.
+String-matching an agent's output tests nothing, and an LLM judge drifts
+with its model. The questions worth asking are structural: did untrusted
+tool output reach an outbound sink? Did the secret leave the session?
 
-Weir is that assertion. Point it at an OpenTelemetry GenAI export; it
-exits `1` if a forbidden flow happened - with a witness path you can walk
-node by node - and `0` if not. Deterministic and byte-identical on every
-run, no LLM in the loop, no network access, never runs your agent (all
-tested guarantees). Like its namesake: the session keeps flowing; the
-measurement happens anyway.
+Your agent already answers them, in the traces it emits. Weir reads them
+and shows its work - that witness path is the evidence, node by node.
+
+No LLM. No network. It never runs your agent.
 
 ```mermaid
 flowchart LR
@@ -41,6 +35,9 @@ pip install weir-scan
 weir gauge your-export.jsonl   # or: weir gauge --sample
 ```
 
+`gauge` asks the question every other tool skips: can your telemetry even
+support the assertion you want to make?
+
 <!-- verify: gauge --sample -->
 ```
 evidentiary coverage: 0%
@@ -53,11 +50,11 @@ at your current telemetry: coverage reporting YES - taint/scan NO
 content capture is off; for OTel GenAI instrumentations built on the util-genai layer, set OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental and OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY to capture gen_ai.input.messages / gen_ai.output.messages / gen_ai.tool.call.arguments and unlock cross-step analysis
 ```
 
-The gauge answers the question every other tool skips: can your telemetry
-support the assertion you want to write? Most real exports cannot yet
-(content capture is off by default across the ecosystem), so it names the
-exact switch - derived from the instrumentation recorded in the trace
-itself. Flip it, re-run, and `weir scan` becomes your unit test:
+Most exports fail this first step, because content capture ships off by
+default almost everywhere. So weir names the exact switch to flip, read
+from the instrumentation in your own trace.
+
+Flip it, re-run, and `weir scan` is the actual test:
 
 <!-- verify: scan fixtures/injection-exfil.json -->
 ```
@@ -71,7 +68,8 @@ finding: injection-exfil-to-outbound-sink
   matched value: 22 chars
 ```
 
-That finding came from one rule, and rules are data - this is the whole file:
+Exit `1`, build fails, secret redacted. That finding came from one rule,
+and a rule is just a file. This is the whole thing:
 
 <!-- verify-file: packages/weir/src/weir/rules_commons/bundled/injection-exfil-to-outbound-sink.json -->
 ```json
@@ -86,52 +84,48 @@ That finding came from one rule, and rules are data - this is the whole file:
 }
 ```
 
-No code, no DSL. A rule names a source class from the catalog, a sink, and
-the propagation mode; the engine supplies the graph, the taint and the
-witness.
+No code, no DSL. You name a source, a sink, and a mode. The engine builds
+the graph, tracks the taint, and shows its work.
 
-Exit `1` - fail the build. The finding carries its evidence, with the
-matched secret redacted. Structural facts do not flap: rewording and
-step-count variance cannot move them, and when evidence genuinely weakens
-a finding demotes with its reason stated instead of silently flipping.
+Rewording your prompts will not move a finding. Adding a step will not
+move it. If the evidence genuinely weakens, the finding is demoted and
+says why, instead of quietly flipping to green.
 
 ## Why you can trust it
 
-- **It reads your traces, not ours.** The suite includes a frozen JSONL
-  capture produced by `opentelemetry-sdk` and Google's protojson encoder
-  that no weir code touched ([provenance](fixtures/foreign/PROVENANCE.md)).
-  Ingestion is reject-narrow: only not-telemetry is refused; every real
-  malformation degrades under one of 18 named contract rows with a
-  remediation, generated from code and drift-tested:
-  [docs/contract.md](docs/contract.md).
-- **Attacker content cannot rewire it.** Joins follow evidence tiers
-  (explicit id, then span nesting, then content-mined); content-mined
-  evidence fills absences only, ambiguity is reported rather than
-  resolved, and a finding crossing a content-mined join is never
-  verdict-grade. If you can make attacker content do more than add
-  visible low-confidence noise, that is a security bug:
-  [SECURITY.md](SECURITY.md).
-- **The gauge is calibrated against known ground truth.** A paired
-  generator emits each scenario as native traces and OTLP-JSON from one
-  plan; the adapter's acceptance test is byte-for-byte equivalence, and
-  gauge numbers are pinned against corpora with known degradation,
-  mutation-proven.
-- **Every external claim is sourced.** Remediation strings that describe
-  someone else's software carry a recorded source and check date:
-  [REMEDIATION_SOURCES.md](REMEDIATION_SOURCES.md).
+- **It reads real traces, not ones we wrote.** The suite pins a frozen
+  capture that no weir code ever touched
+  ([provenance](fixtures/foreign/PROVENANCE.md)). Broken input degrades
+  under one of 18 named rows; it never guesses
+  ([contract](docs/contract.md)).
+- **Attacker content cannot rewire it.** Joins follow evidence tiers, and
+  a finding that crosses a weak one is never verdict-grade. Get past that
+  and it is a security bug ([SECURITY.md](SECURITY.md)).
+- **The gauge is calibrated.** One plan emits both native and OTLP
+  traces; the adapter is accepted only on byte-for-byte equivalence.
+- **Claims about other people's software are sourced and dated**
+  ([REMEDIATION_SOURCES.md](REMEDIATION_SOURCES.md)).
 
-## What ships, what does not
+## What ships today
 
-Shipped: the OTel GenAI adapter (pinned `otel-genai/1.42.0`), session
-graph, verbatim taint and evaluation, the gauge and its capability ladder,
-HTML reports, the paired generator and corpora, one teaching rule
-(injection-to-exfiltration). Roadmap: the `weir diff` baseline gate, the
-rule-contribution gate and a broader rule set, signed bundles, more
-dialect rows.
+The OTel GenAI adapter, session graph, taint and evaluation, the gauge,
+HTML reports, and the trace generator behind the test corpus.
 
-Fully open, permanently: all of it is Apache-2.0, including the future diff
-gate. Nothing is held back, nothing is gated, and nothing phones home - the
-analysis path opens no sockets, and that is tested, not promised.
+Next: the `weir diff` baseline gate, more rules, more dialects.
 
-Install name `weir-scan` (PyPI `weir` was taken); import `weir`; command
-`weir`. Apache-2.0.
+Apache-2.0, all of it, permanently. Nothing held back, nothing gated,
+nothing phoning home - the analysis path opens no sockets, and that is a
+test, not a promise.
+
+Install `weir-scan`; the import and the command are both `weir`.
+
+## Why "weir"
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/weir.jpg" alt="A weir: a low dam across a river, with water flowing evenly over its crest" width="560">
+  <br>
+  <em>A weir is a low dam built across a river to regulate and measure its
+  flow - the water keeps moving; the measurement happens anyway.</em>
+  <br>
+  <sub>Damhead Weir, Water of Leith. Photo by 501ghost, Wikimedia Commons, CC0.</sub>
+</p>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="565" height="283" viewBox="0 0 565 283" role="img" aria-label="Terminal showing weir scan reporting a verdict-grade finding and exiting 1">
+<rect width="565" height="283" rx="8" fill="#0d1117"/>
+<path d="M0 8a8 8 0 0 1 8-8h549a8 8 0 0 1 8 8v26H0Z" fill="#161b22"/>
+<circle cx="20" cy="17" r="6" fill="#ff5f56"/>
+<circle cx="38" cy="17" r="6" fill="#ffbd2e"/>
+<circle cx="56" cy="17" r="6" fill="#27c93f"/>
+<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14">
+<text x="22" y="50" fill="#7ee787">$</text>
+<text x="39" y="50" fill="#e6edf3" xml:space="preserve">weir scan fixtures/injection-exfil.json</text>
+<text x="22" y="71" fill="#ff7b72" xml:space="preserve">1 verdict-grade finding(s)</text>
+<text x="22" y="92" fill="#d2a8ff" xml:space="preserve">finding: injection-exfil-to-outbound-sink</text>
+<text x="22" y="113" fill="#8b949e" xml:space="preserve">  source: financial_account_identifier at node 2 (tool_result)</text>
+<text x="22" y="134" fill="#8b949e" xml:space="preserve">  sink: send_email at node 6</text>
+<text x="22" y="155" fill="#79c0ff" xml:space="preserve">  witness path: n2 -&gt; n3 -&gt; n4 -&gt; n5 -&gt; n6</text>
+<text x="22" y="176" fill="#8b949e" xml:space="preserve">  join tiers crossed: explicit</text>
+<text x="22" y="197" fill="#8b949e" xml:space="preserve">  verdict grade: yes</text>
+<text x="22" y="218" fill="#8b949e" xml:space="preserve">  matched value: 22 chars</text>
+<text x="22" y="239" fill="#7ee787">$</text>
+<text x="39" y="239" fill="#e6edf3" xml:space="preserve">echo $?</text>
+<text x="22" y="260" fill="#ff7b72" xml:space="preserve">1</text>
+</g></svg>
