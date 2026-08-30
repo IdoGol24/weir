@@ -1,0 +1,7 @@
+# The live harness. weir itself needs none of this - it only reads the exported
+# capture.jsonl. Pin versions when you record a capture you intend to keep.
+crewai
+openlit
+# openlit pulls in the opentelemetry SDK + OTLP HTTP exporter. A separate
+# otelcol-contrib binary (see collector.yaml) file-exports the spans; install it
+# from https://github.com/open-telemetry/opentelemetry-collector-releases

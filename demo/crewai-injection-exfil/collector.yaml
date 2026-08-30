@@ -1,0 +1,18 @@
+# Minimal otelcol-contrib config: receive OTLP/HTTP on :4318, write each batch
+# as a line of OTLP/JSON to capture.jsonl - the file `weir scan` reads.
+# Run: otelcol-contrib --config collector.yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:4318
+
+exporters:
+  file:
+    path: capture.jsonl
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [file]
