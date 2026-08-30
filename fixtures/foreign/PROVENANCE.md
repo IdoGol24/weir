@@ -84,3 +84,18 @@ specifically; with zero tool_call nodes the denominator is empty, and
 capture is actually off. `weir gauge`'s scope-keyed remediation still
 correctly names `TRACELOOP_TRACE_CONTENT` for this scope, which is the
 useful signal: evidence-keying working on a real trace.
+
+## 2026-08-30: langchain-collector derived-structure update (bytes unchanged)
+
+The mapping changed, not this capture. weir now derives tool-node identity from
+the content a span carries rather than its OTel span kind (spec
+2026-08-30-weir-execute-tool-span-split). The `execute_tool lookup` span carries
+both `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`, so it now maps
+to a tool_call + tool_result pair: 3 -> 4 nodes. That span carries no
+`gen_ai.tool.call.id`, so the pair is unjoined and `joins` stays `[]` (a real
+capture whose tool span carried the id would join at the explicit tier). The
+capture.jsonl bytes are untouched; only the derived assertions in
+test_foreign_capture.py (and expected_ledger.json, if degradations changed) were
+regenerated with the diff reviewed. This also retires the earlier "empty
+denominator - payloads absent" note: a tool_call node now exists, so gauge
+argument-capture is measured rather than empty.

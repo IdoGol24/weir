@@ -73,8 +73,12 @@ def test_langchain_collector_ledger_snapshot_matches_the_committed_derivation() 
 def test_langchain_collector_derived_structure() -> None:
     result = adapt_otlp(_CAPTURE2.read_bytes())
     nodes = result.trace.nodes
+    # The single INTERNAL execute_tool span carries both arguments and result,
+    # so it splits into a tool_call + tool_result pair (spec 2026-08-30).
+    # Previously this was one degraded-args tool_result. This span carries no
+    # gen_ai.tool.call.id, so the pair is unjoined - joins stays [].
     assert sorted(n.kind.value for n in nodes) == [
-        "llm_call", "llm_call", "tool_result",
+        "llm_call", "llm_call", "tool_call", "tool_result",
     ]
     assert result.trace.joins == []
     assert result.trace.metadata.instrumentation_scope == (
