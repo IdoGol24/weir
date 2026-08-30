@@ -415,6 +415,40 @@ def _payload_for(
     return payload, degraded, mined_id
 
 
+_ARGS_KEY = "gen_ai.tool.call.arguments"
+_RESULT_KEY = "gen_ai.tool.call.result"
+
+
+def _nanos_int(value: str | int) -> int:
+    """Raw span nanos as int for chronological comparison; -1 if unparseable
+    (so a bad end never wins over a valid start)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _tool_node_plan(
+    ctx: SpanInContext, kind: NodeKind, token: str
+) -> list[tuple[NodeKind, str, bool]]:
+    """Attribute-driven emission plan for one span: a list of
+    (node_kind, source_ref, use_end_time). Node identity for a tool span comes
+    from which content it carries, not its OTel span kind (spec 2026-08-30).
+    Non-tool spans and no-content tool spans emit exactly one node, unchanged."""
+    if kind not in (NodeKind.TOOL_CALL, NodeKind.TOOL_RESULT):
+        return [(kind, token, False)]
+    has_args = attr_str(ctx.span.attributes, _ARGS_KEY) is not None
+    has_result = attr_str(ctx.span.attributes, _RESULT_KEY) is not None
+    if has_args and has_result:
+        return [(NodeKind.TOOL_CALL, token, False),
+                (NodeKind.TOOL_RESULT, f"{token}#result", True)]
+    if has_args:
+        return [(NodeKind.TOOL_CALL, token, False)]
+    if has_result:
+        return [(NodeKind.TOOL_RESULT, token, False)]
+    return [(kind, token, False)]  # no content: keep today's kind-driven node
+
+
 def map_wire(wire: WireInput) -> AdapterResult:
     degradations = list(wire.degradations)
     # single-row registry: row data already drives attr keys above, so the
@@ -506,8 +540,6 @@ def map_wire(wire: WireInput) -> AdapterResult:
                 reason=DegradationReason.INVALID_TIMESTAMP, subject=token))
             iso = "1970-01-01T00:00:00Z"
             node_degraded = True
-        payload, content_degraded, mined_id = _payload_for(
-            ctx, kind, degradations, token)
         parent = ctx.span.parent_span_id.strip().lower()
         if parent and parent in ambiguous_tokens:
             degradations.append(Degradation(
@@ -526,17 +558,31 @@ def map_wire(wire: WireInput) -> AdapterResult:
             framework_version = ctx.scope.version or None
         if ctx.scope.name and instrumentation_scope is None:
             instrumentation_scope = ctx.scope.name
-        nodes.append(TraceNode(
-            id=f"n{len(nodes)}", kind=kind, timestamp=iso,
-            actor=actor_for(kind), source_ref=token, payload=payload,
-            degraded=node_degraded or content_degraded,
-        ))
-        mapped_spans.append(MappedSpan(
-            source_ref=token, kind=kind,
-            # AMENDMENT 1: empty string maps to None (semantically absent).
-            call_id_attr=attr_str(ctx.span.attributes, "gen_ai.tool.call.id") or None,
-            parent_token=parent, mined_id=mined_id,
-        ))
+        call_id_attr = attr_str(ctx.span.attributes, "gen_ai.tool.call.id") or None
+        start_iso = iso  # span-start iso, already resolved/degraded above
+        for emit_kind, emit_ref, use_end in _tool_node_plan(ctx, kind, token):
+            emit_iso, emit_degraded = start_iso, node_degraded
+            if use_end:
+                # Chronological max(start, end) so a corrupt end < start never
+                # precedes the call. Compare RAW NANOS, not the ISO strings:
+                # iso_from_nanos omits zero microseconds, so a lexical max of
+                # "...:01Z" vs "...:01.000500Z" wrongly picks the earlier one.
+                end_iso = iso_from_nanos(ctx.span.end_time_unix_nano)
+                if end_iso is not None and _nanos_int(
+                    ctx.span.end_time_unix_nano
+                ) > _nanos_int(ctx.span.start_time_unix_nano):
+                    emit_iso = end_iso
+            payload, content_degraded, mined_id = _payload_for(
+                ctx, emit_kind, degradations, emit_ref)
+            nodes.append(TraceNode(
+                id=f"n{len(nodes)}", kind=emit_kind, timestamp=emit_iso,
+                actor=actor_for(emit_kind), source_ref=emit_ref, payload=payload,
+                degraded=emit_degraded or content_degraded,
+            ))
+            mapped_spans.append(MappedSpan(
+                source_ref=emit_ref, kind=emit_kind,
+                call_id_attr=call_id_attr, parent_token=parent, mined_id=mined_id,
+            ))
 
     joins, join_degradations = build_joins(mapped_spans)
     degradations.extend(join_degradations)
