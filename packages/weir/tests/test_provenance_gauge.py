@@ -56,6 +56,15 @@ def test_declared_reports_yes():
     assert any("provenance: YES" in ln for ln in lines)
 
 
+def test_declared_untrusted_sources_without_rule_emits_note():
+    # untrusted_sources declared but NO provenance sink rules -> a note, not silence
+    lines = provenance_gauge_lines(_two_readfile_one_lookup(),
+        provenance_sink_names=set(), untrusted_sources=["read_file"])
+    text = "\n".join(lines)
+    assert "untrusted_sources declared" in text
+    assert "no provenance rule" in text
+
+
 def test_attribution_coverage_reported():
     lines = provenance_gauge_lines(_two_readfile_one_lookup(),
         provenance_sink_names={"send_money"}, untrusted_sources=[])

@@ -12,6 +12,11 @@ from weir.taint.provenance import enumerate_flows
 
 def provenance_gauge_lines(labeled: LabeledGraph, *, provenance_sink_names: set[str],
                            untrusted_sources: list[str]) -> list[str]:
+    if not provenance_sink_names:
+        if untrusted_sources:
+            return ["provenance: untrusted_sources declared but no provenance rule "
+                    "(declare a provenance rule for a must-never sink, or the boundary does nothing)"]
+        return []
     graph = labeled.graph
     flows = [
         f for f in enumerate_flows(labeled)
