@@ -78,6 +78,51 @@ def evaluate(tainted: TaintedGraph, rules: list[RuleSpec]) -> EvaluationResult:
             )
         )
 
+    # Provenance findings (sink-scoped rules, same four-clause grade), deduped
+    # against structural findings: a flow already caught by a verbatim
+    # value-match must not also emit a provenance duplicate.
+    provenance_rules = {r.sink_tool_name: r for r in rules if r.mode == "provenance"}
+    structural_keys = {(f.matched_value, f.sink_node_index) for f in findings}
+    for pm in tainted.provenance_matches:
+        sink_node = graph.nodes[pm.sink_node_index]
+        if not isinstance(sink_node.payload, ToolCallPayload):
+            continue
+        rule = provenance_rules.get(sink_node.payload.tool_name)
+        if rule is None:
+            continue
+        if (pm.matched_value, pm.sink_node_index) in structural_keys:
+            continue  # double-fire: structural already covers this value->sink
+        path = shortest_witness_path(graph, pm.source_node_index, pm.sink_node_index)
+        if path is None:
+            continue
+        demotion: list[str] = []
+        if any(graph.nodes[i].degraded for i in path):
+            demotion.append("degraded node on witness path")
+        bad_tiers = sorted(
+            {
+                j.join_confidence.value
+                for j in joins_on_path(graph, path)
+                if j.join_confidence not in VERDICT_GRADE_JOIN_CONFIDENCES
+            }
+        )
+        if bad_tiers:
+            demotion.append("non-verdict join tier on witness path: " + ",".join(bad_tiers))
+        if rule.stage != "active":
+            demotion.append(f"rule stage is {rule.stage!r}, not active")
+        findings.append(
+            Finding(
+                rule_id=rule.id,
+                rule_version=rule.version,
+                source_node_index=pm.source_node_index,
+                sink_node_index=pm.sink_node_index,
+                matched_value=pm.matched_value,
+                witness_path=path,
+                is_verdict_grade=not demotion,
+                demotion_reasons=demotion,
+                kind="provenance",
+            )
+        )
+
     # Deterministic stable ordering, never insertion/iteration-dependent (G1).
-    findings.sort(key=lambda f: (f.source_node_index, f.sink_node_index, f.rule_id))
+    findings.sort(key=lambda f: (f.source_node_index, f.sink_node_index, f.rule_id, f.kind))
     return EvaluationResult(findings=findings)

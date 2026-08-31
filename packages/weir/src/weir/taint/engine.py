@@ -26,8 +26,9 @@ from typing import cast
 from weir.catalog import Catalog, is_verbatim_eligible
 from weir.label import LabeledGraph
 from weir.schema.trace import ToolCallPayload
-from weir.taint._types import TaintedGraph, VerbatimMatch
+from weir.taint._types import ProvenanceMatch, TaintedGraph, VerbatimMatch
 from weir.taint.canon import canon
+from weir.taint.provenance import enumerate_flows
 from weir.taint.reachability import reachable_from
 
 
@@ -92,8 +93,23 @@ def build_tainted_graph(labeled: LabeledGraph, catalog: Catalog) -> TaintedGraph
                     )
                 )
 
+    provenance_matches: list[ProvenanceMatch] = []
+    if catalog.untrusted_sources:
+        declared = set(catalog.untrusted_sources)
+        for ri, si, origin, token in enumerate_flows(labeled):
+            if origin in declared:
+                provenance_matches.append(
+                    ProvenanceMatch(
+                        source_node_index=ri,
+                        sink_node_index=si,
+                        origin_tool=origin,
+                        matched_value=token,
+                    )
+                )
+
     return TaintedGraph(
         labeled=labeled,
         verbatim_matches=verbatim_matches,
         context_tainted=context_tainted,
+        provenance_matches=provenance_matches,
     )

@@ -56,3 +56,7 @@ class Catalog(msgspec.Struct, frozen=True):
     # so existing Catalog(...) construction sites (tests building a custom
     # catalog to vary one field) do not all need updating for this addition.
     scope_remediations: dict[str, str] = msgspec.field(default_factory=dict[str, str])
+    # Tool names whose output is untrusted (provenance tier, opt-in). Data-only
+    # declaration; default empty so the bundled catalog and existing Catalog(...)
+    # construction sites need no change.
+    untrusted_sources: list[str] = msgspec.field(default_factory=list[str])
