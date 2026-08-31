@@ -3,13 +3,14 @@ injection-exfil demo.
 
 These are not a live agent run - see PROVENANCE.md. They are hand-built to the
 EXACT span shape OpenLIT's CrewAI instrumentation emits (verified against
-openlit/openlit `sdk/python/src/openlit/instrumentation/crewai/utils.py`): a
-tool call is ONE INTERNAL span named `execute_tool <name>` carrying
+openlit/openlit `sdk/python/src/openlit/instrumentation/crewai/utils.py` at tag
+py-1.45.0): a tool call is ONE INTERNAL span named `execute_tool <name>` carrying
 `gen_ai.operation.name="execute_tool"`, `gen_ai.tool.name`, `gen_ai.tool.type`,
-`gen_ai.tool.call.arguments`, and `gen_ai.tool.call.result`. OpenLIT does NOT
-set `gen_ai.tool.call.id` - so the demo also proves weir fires without an
-explicit tool_call id (the split tool_call/tool_result pair is simply unjoined;
-the witness path runs over sequential edges). The OTLP envelope (camelCase keys,
+`gen_ai.tool.call.arguments`, and `gen_ai.tool.call.result`. There is NO
+`gen_ai.tool.call.id`, because CrewAI never surfaces the model's tool call id to
+`BaseTool.run` or to its tool-usage events - so the demo also proves weir fires
+without an explicit tool_call id (the split tool_call/tool_result pair is simply
+unjoined; the witness path runs over sequential edges). The OTLP envelope (camelCase keys,
 hex span ids, string nanos, one batch per JSONL line) mirrors the real
 collector-exported capture at fixtures/foreign/langchain-collector/capture.jsonl.
 
@@ -26,7 +27,11 @@ PLANTED_IBAN = (
     "DE89370400440532013000"  # the textbook German test IBAN weir ships as its demo secret
 )
 
-_SCOPE = {"name": "openlit.instrumentation.crewai", "version": "1.34.0"}
+# openlit 1.45.0 calls `trace.get_tracer(__name__)` with NO version argument
+# (sdk/python/src/openlit/instrumentation/crewai/__init__.py, _instrument), so a
+# real capture's scope carries a name and no version. Emitting a version here
+# would be drift a reader finds by diffing line one against a live capture.
+_SCOPE = {"name": "openlit.instrumentation.crewai"}
 
 
 def _attr(key: str, value: str) -> dict:
@@ -74,7 +79,8 @@ def _execute_tool(
     result: str,
 ) -> dict:
     # OpenLIT wraps CrewAI BaseTool.run -> ONE INTERNAL execute_tool span
-    # carrying BOTH arguments and result, and NO gen_ai.tool.call.id.
+    # carrying BOTH arguments and result. No gen_ai.tool.call.id: CrewAI drops
+    # the model's tool call id upstream, so it never reaches BaseTool.run.
     return _span(
         span_id,
         f"execute_tool {tool}",

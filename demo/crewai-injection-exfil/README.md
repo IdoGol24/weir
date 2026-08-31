@@ -39,11 +39,14 @@ The injected run exits 1 with a witness path from the ticket's tool result
 tools, the model just doesn't forward the IBAN - exits 0. That contrast is the
 whole test: weir keys on the flow, not on the words.
 
-`join tiers crossed: none` is not a weakness here - OpenLIT does not emit a
+`join tiers crossed: none` is not a weakness here - the trace carries no
 `gen_ai.tool.call.id`, so weir cannot pair the tool call with its result by an
-explicit id. The finding is still verdict-grade because the source reaches the
-sink over the session's sequential edges, and no node on the witness path is
-degraded.
+explicit id. That is a CrewAI limitation, not an instrumentation one: CrewAI
+reads the model's tool call id but never surfaces it to `BaseTool.run` or to its
+tool-usage events, so no CrewAI instrumentor can emit it (see PROVENANCE.md).
+The finding is still
+verdict-grade because the source reaches the sink over the session's sequential
+edges, and no node on the witness path is degraded.
 
 ## Reproduce it live (real CrewAI run)
 
@@ -73,11 +76,29 @@ and `gen_ai.tool.call.result` - the shape weir ingests unmodified.
 
 ## Honest notes
 
-- **Why OpenLIT, not Traceloop.** Traceloop/OpenLLMetry's CrewAI instrumentation
-  emits no tool-call span at all (tools appear only as name+description on the
-  agent span), so weir would have nothing to analyze. OpenLIT follows the OTel
-  GenAI convention and emits a real `execute_tool` span per tool call. Either is
-  a one-line init; the trace shape is what matters.
+- **Why OpenLIT.** Of the three CrewAI instrumentors I tested, OpenLIT is the one
+  that emits an OTel GenAI semconv `execute_tool` span per tool call - which is
+  the shape weir ingests. Verified at the pinned versions:
+  - **OpenLIT** (`openlit==1.45.0`) wraps `crewai.tools.base_tool` `BaseTool.run`
+    and emits one INTERNAL `execute_tool` span carrying
+    `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result`.
+  - **Traceloop/OpenLLMetry** (`opentelemetry-instrumentation-crewai==0.62.3`,
+    openllmetry tag `v0.62.3`): its CrewAI auto-instrumentation creates no span
+    per tool execution. `_instrument` wraps exactly `Crew.kickoff`,
+    `Agent.execute_task`, `Task.execute_sync` and `LLM.call`; tools surface only
+    as `crewai.agent.tools` (also `crewai.task.tools`), a JSON array of
+    `{"name", "description"}` objects, on the agent/task span. Its agent and LLM
+    spans *do* use `gen_ai.*` semconv - the gap is specifically tool execution.
+    Note the `traceloop-sdk` `@tool` decorator does create a per-tool span and
+    does set `gen_ai.tool.name`, but that is manual instrumentation of your own
+    functions rather than a hook on CrewAI's tool execution, and the span carries
+    `traceloop.span.kind=tool` with `traceloop.entity.input`/`output` rather than
+    being an `execute_tool` span with `gen_ai.tool.call.arguments`/`.result`.
+  - **Arize OpenInference** does wrap `BaseTool.run`, but in OpenInference's own
+    conventions (`openinference.span.kind=TOOL`, `tool.name`, `tool.parameters`),
+    not OTel GenAI semconv - a dialect weir could support, not one it reads today.
+
+  All three are a one-line init; the trace shape is what differs.
 - **The injection is planted and transparent.** Nothing here is a zero-day. The
   IBAN `DE89370400440532013000` is the textbook German test IBAN.
 - **Prompt-injection success is model-dependent.** Whether the LLM forwards the

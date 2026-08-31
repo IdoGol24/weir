@@ -9,13 +9,24 @@ synthesis is fully auditable - nothing here is a black box.
 
 The captures are hand-built to the **exact span shape OpenLIT's CrewAI
 instrumentation emits**, verified against primary source
-(`openlit/openlit`, `sdk/python/src/openlit/instrumentation/crewai/utils.py`):
+(`openlit/openlit`, `sdk/python/src/openlit/instrumentation/crewai/utils.py`,
+`_set_tool_attributes`, at tag `py-1.45.0`):
 
 - a tool call is ONE span, kind INTERNAL (1), named `execute_tool <name>`;
 - attributes `gen_ai.operation.name="execute_tool"`, `gen_ai.tool.name`,
   `gen_ai.tool.type`, `gen_ai.tool.description`, `gen_ai.tool.call.arguments`,
   `gen_ai.tool.call.result`;
-- **no** `gen_ai.tool.call.id` (OpenLIT does not set it);
+- **no** `gen_ai.tool.call.id` - not an OpenLIT omission. CrewAI *does* read the
+  model's tool call id (`agents/crew_agent_executor.py` `_parse_native_tool_call`:
+  `call_id = getattr(tool_call, "id", ...)`) and threads it through
+  `_execute_single_native_tool_call` into the assistant/tool messages. It simply
+  never surfaces it to either instrumentation surface: not as an argument to
+  `BaseTool.run`, which OpenLIT wraps, and not as a field on
+  `ToolUsageStartedEvent` / `ToolUsageFinishedEvent`, which carry `tool_name` and
+  `tool_args` but no call id. So no CrewAI instrumentor can emit it today.
+  Verified at crewai tag `1.15.18`. The OTel GenAI semconv makes
+  `gen_ai.tool.call.id` Conditionally Required *"when available"*; it is not
+  available at the instrumentation point, so OpenLIT is compliant;
 - content captured by default (`capture_message_content=True`).
 
 The OTLP/JSON envelope (camelCase keys, hex span ids, string nanos, one batch
