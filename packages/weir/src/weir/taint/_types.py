@@ -16,9 +16,17 @@ class VerbatimMatch(msgspec.Struct, frozen=True):
     matched_value: str
 
 
+class ProvenanceMatch(msgspec.Struct, frozen=True):
+    source_node_index: int
+    sink_node_index: int
+    origin_tool: str | None
+    matched_value: str
+
+
 class TaintedGraph(msgspec.Struct, frozen=True):
     labeled: LabeledGraph
     verbatim_matches: list[VerbatimMatch]
     # R5.1/R5.7: source_node_index -> sorted reachable node indices,
     # unconditional on R5.9 eligibility or degraded status.
     context_tainted: dict[int, list[int]]
+    provenance_matches: list[ProvenanceMatch] = []
