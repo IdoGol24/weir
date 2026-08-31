@@ -38,5 +38,6 @@
   },
   "scope_remediations": {
     "opentelemetry.instrumentation.langchain": "tool arguments not captured - this scope is emitted by Traceloop/OpenLLMetry's LangChain instrumentation, which captures content to span attributes by default; check TRACELOOP_TRACE_CONTENT (false disables capture) in the traced service's environment"
-  }
+  },
+  "untrusted_sources": []
 }
