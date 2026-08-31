@@ -19,6 +19,8 @@ class Finding(msgspec.Struct, frozen=True):
     # Why a finding is NOT verdict-grade, stated on the finding itself (M4
     # design section 3 rule 2). Empty for verdict-grade findings.
     demotion_reasons: list[str] = []
+    # "structural" (verbatim value-match) or "provenance" (untrusted-origin flow).
+    kind: str = "structural"
 
 
 class EvaluationResult(msgspec.Struct, frozen=True):
