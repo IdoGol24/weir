@@ -25,6 +25,7 @@ from weir.catalog import DEFAULT_CATALOG
 from weir.evaluate import evaluate
 from weir.gauge import compute_gauge_report
 from weir.gauge.ladder import capability_ladder_lines
+from weir.gauge.provenance import provenance_gauge_lines
 from weir.graph import build_session_graph
 from weir.label import label_graph
 from weir.report import finding_lines, render_html_report
@@ -147,6 +148,15 @@ def gauge_command(
             click.echo(report.remediation_line)
         for line in capability_ladder_lines(report, remediations=remediations):
             click.echo(line)
+        prov_sinks = {r.sink_tool_name for r in load_rules() if r.mode == "provenance"}
+        if prov_sinks:
+            labeled = label_graph(graph, DEFAULT_CATALOG)
+            for line in provenance_gauge_lines(
+                labeled,
+                provenance_sink_names=prov_sinks,
+                untrusted_sources=DEFAULT_CATALOG.untrusted_sources,
+            ):
+                click.echo(line)
     raise SystemExit(0)
 
 
