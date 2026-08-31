@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.3.0] - 2026-08-31
+
+### Added
+- **Provenance evidence tier (opt-in).** Declare `untrusted_sources` in the
+  catalog and write a sink-scoped rule with `mode: "provenance"` (reserved
+  `source_class: "untrusted_origin"`), and an untrusted-origin value reaching a
+  must-never sink becomes a verdict-grade finding. It is silent by default: with
+  no declared trust boundary, `scan` emits nothing and the triage signal
+  (observed `tool_result -> sink` flows grouped by origin tool, plus attribution
+  coverage) lives in `gauge`, not `scan`. The loader hard-errors on the unwired
+  `context` mode and validates the reserved marker both ways. Benchmarked on
+  1,352 labelled AgentDojo banking runs at precision 0.48 / recall 0.95 through
+  the shipped pipeline; the co-residence false-positive mode is pinned by a test.
+
+### Changed
+- **Tool-node identity is derived from a span's content, not its OTel span
+  kind.** A single `execute_tool` span carrying both `gen_ai.tool.call.arguments`
+  and `gen_ai.tool.call.result` now splits into a joined tool_call + tool_result
+  pair, so the injection-exfil finding fires on real single-span telemetry
+  (previously it only fired on a synthetic two-span shape no real instrumentor
+  emits). The pure analysis core is unchanged.
+
+### Fixed
+- Node ordering now sorts on raw start-nanos rather than the ISO-8601 string, so
+  a whole-second span no longer sorts after a same-second fractional one.
+
 ## [0.2.0] - 2026-08-25
 
 ### Added

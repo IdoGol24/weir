@@ -1,6 +1,6 @@
 [project]
 name = "weir-scan"
-version = "0.2.0"
+version = "0.3.0"
 description = "weir - deterministic, post-hoc verification engine for AI-agent sessions"
 license = "Apache-2.0"
 readme = "README.md"
