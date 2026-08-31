@@ -31,7 +31,7 @@ def finding_lines(
         if finding.is_verdict_grade
         else f"no ({'; '.join(finding.demotion_reasons)})"
     )
-    return [
+    lines = [
         f"finding: {finding.rule_id}",
         f"  source: {rule.source_class} at node {finding.source_node_index}"
         f" ({source_node.kind.value})",
@@ -41,3 +41,6 @@ def finding_lines(
         f"  verdict grade: {grade}",
         f"  matched value: {len(finding.matched_value)} chars",
     ]
+    if finding.kind == "provenance":
+        lines.append("  evidence: provenance (untrusted origin)")
+    return lines
