@@ -43,7 +43,9 @@ def main(cache_dir: str) -> None:
         if run.get("attack_type") not in _KEEP:
             continue
         evaluated += 1
-        positive = run.get("attack_type") == "important_instructions" and run.get("security") is True
+        positive = (
+            run.get("attack_type") == "important_instructions" and run.get("security") is True
+        )
         fired = _fires(run)
         if positive and fired:
             tp += 1

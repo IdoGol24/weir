@@ -1,11 +1,17 @@
-from weir.taint import build_tainted_graph
+from weir.catalog._types import Catalog, SinkSpec
 from weir.graph import build_session_graph
 from weir.label import label_graph
-from weir.catalog._types import Catalog, SinkSpec
 from weir.schema.trace import (
-    CanonicalTrace, JoinConfidence, JoinRecord, NodeKind, ToolCallPayload,
-    ToolResultPayload, TraceMetadata, TraceNode,
+    CanonicalTrace,
+    JoinConfidence,
+    JoinRecord,
+    NodeKind,
+    ToolCallPayload,
+    ToolResultPayload,
+    TraceMetadata,
+    TraceNode,
 )
+from weir.taint import build_tainted_graph
 
 _IBAN = "GB29NWBK60161331926819"
 

@@ -29,8 +29,7 @@ def load_rules(rules_dir: Path | None = None) -> list[RuleSpec]:
     for r in rules:
         if r.mode not in _ALLOWED_MODES:
             raise ValueError(
-                f"rule {r.id!r}: mode {r.mode!r} is not wired "
-                f"(allowed: {sorted(_ALLOWED_MODES)})"
+                f"rule {r.id!r}: mode {r.mode!r} is not wired (allowed: {sorted(_ALLOWED_MODES)})"
             )
         marker = r.source_class == UNTRUSTED_ORIGIN
         prov = r.mode == "provenance"
@@ -40,7 +39,8 @@ def load_rules(rules_dir: Path | None = None) -> list[RuleSpec]:
             )
         if marker and not prov:
             raise ValueError(
-                f"rule {r.id!r}: source_class 'untrusted_origin' is valid only with mode 'provenance'"
+                f"rule {r.id!r}: source_class 'untrusted_origin' is valid only with "
+                "mode 'provenance'"
             )
     # Stable global ordering (C2) - never the filesystem's own iteration
     # order, which isn't guaranteed deterministic across platforms.

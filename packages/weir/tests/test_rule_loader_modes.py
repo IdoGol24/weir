@@ -1,5 +1,7 @@
 import json
+
 import pytest
+
 from weir.rules_commons.loader import load_rules
 
 

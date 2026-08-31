@@ -1,6 +1,7 @@
 """Provenance gauge lines (spec 2026-08-31): the triage/config signal lives in
 gauge, not scan. Reports observed untrusted-shaped -> provenance-sink flows
 grouped by origin tool, plus attribution coverage. Deterministic."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -10,27 +11,30 @@ from weir.schema.trace import ToolCallPayload
 from weir.taint.provenance import enumerate_flows
 
 
-def provenance_gauge_lines(labeled: LabeledGraph, *, provenance_sink_names: set[str],
-                           untrusted_sources: list[str]) -> list[str]:
+def provenance_gauge_lines(
+    labeled: LabeledGraph, *, provenance_sink_names: set[str], untrusted_sources: list[str]
+) -> list[str]:
     if not provenance_sink_names:
         if untrusted_sources:
-            return ["provenance: untrusted_sources declared but no provenance rule "
-                    "(declare a provenance rule for a must-never sink, or the boundary does nothing)"]
+            return [
+                "provenance: untrusted_sources declared but no provenance rule "
+                "(declare a provenance rule for a must-never sink, or the boundary does nothing)"
+            ]
         return []
     graph = labeled.graph
-    flows = [
-        f for f in enumerate_flows(labeled)
-        if isinstance(graph.nodes[f[1]].payload, ToolCallPayload)
-        and graph.nodes[f[1]].payload.tool_name in provenance_sink_names
-    ]
     pairs: Counter[str] = Counter()
     attributable = 0
-    for _ri, si, origin, _token in flows:
-        sink_name = graph.nodes[si].payload.tool_name
-        pairs[f"{origin or 'unknown'}->{sink_name}"] += 1
+    total = 0
+    for _ri, si, origin, _token in enumerate_flows(labeled):
+        payload = graph.nodes[si].payload
+        if not isinstance(payload, ToolCallPayload):
+            continue
+        if payload.tool_name not in provenance_sink_names:
+            continue
+        total += 1
+        pairs[f"{origin or 'unknown'}->{payload.tool_name}"] += 1
         if origin is not None:
             attributable += 1
-    total = len(flows)
     if total == 0:
         return []
     grouped = ", ".join(

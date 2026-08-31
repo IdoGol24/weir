@@ -1,7 +1,6 @@
-from weir.taint import ProvenanceMatch, TaintedGraph
-from weir.label import LabeledGraph
 from weir.graph import SessionGraph
-from weir.schema.trace import TraceMetadata
+from weir.label import LabeledGraph
+from weir.taint import ProvenanceMatch, TaintedGraph
 
 
 def test_provenance_match_fields() -> None:
