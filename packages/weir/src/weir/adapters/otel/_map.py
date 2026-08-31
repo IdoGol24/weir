@@ -509,11 +509,15 @@ def map_wire(wire: WireInput) -> AdapterResult:
             ambiguous_refs.add(ref)
             deduped.append((ref, g_ctx))
 
-    # Order-independent node ordering: (start_nanos, source_ref token).
+    # Order-independent node ordering: (start_nanos, source_ref token). Sort on
+    # the RAW nanos, not the ISO string - iso_from_nanos omits zero microseconds,
+    # so a whole-second span ("...:0NZ") would sort after a same-second fractional
+    # one ("...:0N.5Z") since 'Z' > '.'. Unparseable timestamps (iso is None)
+    # still sort last, deterministically.
     def _sort_key(item: tuple[str, SpanInContext]):
         token, ctx = item
         iso = iso_from_nanos(ctx.span.start_time_unix_nano)
-        return (iso is None, iso or "", token)
+        return (iso is None, _nanos_int(ctx.span.start_time_unix_nano), token)
 
     ordered = sorted(deduped, key=_sort_key)
 
