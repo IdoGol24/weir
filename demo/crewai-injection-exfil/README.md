@@ -94,6 +94,8 @@ and `gen_ai.tool.call.result` - the shape weir ingests unmodified.
     functions rather than a hook on CrewAI's tool execution, and the span carries
     `traceloop.span.kind=tool` with `traceloop.entity.input`/`output` rather than
     being an `execute_tool` span with `gen_ai.tool.call.arguments`/`.result`.
+    `agent_traceloop.py` here runs the identical crew under Traceloop against
+    the same collector, if you want to see the difference rather than trust it.
   - **Arize OpenInference** does wrap `BaseTool.run`, but in OpenInference's own
     conventions (`openinference.span.kind=TOOL`, `tool.name`, `tool.parameters`),
     not OTel GenAI semconv - a dialect weir could support, not one it reads today.
