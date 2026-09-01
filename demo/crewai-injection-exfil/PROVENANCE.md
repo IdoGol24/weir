@@ -24,9 +24,11 @@ instrumentation emits**, verified against primary source
   `BaseTool.run`, which OpenLIT wraps, and not as a field on
   `ToolUsageStartedEvent` / `ToolUsageFinishedEvent`, which carry `tool_name` and
   `tool_args` but no call id. So no CrewAI instrumentor can emit it today.
-  Verified at crewai tag `1.15.18`. The OTel GenAI semconv makes
-  `gen_ai.tool.call.id` Conditionally Required *"when available"*; it is not
-  available at the instrumentation point, so OpenLIT is compliant;
+  Verified at crewai tag `1.15.18`. The OTel GenAI semconv lists
+  `gen_ai.tool.call.id` on the execute_tool span as `Recommended` *"If
+  available"* (semantic-conventions-genai `docs/gen-ai/gen-ai-spans.md`, verified
+  at commit `ac46a5d`); it is not available at the instrumentation point, so
+  OpenLIT is compliant;
 - content captured by default (`capture_message_content=True`).
 
 The OTLP/JSON envelope (camelCase keys, hex span ids, string nanos, one batch
