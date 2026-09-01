@@ -15,27 +15,43 @@ Prereqs:
   pip install crewai==1.15.18 traceloop-sdk==0.62.3 \
               opentelemetry-instrumentation-crewai==0.62.3
   export OPENAI_API_KEY=...            # CrewAI needs a real LLM
-  # run a collector that file-exports (see collector.yaml), listening on :4318
-Run:
-  python agent_traceloop.py
-Then, to inventory span names (name-agnostic - does not assume what a tool span
-would have been called):
+
+Run (no collector needed):
+  TRACE_OUT=capture-traceloop.jsonl python agent_traceloop.py
+
+Then inventory the span names - name-agnostic, so it does not assume what a
+tool span would have been called:
   python -c "
 import json,collections
-c=collections.Counter()
-for line in open('capture.jsonl'):
-    for rs in json.loads(line)['resourceSpans']:
-        for ss in rs['scopeSpans']:
-            for s in ss['spans']: c[s['name']]+=1
+c=collections.Counter(json.loads(l)['name'] for l in open('capture-traceloop.jsonl') if l.strip())
 for n,k in c.most_common(): print(f'{k:>4}  {n}')
 "
+
+Or, for a byte-faithful OTLP/JSON capture, omit TRACE_OUT and run a collector
+that file-exports (see collector.yaml) listening on :4318.
 """
 
 from __future__ import annotations
 
+import os
+
 from crewai import Agent, Crew, Task
 from crewai.tools import tool
 from traceloop.sdk import Traceloop
+
+# Set TRACE_OUT=<path> to skip the collector entirely and write one span per
+# line directly from the process. Enough to inventory span names and read
+# attributes, which is all the instrumentation comparison needs; use the
+# collector path instead when you want a byte-faithful OTLP/JSON capture.
+_trace_out = os.getenv("TRACE_OUT")
+_exporter = None
+if _trace_out:
+    from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+    _exporter = ConsoleSpanExporter(
+        out=open(_trace_out, "w", encoding="utf8"),
+        formatter=lambda span: span.to_json(indent=None) + "\n",
+    )
 
 # Traceloop.init() auto-initializes every instrumentor whose package is present
 # (traceloop/sdk/tracing/tracing.py init_crewai_instrumentor, gated on
@@ -46,6 +62,7 @@ from traceloop.sdk import Traceloop
 Traceloop.init(
     app_name="crewai-support-crew",
     api_endpoint="http://127.0.0.1:4318",
+    exporter=_exporter,  # None -> OTLP to api_endpoint (the collector path)
     disable_batch=True,
     telemetry_enabled=False,
 )
