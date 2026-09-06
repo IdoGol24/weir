@@ -17,17 +17,20 @@ from weir.catalog._types import SourceSpec
 from weir.catalog.structure_classes import STRUCTURE_CLASSES
 
 _SEPARATORS = "-_"
-_PREFIX_WINDOW = 12
+_PREFIX_WINDOW = 16
 
 
 def class_prefix(value: str) -> str:
     """The class-identifying head of a value: everything through the last
-    separator in the first 12 characters, or the first 4 when there is none.
+    separator in the first 16 characters, or the first 4 when there is none.
 
-    ponytail: a heuristic, not catalog data. It yields "sk-proj-", "sk-ant-"
-    and "ghp_" for the separator-bearing shapes and a 4-character stub for
-    AKIA/AIza, which is every bundled class. Add a per-class `exposure_prefix`
-    catalog field only when a real class needs a head this cannot derive.
+    ponytail: a heuristic, not catalog data. It yields "sk-proj-", "sk-ant-
+    api03-" and "ghp_" for the separator-bearing shapes and a 4-character stub
+    for AKIA/AIza, which is every bundled class - PROVIDED the class's literal
+    prefix carries a separator within the window; a class with a longer
+    separator-free prefix would need a wider window or its own
+    `exposure_prefix` catalog field. Also assumes `value` has already cleared
+    a length floor: on a very short string this returns the whole thing.
     """
     head = value[:_PREFIX_WINDOW]
     cut = max((i for i, ch in enumerate(head) if ch in _SEPARATORS), default=-1)

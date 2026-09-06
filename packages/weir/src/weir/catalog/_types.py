@@ -25,10 +25,13 @@ class VerbatimEligibility(msgspec.Struct, frozen=True):
     min_length: int | None = None
     pattern: str | None = None
     # Applied AFTER the floor above clears, in this order (spec section 1).
-    # `min_distinct_chars` counts the value with its CLASS PREFIX STRIPPED, so
-    # it kills sk-proj-0000... and AKIAAAAAAAAAAAAAAAAA alike and means the
-    # same thing for every class however long its prefix is; counted over the
-    # whole value, `sk-proj-` would supply 7 of the 8 by itself.
+    # `min_distinct_chars` counts the value with its CLASS PREFIX STRIPPED (via
+    # `class_prefix`, see eligibility.py), so it kills sk-proj-0000... and
+    # AKIAAAAAAAAAAAAAAAAA alike; counted over the whole value, `sk-proj-`
+    # would supply 7 of the 8 by itself. This means the same thing for every
+    # class ONLY when the class's literal prefix carries a separator within
+    # `class_prefix`'s window - true of every bundled class, not guaranteed
+    # for one a contributor adds.
     # `reject_patterns` (fullmatch, `(?i)` inline where wanted) then covers the
     # named placeholders that clear the floor - each provider's documented
     # example key. Both are catalog data, so a team adds its own placeholder

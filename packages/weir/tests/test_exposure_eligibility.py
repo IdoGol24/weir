@@ -37,14 +37,27 @@ def test_the_distinct_char_floor_counts_the_value_without_its_class_prefix() -> 
     )
     assert not is_verbatim_eligible("AKIA" + "A" * 16, _source("aws_access_key_id"))
     assert not is_verbatim_eligible("AIza" + "0" * 35, _source("google_api_key"))
+    # Killed ONLY by the stripping: 'sk-proj-' is 7 distinct characters plus
+    # 'A' is 8, so it clears a whole-value floor, and no reject pattern covers it.
+    assert not is_verbatim_eligible("sk-proj-" + "A" * 40, _source("openai_api_key"))
+    # Killed only by a prefix window wide enough to reach past 'admin01-'.
+    assert not is_verbatim_eligible(
+        "sk-ant-admin01-" + "A" * 60, _source("anthropic_api_key")
+    )
 
 
 def test_class_prefix_covers_every_bundled_shape() -> None:
     assert class_prefix("sk-proj-Qh7Rk2Ls9Vn4") == "sk-proj-"
-    assert class_prefix("sk-ant-api03-Qh7Rk2") == "sk-ant-"
+    assert class_prefix("sk-ant-api03-Qh7Rk2") == "sk-ant-api03-"
     assert class_prefix("ghp_abcdefghij") == "ghp_"
     assert class_prefix("AKIAQH7RK2LS9VN4XB6Z") == "AKIA"
     assert class_prefix("AIzaSyQh7Rk2Ls9Vn4") == "AIza"
+
+
+def test_a_key_of_one_class_is_never_eligible_under_another() -> None:
+    ant = "sk-ant-api03-" + "Qh7Rk2Ls9Vn4Xb6Zt1Wc8Mp3Jd5Fg0Yu2Ae7Ri4Nk3Bv6Cx9Zm2Ws5Tq8Hj1Pl4"
+    assert is_verbatim_eligible(ant, _source("anthropic_api_key"))
+    assert not is_verbatim_eligible(ant, _source("openai_api_key"))
 
 
 def test_reject_patterns_are_case_insensitive_where_declared() -> None:
@@ -101,6 +114,25 @@ def test_an_invalid_reject_pattern_dies_at_load_naming_the_field(tmp_path: Path)
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="reject_patterns"):
+        load_catalog(tmp_path / "catalog.json")
+
+
+def test_an_exposure_class_with_two_capture_groups_dies_at_load_naming_the_field(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "catalog.json").write_text(
+        """
+        {
+          "sources": [
+            {"name": "x", "content_pattern": "(a)(b)", "exposure": true,
+             "eligibility": {"pattern": "(a)(b)"}}
+          ],
+          "sinks": [], "remediations": {}, "scope_remediations": {}
+        }
+        """,
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="x"):
         load_catalog(tmp_path / "catalog.json")
 
 

@@ -31,7 +31,16 @@ Adding a source class needs three things, not one:
    every other group. The exposure scan records group(1) as the value and the
    text before it as the display prefix; a stray capturing group would make it
    record the wrong bytes. `aws_access_key_id` uses `(?:AKIA|ASIA)` for
-   exactly this reason.
+   exactly this reason. The loader rejects an exposure class whose
+   `content_pattern` has more than one capturing group.
+
+   `credential_field`'s `eligibility.reject_patterns` (masked/None/null/
+   REDACTED values) is inert until Task 4's classifier exists: a class with
+   no floor to clear (no `pattern`, `structure_class`, or `min_length`) is
+   never verbatim-eligible by construction, so `is_verbatim_eligible` never
+   reaches the reject-pattern check for it today, and nothing else reads that
+   list yet. Do not assume a masked `credential_field` value is already being
+   filtered out anywhere before Task 4 lands.
 
 Three false-positive classes are worth knowing. A structural near-miss is what
 (3) catches. A structurally valid but non-secret value is not - weir's own demo

@@ -55,6 +55,18 @@ def _compile_patterns(catalog: Catalog, source: Path) -> None:
                     f"eligibility.reject_patterns[{index}] {reject!r}: {exc}"
                 ) from exc
 
+        # The exposure scan (Task 4) records content_pattern's group(1) as the
+        # secret value and the text before it as the display prefix (see
+        # default.py item 4) - a stray second capturing group would make it
+        # record the wrong bytes, silently. Catch it here rather than let a
+        # contributor discover it downstream.
+        if spec.exposure and re.compile(spec.content_pattern).groups > 1:
+            raise ValueError(
+                f"{source}: source {spec.name!r} is an exposure class whose "
+                f"content_pattern has more than one capturing group; use ONE "
+                f"group around the secret and (?:...) for every other group"
+            )
+
 
 def load_catalog(path: Path | None = None) -> Catalog:
     """Decode and validate a catalog. Raises msgspec.ValidationError or

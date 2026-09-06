@@ -15,7 +15,7 @@ from weir.catalog.loader import load_catalog
 # baselines that embed the digest, so this test failing is the reminder to
 # regenerate the corpus rather than discover the drift downstream. Update the
 # value only together with that regeneration.
-_EXPECTED_DIGEST = "f3579f65d95d66a3455bc0ba2aff24b1a1f93f20d695fbd88cbcfc5d390c47c6"
+_EXPECTED_DIGEST = "c3415744c6468a7c0a5f3e7da33d32081f575a10032c843f7baf39efe63ddfae"
 
 
 def test_default_catalog_is_the_loaded_one() -> None:
