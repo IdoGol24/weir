@@ -32,7 +32,10 @@ Adding a source class needs three things, not one:
    text before it as the display prefix; a stray capturing group would make it
    record the wrong bytes. `aws_access_key_id` uses `(?:AKIA|ASIA)` for
    exactly this reason. The loader rejects an exposure class whose
-   `content_pattern` has more than one capturing group.
+   `content_pattern` has more than one capturing group. Five of the six
+   bundled exposure classes have no capturing group at all - not
+   assignment-shaped - so the scan records group(0), the whole match, as the
+   value for those instead.
 
    `credential_field`'s `eligibility.reject_patterns` (masked/None/null/
    REDACTED values) is inert until Task 4's classifier exists: a class with

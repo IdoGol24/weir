@@ -148,7 +148,13 @@ def gauge_command(
             click.echo(report.remediation_line)
         for line in capability_ladder_lines(report, remediations=remediations):
             click.echo(line)
-        prov_sinks = {r.sink_tool_name for r in load_rules() if r.mode == "provenance"}
+        # The loader guarantees a provenance rule has a sink; narrow for the
+        # type checker rather than trusting it silently.
+        prov_sinks = {
+            r.sink_tool_name
+            for r in load_rules()
+            if r.mode == "provenance" and r.sink_tool_name is not None
+        }
         if prov_sinks or DEFAULT_CATALOG.untrusted_sources:
             labeled = label_graph(graph, DEFAULT_CATALOG)
             for line in provenance_gauge_lines(

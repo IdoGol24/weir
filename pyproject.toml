@@ -42,6 +42,12 @@ select = ["E", "F", "I", "UP", "B"]
 "fixtures/foreign/langchain-collector/toy_agent.py" = ["E402"]
 
 [tool.pyright]
+# Point pyright at the project venv. Without this it resolves against
+# whatever python is on PATH and reports every third-party import as
+# unresolved, which made the local type gate ~1200 lines of noise. CI
+# happened to work because `uv run` puts the venv on PATH first.
+venvPath = "."
+venv = ".venv"
 include = ["packages/weir/src", "packages/weir-tracegen/src", "tests"]
 typeCheckingMode = "strict"
 pythonVersion = "3.12"
@@ -55,6 +61,11 @@ root_packages = ["weir", "weir_tracegen"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
+# weir.exposure is a source here, not an exception: the wire walk lives in
+# weir.adapters.otel.exposure and the two halves meet at weir.schema.exposure,
+# so NOTHING under weir.exposure needs the adapter - __init__ included. That
+# is what makes this rule exception-free, and an exception-free rule is the
+# only kind that catches a convenience import added six months from now.
 name = "Analysis-path purity: no I/O or CLI in the pure core"
 type = "forbidden"
 source_modules = [
@@ -63,6 +74,7 @@ source_modules = [
     "weir.label",
     "weir.taint",
     "weir.evaluate",
+    "weir.exposure",
 ]
 forbidden_modules = ["weir.cli", "weir.adapters"]
 
@@ -83,6 +95,7 @@ forbidden_modules = [
     "weir.label",
     "weir.taint",
     "weir.evaluate",
+    "weir.exposure",
     "weir.report",
     "weir.rules_commons",
     "weir.cli",

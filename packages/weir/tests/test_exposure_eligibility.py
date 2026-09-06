@@ -132,7 +132,7 @@ def test_an_exposure_class_with_two_capture_groups_dies_at_load_naming_the_field
         """,
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="x"):
+    with pytest.raises(ValueError, match="capturing group"):
         load_catalog(tmp_path / "catalog.json")
 
 

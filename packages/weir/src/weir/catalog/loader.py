@@ -56,9 +56,11 @@ def _compile_patterns(catalog: Catalog, source: Path) -> None:
                 ) from exc
 
         # The exposure scan (Task 4) records content_pattern's group(1) as the
-        # secret value and the text before it as the display prefix (see
-        # default.py item 4) - a stray second capturing group would make it
-        # record the wrong bytes, silently. Catch it here rather than let a
+        # secret value and the text before it as the display prefix for an
+        # assignment-shaped pattern (see default.py item 4); a pattern with no
+        # capturing group at all records group(0), the whole match, as the
+        # value instead - a stray second capturing group would make it record
+        # the wrong bytes, silently. Catch it here rather than let a
         # contributor discover it downstream.
         if spec.exposure and re.compile(spec.content_pattern).groups > 1:
             raise ValueError(
