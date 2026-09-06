@@ -47,7 +47,9 @@ def test_an_ineligible_hit_is_demoted_naming_the_class() -> None:
 def test_a_shadow_rule_is_demoted() -> None:
     findings = evaluate_exposure(_scan([_hit()]), [_rule(stage="shadow")])
     assert not findings[0].is_verdict_grade
-    assert findings[0].demotion_reasons == ["rule openai-api-key-in-telemetry in shadow stage"]
+    assert findings[0].demotion_reasons == [
+        "rule openai-api-key-in-telemetry is in stage 'shadow', not active"
+    ]
 
 
 def test_a_hit_with_no_matching_rule_produces_nothing() -> None:

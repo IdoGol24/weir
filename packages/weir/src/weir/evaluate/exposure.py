@@ -7,6 +7,11 @@ applies: presence does not depend on how well the span mapped. Eligibility - a
 strict pattern, a length range, a charset, a distinct-character floor, a reject
 list - is what earns the grade, and a key-name match never does, because its
 class declares no floor at all.
+
+`evaluate_exposure` reads only `scan.hits`, not `scan.applicable`; a caller
+that must report "exposure scan: not applicable" on native input (constitution
+#5) has to keep the `ExposureScan` around alongside the returned findings for
+that flag, rather than expecting this function to surface it.
 """
 
 from __future__ import annotations
@@ -32,7 +37,7 @@ def evaluate_exposure(scan: ExposureScan, rules: list[RuleSpec]) -> list[Exposur
             if not hit.eligible:
                 reasons.append(f"value shape not eligible for {hit.source_class}")
             if rule.stage != "active":
-                reasons.append(f"rule {rule.id} in shadow stage")
+                reasons.append(f"rule {rule.id} is in stage {rule.stage!r}, not active")
             findings.append(ExposureFinding(
                 rule_id=rule.id,
                 rule_version=rule.version,

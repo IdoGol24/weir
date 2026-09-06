@@ -21,6 +21,7 @@ _BUNDLED_RULES_DIR = Path(__file__).parent / "bundled"
 UNTRUSTED_ORIGIN = "untrusted_origin"
 _ALLOWED_MODES = {"verbatim", "provenance", "exposure"}
 _SEVERITIES = {"high", "medium", "low"}
+_STAGES = {"active", "shadow"}
 _SINK_MODES = {"verbatim", "provenance"}
 
 
@@ -38,6 +39,10 @@ def load_rules(rules_dir: Path | None = None, *, catalog: Catalog | None = None)
         if r.severity not in _SEVERITIES:
             raise ValueError(
                 f"rule {r.id!r}: severity {r.severity!r} is not one of {sorted(_SEVERITIES)}"
+            )
+        if r.stage not in _STAGES:
+            raise ValueError(
+                f"rule {r.id!r}: stage {r.stage!r} is not one of {sorted(_STAGES)}"
             )
         if r.mode in _SINK_MODES and r.sink_tool_name is None:
             raise ValueError(f"rule {r.id!r}: mode {r.mode!r} requires a sink_tool_name")

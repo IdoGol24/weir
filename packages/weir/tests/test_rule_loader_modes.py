@@ -75,6 +75,11 @@ def test_an_unknown_severity_is_rejected(tmp_path):
         load_rules(_write(tmp_path, severity="critical"))
 
 
+def test_an_unknown_stage_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="stage"):
+        load_rules(_write(tmp_path, stage="draft"))
+
+
 def test_bundled_rules_are_the_expected_eight():
     rules = load_rules()
     assert {r.id for r in rules} == {
