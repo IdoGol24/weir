@@ -73,12 +73,16 @@ def exposure_lines(findings: list[ExposureFinding]) -> list[str]:
             f"1 credential ({classes}) in {plural(locations, 'location')} "
             f"across {plural(spans, 'span')}"
         )
-        for span_name, location, prefix, last4 in dict.fromkeys(
-            (f.span_name, f.location, f.prefix, f.last4) for f in group
+        for span_ref, span_name, location, prefix, last4 in dict.fromkeys(
+            (f.span_ref, f.span_name, f.location, f.prefix, f.last4) for f in group
         ):
             value = f"{prefix}…{last4}" if last4 else prefix
+            # span_ref distinguishes rows when several spans share a name -
+            # several identically-named agent spans is the leak shape this
+            # feature exists for, not an edge case.
+            ref = flatten_untrusted(span_ref)[:8]
             lines.append(
-                f"  {flatten_untrusted(span_name)}  {flatten_untrusted(location)}  "
+                f"  {flatten_untrusted(span_name)} ({ref})  {flatten_untrusted(location)}  "
                 f"{flatten_untrusted(value)}"
             )
         for rule_id in dict.fromkeys(f.rule_id for f in group):

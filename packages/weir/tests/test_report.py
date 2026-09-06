@@ -3,8 +3,12 @@ from pathlib import Path
 import pytest
 from _harness.g1 import assert_byte_identical_across_hash_seeds
 
+from weir.adapters.otel import decode_input
+from weir.adapters.otel.exposure import scan_surface
 from weir.catalog import DEFAULT_CATALOG
 from weir.evaluate import ExposureFinding, evaluate
+from weir.evaluate.exposure import evaluate_exposure
+from weir.exposure import classify_exposure
 from weir.gauge import GaugeReport, JoinQualitySplit, compute_gauge_report
 from weir.graph import build_session_graph
 from weir.label import label_graph
@@ -141,7 +145,7 @@ def test_exposure_block_groups_by_fingerprint_and_names_the_locations() -> None:
                 for k in ("llm", "executor")]
     lines = exposure_lines(findings)
     assert lines[0] == "1 credential (openai_api_key) in 2 locations across 1 span"
-    assert "  crew.agent  attributes.acme.agent.llm  sk-proj-…7Ri4" in lines
+    assert "  crew.agent (aa)  attributes.acme.agent.llm  sk-proj-…7Ri4" in lines
     assert "  rule: openai-api-key-in-telemetry" in lines
     assert '  to demote: set "stage": "shadow" in openai-api-key-in-telemetry.json' in lines
 
@@ -185,7 +189,7 @@ def test_last4_none_never_renders_the_word_none() -> None:
     # last4. Falling back to prefix-only must not print "prefix…None".
     finding = _exposure_finding(last4=None)
     lines = exposure_lines([finding])
-    assert "  crew.agent  attributes.acme.agent.llm  sk-proj-" in lines
+    assert "  crew.agent (aa)  attributes.acme.agent.llm  sk-proj-" in lines
     assert not any("None" in line for line in lines)
 
 
@@ -205,6 +209,27 @@ def test_control_chars_in_span_name_cannot_forge_a_report_line() -> None:
     rendered = "\n".join(lines)
     assert rendered.count("\n") == len(lines) - 1
     assert "1 credential (nothing) in 0 locations across 0 spans" not in lines[0]
+
+
+def test_headline_location_count_matches_the_number_of_location_lines() -> None:
+    # Regression: three spans named "acme.agent" used to collapse into one
+    # location line while the headline still counted all of them - the
+    # dedupe key omitted span_ref. Run against the real fixture, not a
+    # hand-built list, since the bug only shows up with several
+    # identically-named spans.
+    wire = decode_input((_FIXTURES_DIR / "exposure" / "attribute-exposure.json").read_bytes())
+    scan = classify_exposure(scan_surface(wire), DEFAULT_CATALOG)
+    findings = evaluate_exposure(scan, load_rules())
+    lines = exposure_lines(findings)
+    headline_index = next(i for i, line in enumerate(lines) if line.startswith("1 credential ("))
+    claimed = int(lines[headline_index].split(" in ")[1].split(" location")[0])
+    location_lines = []
+    for line in lines[headline_index + 1:]:
+        if line.startswith("  rule:"):
+            break
+        location_lines.append(line)
+    assert claimed == 8
+    assert len(location_lines) == claimed
 
 
 def test_exposure_lines_location_order_is_hash_seed_independent() -> None:
