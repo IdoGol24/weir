@@ -24,6 +24,17 @@ class VerbatimEligibility(msgspec.Struct, frozen=True):
     structure_class: str | None = None
     min_length: int | None = None
     pattern: str | None = None
+    # Applied AFTER the floor above clears, in this order (spec section 1).
+    # `min_distinct_chars` counts the value with its CLASS PREFIX STRIPPED, so
+    # it kills sk-proj-0000... and AKIAAAAAAAAAAAAAAAAA alike and means the
+    # same thing for every class however long its prefix is; counted over the
+    # whole value, `sk-proj-` would supply 7 of the 8 by itself.
+    # `reject_patterns` (fullmatch, `(?i)` inline where wanted) then covers the
+    # named placeholders that clear the floor - each provider's documented
+    # example key. Both are catalog data, so a team adds its own placeholder
+    # shapes without touching code.
+    min_distinct_chars: int | None = None
+    reject_patterns: list[str] = msgspec.field(default_factory=list[str])
 
 
 class SourceSpec(msgspec.Struct, frozen=True):
@@ -36,6 +47,11 @@ class SourceSpec(msgspec.Struct, frozen=True):
     name: str
     content_pattern: str
     eligibility: VerbatimEligibility
+    # True: the PRESENCE of this class in exported telemetry is itself
+    # reportable (spec 2026-09-06). The flow engine never reads this field;
+    # only the exposure scan does, and an exposure rule may name no other
+    # kind of class.
+    exposure: bool = False
 
 
 class SinkSpec(msgspec.Struct, frozen=True):

@@ -12,10 +12,79 @@
     {
       "name": "github_token",
       "content_pattern": "\\bghp_[A-Za-z0-9]+\\b",
+      "exposure": true,
       "eligibility": {
         "structure_class": null,
         "min_length": null,
-        "pattern": "ghp_[A-Za-z0-9]{36}"
+        "pattern": "ghp_[A-Za-z0-9]{36}",
+        "min_distinct_chars": 8,
+        "reject_patterns": [
+          "(?i)ghp_(x|0|#)+",
+          "(?i)ghp_(EXAMPLE|TEST|FAKE|DEMO|PLACEHOLDER|REDACTED).*"
+        ]
+      }
+    },
+    {
+      "name": "openai_api_key",
+      "content_pattern": "\\bsk-[A-Za-z0-9_-]{16,}",
+      "exposure": true,
+      "eligibility": {
+        "pattern": "sk-(proj-|svcacct-)?[A-Za-z0-9_-]{32,200}",
+        "min_distinct_chars": 8,
+        "reject_patterns": [
+          "(?i)sk-(proj-|svcacct-)?(x|0|#)+",
+          "(?i)sk-(proj-|svcacct-)?(EXAMPLE|TEST|FAKE|DEMO|PLACEHOLDER|REDACTED).*"
+        ]
+      }
+    },
+    {
+      "name": "anthropic_api_key",
+      "content_pattern": "\\bsk-ant-[A-Za-z0-9_-]{16,}",
+      "exposure": true,
+      "eligibility": {
+        "pattern": "sk-ant-(api|admin)\\d{2}-[A-Za-z0-9_-]{60,200}",
+        "min_distinct_chars": 8,
+        "reject_patterns": [
+          "(?i)sk-ant-(api|admin)\\d{2}-(x|0|#)+",
+          "(?i)sk-ant-(api|admin)\\d{2}-(EXAMPLE|TEST|FAKE|DEMO|PLACEHOLDER|REDACTED).*"
+        ]
+      }
+    },
+    {
+      "name": "aws_access_key_id",
+      "content_pattern": "\\b(?:AKIA|ASIA)[A-Z0-9]{8,}",
+      "exposure": true,
+      "eligibility": {
+        "pattern": "(AKIA|ASIA)[A-Z0-9]{16}",
+        "min_distinct_chars": 8,
+        "reject_patterns": [
+          "(AKIA|ASIA)(X|0|#)+",
+          "AKIAIOSFODNN7EXAMPLE"
+        ]
+      }
+    },
+    {
+      "name": "google_api_key",
+      "content_pattern": "\\bAIza[A-Za-z0-9_-]{16,}",
+      "exposure": true,
+      "eligibility": {
+        "pattern": "AIza[A-Za-z0-9_-]{35}",
+        "min_distinct_chars": 8,
+        "reject_patterns": [
+          "(?i)AIza(x|0|#)+",
+          "(?i)AIza(EXAMPLE|TEST|FAKE|DEMO|PLACEHOLDER|REDACTED).*"
+        ]
+      }
+    },
+    {
+      "name": "credential_field",
+      "content_pattern": "(?i)(?<![A-Za-z0-9])(?:(?:private|secret|access|client|refresh)[_-]?(?:key|secret|token)|api[_-]?key|apikey|secret|token|password|passwd)\\s*[=:]\\s*['\"]?([^'\"\\s,;)}\\]]{8,})",
+      "exposure": true,
+      "eligibility": {
+        "reject_patterns": [
+          "[*xX#]+",
+          "(?i)(None|null|REDACTED)"
+        ]
       }
     }
   ],

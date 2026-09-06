@@ -46,6 +46,15 @@ def _compile_patterns(catalog: Catalog, source: Path) -> None:
                     f"{pattern!r}: {exc}"
                 ) from exc
 
+        for index, reject in enumerate(spec.eligibility.reject_patterns):
+            try:
+                re.compile(reject)
+            except re.error as exc:
+                raise ValueError(
+                    f"{source}: source {spec.name!r} has an invalid "
+                    f"eligibility.reject_patterns[{index}] {reject!r}: {exc}"
+                ) from exc
+
 
 def load_catalog(path: Path | None = None) -> Catalog:
     """Decode and validate a catalog. Raises msgspec.ValidationError or

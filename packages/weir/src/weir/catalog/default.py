@@ -26,6 +26,12 @@ Adding a source class needs three things, not one:
    and must NOT fire.** `content_pattern` is deliberately loose, so without
    the near-miss nothing proves eligibility is discriminating rather than
    waving everything through.
+4. If your `content_pattern` is assignment-shaped (a key name, then the
+   secret), put ONE capturing group around the SECRET and use `(?:...)` for
+   every other group. The exposure scan records group(1) as the value and the
+   text before it as the display prefix; a stray capturing group would make it
+   record the wrong bytes. `aws_access_key_id` uses `(?:AKIA|ASIA)` for
+   exactly this reason.
 
 Three false-positive classes are worth knowing. A structural near-miss is what
 (3) catches. A structurally valid but non-secret value is not - weir's own demo
