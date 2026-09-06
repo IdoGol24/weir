@@ -39,9 +39,10 @@ def _node_summary(node: TraceNode) -> str:
     payload = node.payload
     if isinstance(payload, ToolCallPayload):
         return f"{node.kind.value}: {payload.tool_name}"
-    text = payload.content
-    shown = text if len(text) <= 80 else f"{text[:80]}…"
-    return f"{node.kind.value}: {shown}"
+    # Masked for EVERY node, not only nodes on a flow path: an exposure hit
+    # has no path, and an 80-character raw preview of a chat span would print
+    # a key sitting inside gen_ai.input.messages. Orientation, not content.
+    return f"{node.kind.value}: {mask(payload.content)} ({len(payload.content)} chars)"
 
 
 def _masked_value(prefix: str, last4: str | None) -> str:

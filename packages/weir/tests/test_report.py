@@ -227,3 +227,35 @@ def test_exposure_lines_location_order_is_hash_seed_independent() -> None:
         "import sys; sys.stdout.write('\\n'.join(exposure_lines(findings)))\n"
     )
     assert_byte_identical_across_hash_seeds(code)
+
+
+def test_the_node_preview_is_masked_for_every_node_not_only_path_nodes() -> None:
+    # Exposure hits have no witness path, so "mask only what is on a path" is
+    # not a rule that can hold: a chat span with a key inside
+    # gen_ai.input.messages would render 80 raw characters. The preview's job
+    # is to orient, not to show content.
+    from weir.report.renderer import _node_summary
+    from weir.schema.trace import NodeKind, TraceNode, UserInputPayload
+
+    node = TraceNode(
+        id="n0",
+        kind=NodeKind.USER_INPUT,
+        timestamp="2026-01-01T00:00:00Z",
+        actor="user",
+        source_ref="n0",
+        payload=UserInputPayload(content="my key is " + "A" * 200),
+    )
+    summary = _node_summary(node)
+    assert "A" * 20 not in summary
+    assert summary.startswith("user_input: ")
+
+
+def test_the_red_report_shows_no_raw_node_content() -> None:
+    from weir.schema.trace import decode_canonical_trace
+
+    html = _render_for("injection-exfil.json")
+    trace = decode_canonical_trace((_FIXTURES_DIR / "injection-exfil.json").read_bytes())
+    for node in trace.nodes:
+        content = getattr(node.payload, "content", "")
+        if len(content) > 12:
+            assert content not in html
