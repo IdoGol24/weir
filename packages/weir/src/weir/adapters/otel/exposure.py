@@ -19,10 +19,18 @@ from typing import cast
 from weir.adapters.otel._wire import SpanInContext, WireInput
 from weir.schema.exposure import ExposureSurface, ScannedString
 
+# ponytail: hard depth cap, no ledger entry. Real OTLP kvlists are one or two
+# levels deep; anything at 64 is malformed or hostile, and crashing the scan
+# is strictly worse than not walking it. Upgrade path: if a real payload ever
+# trips this, record a degradation rather than raising the cap.
+_MAX_DEPTH = 64
 
-def _walk_value(value: object, location: str, out: list[tuple[str, str]]) -> None:
+
+def _walk_value(value: object, location: str, out: list[tuple[str, str]], depth: int = 0) -> None:
     """stringValue is collected; arrayValue and kvlistValue recurse with [i] /
     .key appended; every other value type is skipped, never coerced."""
+    if depth > _MAX_DEPTH:
+        return
     if not isinstance(value, dict):
         return
     holder = cast("dict[str, object]", value)
@@ -35,14 +43,20 @@ def _walk_value(value: object, location: str, out: list[tuple[str, str]]) -> Non
         items = cast("dict[str, object]", array).get("values")
         if isinstance(items, list):
             for index, item in enumerate(cast("list[object]", items)):
-                _walk_value(item, f"{location}[{index}]", out)
+                _walk_value(item, f"{location}[{index}]", out, depth + 1)
         return
     kvlist = holder.get("kvlistValue")
     if isinstance(kvlist, dict):
-        _walk_attributes(cast("dict[str, object]", kvlist).get("values"), location, out)
+        _walk_attributes(
+            cast("dict[str, object]", kvlist).get("values"), location, out, depth + 1
+        )
 
 
-def _walk_attributes(attributes: object, location: str, out: list[tuple[str, str]]) -> None:
+def _walk_attributes(
+    attributes: object, location: str, out: list[tuple[str, str]], depth: int = 0
+) -> None:
+    if depth > _MAX_DEPTH:
+        return
     if not isinstance(attributes, list):
         return
     for raw in cast("list[object]", attributes):
@@ -51,7 +65,7 @@ def _walk_attributes(attributes: object, location: str, out: list[tuple[str, str
         entry = cast("dict[str, object]", raw)
         key = entry.get("key")
         if isinstance(key, str):
-            _walk_value(entry.get("value"), f"{location}.{key}", out)
+            _walk_value(entry.get("value"), f"{location}.{key}", out, depth)
 
 
 def _span_surface(
@@ -96,6 +110,10 @@ def scan_surface(wire: WireInput) -> ExposureSurface:
     strings: list[ScannedString] = []
 
     for span_index, ctx in enumerate(wire.spans):
+        # id()-keyed dedupe is only correct because SpanInContext stores plain
+        # field references that stay alive for the life of `wire.spans` - a
+        # future computed property here would return a fresh object each
+        # access and silently defeat this.
         resource_key, scope_key = id(ctx.resource_attributes), id(ctx.scope)
         found = _span_surface(
             ctx,

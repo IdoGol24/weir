@@ -2,16 +2,21 @@
 ordered by span order then location, and the value never enters the record."""
 
 import json
+import time
 
 import msgspec
 
 from weir.adapters.otel import decode_input
 from weir.adapters.otel.exposure import scan_surface
-from weir.catalog import DEFAULT_CATALOG
+from weir.catalog import DEFAULT_CATALOG, Catalog, SourceSpec, VerbatimEligibility
 from weir.exposure import classify_exposure
 from weir.schema.exposure import ExposureSurface
 
 _KEY = "sk-proj-Qh7Rk2Ls9Vn4Xb6Zt1Wc8Mp3Jd5Fg0Yu2Ae7Ri4"
+# A second, distinct valid OpenAI-shaped key: same shape as _KEY, different
+# bytes, so it clears eligibility under the same class but earns its own
+# fingerprint.
+_KEY2 = "sk-proj-Zt1Wc8Mp3Jd5Fg0Yu2Ae7Ri4Qh7Rk2Ls9Vn4Xb6"
 
 
 def _attr(key, value):
@@ -136,3 +141,66 @@ def test_status_message_and_event_attributes_are_classified_too() -> None:
                                "attributes": [_attr("exception.message", _KEY)]}]}])
     assert sorted(h.location for h in scan.hits) == [
         "events[0].attributes.exception.message", "status.message"]
+
+
+def test_two_spans_sharing_a_span_id_both_keep_their_finding() -> None:
+    # Legal on the wire (retries, broken instrumentation, an attacker-set
+    # id): the dedupe key must not collapse two distinct spans that happen to
+    # share a spanId into one finding.
+    scan = _scan([
+        {"spanId": "aa" * 8, "name": "one", "attributes": [_attr("k", "password=firstsecret")]},
+        {"spanId": "aa" * 8, "name": "two", "attributes": [_attr("k", "password=secondsecret")]},
+    ])
+    assert scan.spans_scanned == 2
+    assert [h.span_name for h in scan.hits] == ["one", "two"]
+
+
+def test_the_same_key_twice_at_one_location_is_one_hit() -> None:
+    scan = _scan([{"spanId": "aa" * 8, "attributes": [_attr("k", f"{_KEY} and {_KEY}")]}])
+    assert len(scan.hits) == 1
+
+
+def test_two_different_keys_at_one_location_are_two_hits() -> None:
+    scan = _scan([{"spanId": "aa" * 8, "attributes": [_attr("k", f"{_KEY} and {_KEY2}")]}])
+    assert len(scan.hits) == 2
+    assert scan.hits[0].fingerprint != scan.hits[1].fingerprint
+
+
+def test_classification_stays_linear_at_eight_thousand_locations() -> None:
+    # Pins the fix for the quadratic subsumption scan: 8000 assignment-shaped
+    # attributes used to cost ~3.6s (O(n^2) over the whole batch); local
+    # subsumption per (span, location) keeps this well under a second.
+    attrs = [_attr(f"k{i}", f"api_key='{_KEY}'") for i in range(8000)]
+    surface = scan_surface(decode_input(json.dumps(
+        {"resourceSpans": [{"scopeSpans": [{"spans": [
+            {"spanId": "aa" * 8, "attributes": attrs}]}]}]}
+    ).encode()))
+    start = time.perf_counter()
+    scan = classify_exposure(surface, DEFAULT_CATALOG)
+    elapsed = time.perf_counter() - start
+    assert len(scan.hits) == 8000
+    assert elapsed < 1.5, f"classify_exposure took {elapsed:.2f}s at 8000 locations"
+
+
+def test_last4_is_withheld_below_the_reconstruction_floor() -> None:
+    # A contributed catalog can set its own short min_length; G4 (never carry
+    # the value) must hold regardless of what a catalog declares.
+    catalog = Catalog(
+        sources=[SourceSpec(
+            name="short_secret",
+            content_pattern=r"tok-[A-Za-z0-9]+",
+            eligibility=VerbatimEligibility(min_length=3),
+            exposure=True,
+        )],
+        sinks=[], remediations={},
+    )
+    surface = scan_surface(decode_input(json.dumps(
+        {"resourceSpans": [{"scopeSpans": [{"spans": [
+            {"spanId": "aa" * 8, "attributes": [_attr("k", "tok-abc12")]}]}]}]}
+    ).encode()))
+    scan = classify_exposure(surface, catalog)
+    assert len(scan.hits) == 1
+    hit = scan.hits[0]
+    assert hit.eligible
+    assert hit.last4 is None
+    assert "tok-abc12" not in msgspec.json.encode(scan).decode()

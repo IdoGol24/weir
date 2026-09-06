@@ -94,3 +94,21 @@ def test_a_span_the_genai_filter_drops_is_still_on_the_surface() -> None:
     wire = decode_input(json.dumps(doc).encode())
     assert map_wire(wire).trace.nodes == []
     assert len(scan_surface(wire).strings) == 1
+
+
+def _nested_kvlist(depth: int) -> dict:
+    value: dict = {"stringValue": "bottom"}
+    for _ in range(depth):
+        value = {"kvlistValue": {"values": [{"key": "n", "value": value}]}}
+    return value
+
+
+def test_a_hostile_depth_does_not_crash_the_scan() -> None:
+    # A 500-level kvlist nest used to blow the recursion limit; the cap must
+    # make scan_surface return instead. A shallow canary string in the same
+    # span proves the rest of the walk still runs.
+    surface = _surface([{"spanId": "aa" * 8, "attributes": [
+        {"key": "deep", "value": _nested_kvlist(500)},
+        _attr("canary", "shallow-value"),
+    ]}])
+    assert "shallow-value" in [s.text for s in surface.strings]
