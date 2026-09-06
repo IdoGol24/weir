@@ -3,7 +3,9 @@ from pathlib import Path
 from _harness.g1 import assert_byte_identical_across_hash_seeds
 
 from weir.catalog import DEFAULT_CATALOG
+from weir.exposure import ExposureHit, ExposureScan
 from weir.gauge import compute_gauge_report
+from weir.gauge.exposure import exposure_gauge_lines
 from weir.graph import Edge, GraphJoin, SessionGraph, build_session_graph
 from weir.schema.trace import (
     JoinConfidence,
@@ -171,3 +173,51 @@ def test_gauge_is_hash_seed_independent() -> None:
         "print(report.evidentiary_coverage_bp, report.degraded_bp, report.remediation_line)\n"
     )
     assert_byte_identical_across_hash_seeds(code)
+
+
+def _exposure_hit(**over) -> ExposureHit:
+    base = dict(span_ref="aa", span_name="agent", location="attributes.k",
+                source_class="openai_api_key", eligible=True, value_len=48,
+                prefix="sk-proj-", last4="7Ri4", fingerprint="0123456789ab")
+    base.update(over)
+    return ExposureHit(**base)
+
+
+def _exposure_scan(hits, **over) -> ExposureScan:
+    base = dict(applicable=True, spans_scanned=9, strings_scanned=143, hits=hits)
+    base.update(over)
+    return ExposureScan(**base)
+
+
+def test_native_input_says_not_applicable_never_zero() -> None:
+    scan = _exposure_scan([], applicable=False, spans_scanned=0, strings_scanned=0)
+    assert exposure_gauge_lines(scan) == [
+        "exposure scan: not applicable - native input carries no attributes"]
+
+
+def test_a_clean_export_still_reports_what_was_scanned() -> None:
+    assert exposure_gauge_lines(_exposure_scan([])) == [
+        "exposure scan: 9 spans, 143 strings - no credential-shaped values"]
+
+
+def test_one_key_in_six_locations_across_three_spans() -> None:
+    hits = [_exposure_hit(span_ref=s, location=f"attributes.{k}")
+            for s in ("aa", "bb", "cc") for k in ("llm", "executor")]
+    assert exposure_gauge_lines(_exposure_scan(hits)) == [
+        "exposure scan: 9 spans, 143 strings",
+        "  credentials: 1 distinct (openai_api_key) in 6 locations across 3 spans",
+    ]
+
+
+def test_triage_hits_are_counted_separately() -> None:
+    triage = [_exposure_hit(source_class="credential_field", eligible=False, last4=None,
+                            fingerprint=None, prefix="password", location=f"attributes.{i}")
+              for i in range(3)]
+    assert exposure_gauge_lines(_exposure_scan(triage))[1] == (
+        "  triage: 3 key-name matches (credential_field) in 3 locations")
+
+
+def test_the_gauge_block_carries_no_forbidden_lexicon() -> None:
+    from weir.report import find_forbidden_lexicon
+    block = "\n".join(exposure_gauge_lines(_exposure_scan([_exposure_hit()])))
+    assert find_forbidden_lexicon(block) == []

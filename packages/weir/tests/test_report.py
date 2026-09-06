@@ -4,11 +4,12 @@ import pytest
 from _harness.g1 import assert_byte_identical_across_hash_seeds
 
 from weir.catalog import DEFAULT_CATALOG
-from weir.evaluate import evaluate
+from weir.evaluate import ExposureFinding, evaluate
 from weir.gauge import GaugeReport, JoinQualitySplit, compute_gauge_report
 from weir.graph import build_session_graph
 from weir.label import label_graph
 from weir.report import find_forbidden_lexicon, mask, render_html_report
+from weir.report.text import exposure_lines
 from weir.rules_commons import load_rules
 from weir.schema.trace import decode_canonical_trace
 from weir.taint import build_tainted_graph
@@ -123,3 +124,43 @@ def test_report_rendering_is_hash_seed_independent() -> None:
         "import sys; sys.stdout.write(html)\n"
     )
     assert_byte_identical_across_hash_seeds(code)
+
+
+def _exposure_finding(**over) -> ExposureFinding:
+    base = dict(rule_id="openai-api-key-in-telemetry", rule_version="1.0.0",
+                severity="high", source_class="openai_api_key", span_ref="aa",
+                span_name="crew.agent", location="attributes.acme.agent.llm",
+                value_len=48, prefix="sk-proj-", last4="7Ri4",
+                fingerprint="0123456789ab", is_verdict_grade=True)
+    base.update(over)
+    return ExposureFinding(**base)
+
+
+def test_exposure_block_groups_by_fingerprint_and_names_the_locations() -> None:
+    findings = [_exposure_finding(location=f"attributes.acme.agent.{k}")
+                for k in ("llm", "executor")]
+    lines = exposure_lines(findings)
+    assert lines[0] == "1 credential (openai_api_key) in 2 locations across 1 span"
+    assert "  crew.agent  attributes.acme.agent.llm  sk-proj-…7Ri4" in lines
+    assert "  rule: openai-api-key-in-telemetry" in lines
+    assert '  to demote: set "stage": "shadow" in openai-api-key-in-telemetry.json' in lines
+
+
+def test_exposure_block_never_prints_a_whole_value() -> None:
+    lines = "\n".join(exposure_lines([_exposure_finding()]))
+    assert "sk-proj-…7Ri4" in lines
+    assert "sk-proj-Qh7" not in lines
+
+
+def test_triage_findings_group_with_their_demotion_reason() -> None:
+    triage = _exposure_finding(
+        source_class="credential_field", rule_id="credential-field-in-telemetry",
+        prefix="password", last4=None, fingerprint=None, is_verdict_grade=False,
+        demotion_reasons=["value shape not eligible for credential_field"])
+    lines = exposure_lines([triage])
+    assert lines[0] == "review queue: 1 credential-shaped match (credential_field)"
+    assert "  value shape not eligible for credential_field" in lines
+
+
+def test_no_findings_render_nothing() -> None:
+    assert exposure_lines([]) == []
