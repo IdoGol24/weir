@@ -5,6 +5,7 @@ length is reported) so terminal/CI logs never leak scanned material."""
 
 from __future__ import annotations
 
+from weir._text_safety import flatten_untrusted, plural
 from weir.evaluate import ExposureFinding, Finding, joins_on_path
 from weir.graph import SessionGraph
 from weir.rules_commons import RuleSpec
@@ -49,38 +50,51 @@ def finding_lines(
 def exposure_lines(findings: list[ExposureFinding]) -> list[str]:
     """The exposure section of `weir scan`, rendered above the flow findings.
 
-    Verdict-grade findings group by fingerprint, then by class; triage findings
-    group by class in the review queue with their demotion reason.
-    `prefix...last4` is the display convention every credential UI uses and can
-    never fullmatch an eligibility pattern - the value itself is never printed.
+    Verdict-grade findings group by fingerprint; triage findings group by
+    class in the review queue with their demotion reason. `prefix...last4` is
+    the display convention every credential UI uses; for a bundled class it
+    can never fullmatch an eligibility pattern, but a contributed catalog
+    makes no such promise, so the value itself is still never printed.
     """
-    verdict = [f for f in findings if f.is_verdict_grade]
-    triage = [f for f in findings if not f.is_verdict_grade]
-    lines: list[str] = []
+    groups: dict[str | None, list[ExposureFinding]] = {}
+    triage: list[ExposureFinding] = []
+    for finding in findings:
+        if finding.is_verdict_grade:
+            groups.setdefault(finding.fingerprint, []).append(finding)
+        else:
+            triage.append(finding)
 
-    for fingerprint in dict.fromkeys(f.fingerprint for f in verdict):
-        group = [f for f in verdict if f.fingerprint == fingerprint]
+    lines: list[str] = []
+    for group in groups.values():
         classes = ", ".join(dict.fromkeys(f.source_class for f in group))
+        locations = len({(f.span_ref, f.location) for f in group})
         spans = len({f.span_ref for f in group})
         lines.append(
-            f"1 credential ({classes}) in {len(group)} "
-            f"{'location' if len(group) == 1 else 'locations'} across {spans} "
-            f"{'span' if spans == 1 else 'spans'}"
+            f"1 credential ({classes}) in {plural(locations, 'location')} "
+            f"across {plural(spans, 'span')}"
         )
-        lines.extend(
-            f"  {f.span_name}  {f.location}  {f.prefix}…{f.last4}" for f in group
-        )
+        for span_name, location, prefix, last4 in dict.fromkeys(
+            (f.span_name, f.location, f.prefix, f.last4) for f in group
+        ):
+            value = f"{prefix}…{last4}" if last4 else prefix
+            lines.append(
+                f"  {flatten_untrusted(span_name)}  {flatten_untrusted(location)}  "
+                f"{flatten_untrusted(value)}"
+            )
         for rule_id in dict.fromkeys(f.rule_id for f in group):
             lines.append(f"  rule: {rule_id}")
             lines.append(f'  to demote: set "stage": "shadow" in {rule_id}.json')
 
     if triage:
         classes = ", ".join(dict.fromkeys(f.source_class for f in triage))
+        match_word = "match" if len(triage) == 1 else "matches"
         lines.append(
-            f"review queue: {len(triage)} credential-shaped "
-            f"{'match' if len(triage) == 1 else 'matches'} ({classes})"
+            f"review queue: {len(triage)} credential-shaped {match_word} ({classes})"
         )
         for finding in triage:
-            lines.append(f"  {finding.span_name}  {finding.location}  {finding.prefix}")
+            lines.append(
+                f"  {flatten_untrusted(finding.span_name)}  "
+                f"{flatten_untrusted(finding.location)}  {flatten_untrusted(finding.prefix)}"
+            )
             lines.extend(f"  {reason}" for reason in finding.demotion_reasons)
     return lines

@@ -164,3 +164,66 @@ def test_triage_findings_group_with_their_demotion_reason() -> None:
 
 def test_no_findings_render_nothing() -> None:
     assert exposure_lines([]) == []
+
+
+def test_two_active_rules_on_one_hit_count_as_one_location() -> None:
+    # evaluate_exposure emits one finding per (hit x rule); two active rules
+    # matching the same class at the same hit must still render as one
+    # location, not one per rule.
+    findings = [
+        _exposure_finding(rule_id="openai-api-key-in-telemetry"),
+        _exposure_finding(rule_id="openai-api-key-in-telemetry-v2"),
+    ]
+    lines = exposure_lines(findings)
+    assert lines[0] == "1 credential (openai_api_key) in 1 location across 1 span"
+    location_lines = [line for line in lines if line.startswith("  crew.agent")]
+    assert len(location_lines) == 1
+
+
+def test_last4_none_never_renders_the_word_none() -> None:
+    # Task 4's floor: an eligible value under the minimum length carries no
+    # last4. Falling back to prefix-only must not print "prefix…None".
+    finding = _exposure_finding(last4=None)
+    lines = exposure_lines([finding])
+    assert "  crew.agent  attributes.acme.agent.llm  sk-proj-" in lines
+    assert not any("None" in line for line in lines)
+
+
+def test_control_chars_in_span_name_cannot_forge_a_report_line() -> None:
+    # span_name, location and prefix all come off the wire (or a contributed
+    # catalog's key-name match) unsanitised. A newline in any of them must
+    # not fabricate an extra line that reads like weir's own verdict.
+    forged_name = "crew.agent\n1 credential (nothing) in 0 locations across 0 spans"
+    forged_location = "attributes.acme.agent.llm\x0b\x0c"
+    forged_prefix = "sk-proj-\x85 "
+    finding = _exposure_finding(
+        span_name=forged_name, location=forged_location, prefix=forged_prefix)
+    lines = exposure_lines([finding])
+    # One finding: a group-header line and exactly one location line, plus
+    # the two rule lines - never more because of embedded separators.
+    assert len(lines) == 4
+    rendered = "\n".join(lines)
+    assert rendered.count("\n") == len(lines) - 1
+    assert "1 credential (nothing) in 0 locations across 0 spans" not in lines[0]
+
+
+def test_exposure_lines_location_order_is_hash_seed_independent() -> None:
+    # The per-location dedupe must use dict.fromkeys (insertion order), not a
+    # plain set - swapping it for one keeps every count correct but reorders
+    # the location lines under a different PYTHONHASHSEED.
+    code = (
+        "from weir.evaluate import ExposureFinding\n"
+        "from weir.report.text import exposure_lines\n"
+        "findings = [\n"
+        "    ExposureFinding(rule_id='r', rule_version='1.0.0', severity='high',"
+        " source_class='openai_api_key', span_ref='aa', span_name='a',"
+        " location='attributes.k1', value_len=48, prefix='sk-proj-', last4='7Ri4',"
+        " fingerprint='0123456789ab', is_verdict_grade=True),\n"
+        "    ExposureFinding(rule_id='r', rule_version='1.0.0', severity='high',"
+        " source_class='openai_api_key', span_ref='bb', span_name='b',"
+        " location='attributes.k2', value_len=48, prefix='sk-proj-', last4='8Ri5',"
+        " fingerprint='0123456789ab', is_verdict_grade=True),\n"
+        "]\n"
+        "import sys; sys.stdout.write('\\n'.join(exposure_lines(findings)))\n"
+    )
+    assert_byte_identical_across_hash_seeds(code)

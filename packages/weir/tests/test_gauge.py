@@ -214,7 +214,63 @@ def test_triage_hits_are_counted_separately() -> None:
                             fingerprint=None, prefix="password", location=f"attributes.{i}")
               for i in range(3)]
     assert exposure_gauge_lines(_exposure_scan(triage))[1] == (
-        "  triage: 3 key-name matches (credential_field) in 3 locations")
+        "  triage: 3 credential-shaped matches (credential_field) in 3 locations")
+
+
+def test_triage_wording_is_not_key_name_matches_a_content_class_can_land_here_too() -> None:
+    # google_api_key matches on CONTENT, not a key name - "key-name matches"
+    # would be a lie about how the hit was found. credential_field is the only
+    # bundled class matched by key name; the wording must not imply otherwise.
+    triage = [_exposure_hit(source_class="google_api_key", eligible=False, last4=None,
+                             fingerprint=None, prefix="AIza")]
+    assert exposure_gauge_lines(_exposure_scan(triage))[1] == (
+        "  triage: 1 credential-shaped match (google_api_key) in 1 location")
+
+
+def test_credentials_location_count_dedupes_two_classes_at_one_location() -> None:
+    # A single serialised config blob can carry two different credential
+    # classes at the same (span, location) - that is one location, not two.
+    hits = [
+        _exposure_hit(source_class="openai_api_key"),
+        _exposure_hit(source_class="google_api_key", prefix="AIza", last4="Xyz9",
+                      fingerprint="abcdef012345"),
+    ]
+    assert exposure_gauge_lines(_exposure_scan(hits))[1] == (
+        "  credentials: 2 distinct (google_api_key, openai_api_key) in 1 location across 1 span")
+
+
+def test_a_forged_class_name_cannot_inject_a_line() -> None:
+    # source_class comes from a contributed catalog entry name, not raw wire
+    # data, but the same line-oriented render applies: a newline in it must
+    # not fabricate a second line that looks like weir's own output.
+    forged = "openai_api_key\n  credentials: 99 distinct (nothing) in 0 locations across 0 spans"
+    lines = exposure_gauge_lines(_exposure_scan([_exposure_hit(source_class=forged)]))
+    assert len(lines) == 2
+    assert "\n" not in lines[1]
+
+
+def test_gauge_exposure_lines_is_hash_seed_independent() -> None:
+    # sorted() over the class-name set is load-bearing: swapping it for
+    # list() survives every fixture-driven test but reorders the class list
+    # under a different PYTHONHASHSEED.
+    code = (
+        "from weir.exposure import ExposureHit, ExposureScan\n"
+        "from weir.gauge.exposure import exposure_gauge_lines\n"
+        "hits = [\n"
+        "    ExposureHit(span_ref='aa', span_name='a', location='attributes.k1',"
+        " source_class='openai_api_key', eligible=True, value_len=48,"
+        " prefix='sk-proj-', last4='7Ri4', fingerprint='0123456789ab'),\n"
+        "    ExposureHit(span_ref='bb', span_name='b', location='attributes.k2',"
+        " source_class='google_api_key', eligible=True, value_len=39,"
+        " prefix='AIza', last4='Xyz9', fingerprint='abcdef012345'),\n"
+        "    ExposureHit(span_ref='cc', span_name='c', location='attributes.k3',"
+        " source_class='credential_field', eligible=False, value_len=8,"
+        " prefix='password', last4=None, fingerprint=None),\n"
+        "]\n"
+        "scan = ExposureScan(applicable=True, spans_scanned=3, strings_scanned=10, hits=hits)\n"
+        "import sys; sys.stdout.write('\\n'.join(exposure_gauge_lines(scan)))\n"
+    )
+    assert_byte_identical_across_hash_seeds(code)
 
 
 def test_the_gauge_block_carries_no_forbidden_lexicon() -> None:
