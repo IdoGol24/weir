@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 import jinja2
 
-from weir.evaluate import Finding
+from weir.evaluate import ExposureFinding, Finding
 from weir.gauge import GaugeReport
 from weir.graph import SessionGraph
 from weir.report._template import REPORT_TEMPLATE
@@ -44,6 +44,13 @@ def _node_summary(node: TraceNode) -> str:
     return f"{node.kind.value}: {shown}"
 
 
+def _masked_value(prefix: str, last4: str | None) -> str:
+    """Mirrors the ternary in report/text.py's exposure_lines: a short
+    eligible value has no last4, and printing it unguarded renders the
+    literal string "None"."""
+    return f"{prefix}…{last4}" if last4 else prefix
+
+
 def _finding_sentence(finding: Finding, graph: SessionGraph) -> str:
     sink_node = graph.nodes[finding.sink_node_index]
     sink_tool = (
@@ -64,6 +71,7 @@ def render_html_report(
     findings: list[Finding],
     rules: list[RuleSpec],
     ladder_lines: Sequence[str] = (),
+    exposure_findings: Sequence[ExposureFinding] = (),
 ) -> str:
     rules_by_id = {rule.id: rule for rule in rules}
     verdict_grade = [f for f in findings if f.is_verdict_grade]
@@ -94,6 +102,25 @@ def render_html_report(
         ladder_lines=list(ladder_lines),
         verdict_grade_findings=[_render(f) for f in verdict_grade],
         review_queue=[_render(f) for f in review_queue],
+        exposure_verdict=[
+            {
+                "headline": f"{f.source_class} present in {f.location} of span "
+                            f"{f.span_name} ({_masked_value(f.prefix, f.last4)})",
+                "rule_caption": f"rule: {f.rule_id} v{f.rule_version} - "
+                                f'to demote: set "stage": "shadow" in {f.rule_id}.json',
+            }
+            for f in exposure_findings
+            if f.is_verdict_grade
+        ],
+        exposure_triage=[
+            {
+                "headline": f"{f.source_class} shape in {f.location} of span "
+                            f"{f.span_name} ({f.prefix})",
+                "reasons": list(f.demotion_reasons),
+            }
+            for f in exposure_findings
+            if not f.is_verdict_grade
+        ],
     )
 
     violations = find_forbidden_lexicon(html)

@@ -11,7 +11,7 @@ from weir.adapters.otel.exposure import scan_surface
 __all__ = [
     "ADAPTER_NAME", "ADAPTER_VERSION", "AdapterResult", "Degradation",
     "DegradationReason", "OtlpRejectError", "REMEDIATION", "WireInput",
-    "adapt_otlp", "map_wire", "scan_surface",
+    "adapt_otlp", "decode_input", "map_wire", "scan_surface",
 ]
 
 

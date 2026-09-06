@@ -43,6 +43,24 @@ REPORT_TEMPLATE = """<!doctype html>
   {% endif %}
 </div>
 
+{% if exposure_verdict %}
+<div class="finding">
+  <div class="sentence">credential material present in exported telemetry</div>
+  {% for e in exposure_verdict %}
+  <div class="witness"><div class="step highlight">{{ e.headline }}</div></div>
+  <div class="rule-caption">{{ e.rule_caption }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+{% if exposure_triage %}
+<div class="review-queue">
+  <h2>review queue - credential-shaped matches, never a headline count</h2>
+  {% for e in exposure_triage %}
+  <div>{{ e.headline }}{% for r in e.reasons %} - {{ r }}{% endfor %}</div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% if verdict_grade_findings %}
   {% for f in verdict_grade_findings %}
   <div class="finding">
@@ -59,7 +77,7 @@ REPORT_TEMPLATE = """<!doctype html>
     </div>
   </div>
   {% endfor %}
-{% else %}
+{% elif not exposure_verdict %}
   <div class="green-screen">
     0 verdict-grade findings - {{ steps_scanned }} steps scanned, {{ rules_evaluated }} rules
     evaluated, {{ arg_capture_pct }}% argument capture

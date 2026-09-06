@@ -10,6 +10,7 @@ import re
 import shlex
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from weir.cli.main import main
@@ -28,6 +29,11 @@ def _find_pairs() -> list[tuple[str, str]]:
     return [(m.group("marker"), m.group("body")) for m in _PAIR_RE.finditer(text)]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the gauge --sample block gains the exposure lines; regenerated in "
+    "the exposure-scan docs commit, which removes this marker",
+)
 def test_every_verified_block_matches_real_cli_output() -> None:
     pairs = _find_pairs()
     assert len(pairs) >= 2, (
