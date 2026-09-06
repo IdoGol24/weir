@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jinja2
+from markupsafe import escape
 
 from weir.evaluate import ExposureFinding, Finding
 from weir.gauge import GaugeReport
@@ -52,15 +53,18 @@ def _masked_value(prefix: str, last4: str | None) -> str:
     return f"{prefix}…{last4}" if last4 else prefix
 
 
-def _finding_sentence(finding: Finding, graph: SessionGraph) -> str:
+def _finding_sentence(finding: Finding, graph: SessionGraph, untrusted: list[str]) -> str:
     sink_node = graph.nodes[finding.sink_node_index]
     sink_tool = (
         sink_node.payload.tool_name if isinstance(sink_node.payload, ToolCallPayload) else "?"
     )
+    masked_value = mask(finding.matched_value)
+    untrusted.append(sink_tool)
+    untrusted.append(masked_value)
     return (
         f"Untrusted content at step #{finding.source_node_index} flows verbatim to "
         f"{sink_tool} at step #{finding.sink_node_index}, carrying a sensitive value: "
-        f"{mask(finding.matched_value)}."
+        f"{masked_value}."
     )
 
 
@@ -78,20 +82,53 @@ def render_html_report(
     verdict_grade = [f for f in findings if f.is_verdict_grade]
     review_queue = [f for f in findings if not f.is_verdict_grade]
 
+    # G5 lints weir's OWN prose. Span names, attribute key paths, tool
+    # names and masked values come off the wire (or a contributed catalog),
+    # so a span in a service called "secure-store" must not be able to
+    # abort the report - and abort it before the finding has even been
+    # printed.
+    untrusted_values: list[str] = []
+
     def _render(finding: Finding) -> dict[str, object]:
         rule = rules_by_id.get(finding.rule_id)
+        witness_steps: list[dict[str, object]] = []
+        for i in finding.witness_path:
+            summary = _node_summary(graph.nodes[i])
+            untrusted_values.append(summary)
+            witness_steps.append({
+                "index": i,
+                "summary": summary,
+                "highlighted": i in (finding.source_node_index, finding.sink_node_index),
+            })
         return {
-            "sentence": _finding_sentence(finding, graph),
+            "sentence": _finding_sentence(finding, graph, untrusted_values),
             "rule_caption": f"rule: {finding.rule_id} v{rule.version}" if rule else None,
-            "witness_steps": [
-                {
-                    "index": i,
-                    "summary": _node_summary(graph.nodes[i]),
-                    "highlighted": i in (finding.source_node_index, finding.sink_node_index),
-                }
-                for i in finding.witness_path
-            ],
+            "witness_steps": witness_steps,
         }
+
+    exposure_verdict: list[dict[str, object]] = []
+    for f in exposure_findings:
+        if not f.is_verdict_grade:
+            continue
+        masked_value = _masked_value(f.prefix, f.last4)
+        untrusted_values.extend([f.source_class, f.location, f.span_name, masked_value])
+        exposure_verdict.append({
+            "headline": f"{f.source_class} present in {f.location} of span "
+                        f"{f.span_name} ({masked_value})",
+            "rule_caption": f"rule: {f.rule_id} v{f.rule_version} - "
+                            f'to demote: set "stage": "shadow" in {f.rule_id}.json',
+        })
+
+    exposure_triage: list[dict[str, object]] = []
+    for f in exposure_findings:
+        if f.is_verdict_grade:
+            continue
+        untrusted_values.extend([f.source_class, f.location, f.span_name, f.prefix])
+        exposure_triage.append({
+            "headline": f"{f.source_class} shape in {f.location} of span "
+                        f"{f.span_name} ({f.prefix})",
+            "reasons": list(f.demotion_reasons),
+        })
 
     html = _TEMPLATE.render(
         scenario_name=scenario_name,
@@ -103,28 +140,18 @@ def render_html_report(
         ladder_lines=list(ladder_lines),
         verdict_grade_findings=[_render(f) for f in verdict_grade],
         review_queue=[_render(f) for f in review_queue],
-        exposure_verdict=[
-            {
-                "headline": f"{f.source_class} present in {f.location} of span "
-                            f"{f.span_name} ({_masked_value(f.prefix, f.last4)})",
-                "rule_caption": f"rule: {f.rule_id} v{f.rule_version} - "
-                                f'to demote: set "stage": "shadow" in {f.rule_id}.json',
-            }
-            for f in exposure_findings
-            if f.is_verdict_grade
-        ],
-        exposure_triage=[
-            {
-                "headline": f"{f.source_class} shape in {f.location} of span "
-                            f"{f.span_name} ({f.prefix})",
-                "reasons": list(f.demotion_reasons),
-            }
-            for f in exposure_findings
-            if not f.is_verdict_grade
-        ],
+        exposure_verdict=exposure_verdict,
+        exposure_triage=exposure_triage,
     )
 
-    violations = find_forbidden_lexicon(html)
+    scrubbed = html
+    for value in untrusted_values:
+        if not value:
+            continue
+        for form in (value, escape(value)):
+            scrubbed = scrubbed.replace(str(form), " ")
+
+    violations = find_forbidden_lexicon(scrubbed)
     if violations:
         raise ValueError(f"G5 lexicon violation(s) in rendered report: {violations}")
     return html

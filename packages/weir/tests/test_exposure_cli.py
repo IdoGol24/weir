@@ -121,6 +121,26 @@ def test_the_html_report_carries_the_exposure_section_masked() -> None:
     assert "attributes.acme.agent.llm" in html
 
 
+def test_an_attribute_key_containing_a_forbidden_word_does_not_crash_the_report() -> None:
+    # acme.secure_store.llm is wire-controlled text (an attribute key path),
+    # routed into the HTML by the exposure section. It must not trip weir's
+    # own G5 self-lint - a security tool that goes silent on a plausible
+    # input is worse than one that renders it.
+    body = json.dumps({"resourceSpans": [{"scopeSpans": [{"spans": [{
+        "spanId": "aa" * 8, "name": "crew.agent",
+        "attributes": [{"key": "acme.secure_store.llm", "value": {"stringValue": _KEY}}],
+    }]}]}]})
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("export.json").write_text(body, encoding="utf-8")
+        result = runner.invoke(main, ["scan", "export.json", "--report", "r.html"])
+        html = Path("r.html").read_text(encoding="utf-8")
+    assert result.exit_code == 1
+    assert "1 credential (openai_api_key)" in result.output
+    assert "sk-proj-…7Ri4" in html
+    assert "acme.secure_store.llm" in html
+
+
 @pytest.mark.parametrize(
     ("severity", "threshold", "expected"),
     [
