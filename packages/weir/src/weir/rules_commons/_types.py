@@ -10,8 +10,14 @@ import msgspec
 class RuleSpec(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     id: str
     version: str
-    stage: str  # "active" | "shadow" (R6.8) - only "active" is exercised here
+    stage: str  # "active" | "shadow" (R6.8)
     description: str
     source_class: str
-    sink_tool_name: str
-    mode: str  # "verbatim" | "context" (R5.1/R5.2) - only "verbatim" is exercised here
+    # None for `exposure`, required for `verbatim`/`provenance`. The loader
+    # validates both directions; the type alone cannot.
+    sink_tool_name: str | None
+    mode: str  # "verbatim" | "provenance" | "exposure"
+    # high | medium | low. Drives `--fail-on` for EVERY finding family, so the
+    # default preserves today's behavior: every bundled rule fails CI at the
+    # default threshold.
+    severity: str = "high"

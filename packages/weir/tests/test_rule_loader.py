@@ -43,14 +43,24 @@ def test_load_rules_orders_by_id_not_filesystem_order(tmp_path) -> None:  # noqa
 def test_every_loaded_rule_references_a_real_catalog_source_and_sink() -> None:
     # A rule naming a source class the catalog does not define would silently
     # never fire. Checked for every bundled rule, so a contributed rule that
-    # misspells its source class fails here rather than in the wild.
+    # misspells its source class fails here rather than in the wild. The sink
+    # check is mode-dependent: an exposure rule is a presence claim about one
+    # location, so it has no sink by construction, but its source class must
+    # be one the exposure scan actually looks at.
     rules = load_rules()
     assert rules, "no bundled rules found"
     source_names = {s.name for s in DEFAULT_CATALOG.sources}
     sink_names = {s.tool_name for s in DEFAULT_CATALOG.sinks}
     for rule in rules:
         assert rule.source_class in source_names
-        assert rule.sink_tool_name in sink_names
+        if rule.mode == "exposure":
+            # An exposure rule is a presence claim about one location, so it
+            # has no sink by construction - and its source class must be one
+            # the scan actually looks at.
+            assert rule.sink_tool_name is None
+            assert next(s for s in DEFAULT_CATALOG.sources if s.name == rule.source_class).exposure
+        else:
+            assert rule.sink_tool_name in sink_names
 
 
 def test_load_rules_rejects_malformed_rule_file(tmp_path) -> None:  # noqa: ANN001

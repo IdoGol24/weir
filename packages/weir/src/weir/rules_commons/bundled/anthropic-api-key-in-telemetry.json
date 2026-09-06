@@ -1,0 +1,10 @@
+{
+  "id": "anthropic-api-key-in-telemetry",
+  "version": "1.0.0",
+  "stage": "active",
+  "description": "An Anthropic API key is present in exported telemetry (spec 2026-09-06): the instrumentation wrote the credential into a span it exported.",
+  "source_class": "anthropic_api_key",
+  "sink_tool_name": null,
+  "mode": "exposure",
+  "severity": "high"
+}

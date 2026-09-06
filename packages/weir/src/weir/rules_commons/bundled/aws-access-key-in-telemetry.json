@@ -1,0 +1,10 @@
+{
+  "id": "aws-access-key-in-telemetry",
+  "version": "1.0.0",
+  "stage": "active",
+  "description": "An AWS access key id is present in exported telemetry (spec 2026-09-06): the instrumentation wrote the credential into a span it exported.",
+  "source_class": "aws_access_key_id",
+  "sink_tool_name": null,
+  "mode": "exposure",
+  "severity": "high"
+}

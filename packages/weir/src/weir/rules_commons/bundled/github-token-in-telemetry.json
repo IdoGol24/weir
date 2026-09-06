@@ -1,0 +1,10 @@
+{
+  "id": "github-token-in-telemetry",
+  "version": "1.0.0",
+  "stage": "active",
+  "description": "A GitHub personal access token is present in exported telemetry (spec 2026-09-06): the instrumentation wrote the credential into a span it exported.",
+  "source_class": "github_token",
+  "sink_tool_name": null,
+  "mode": "exposure",
+  "severity": "high"
+}
