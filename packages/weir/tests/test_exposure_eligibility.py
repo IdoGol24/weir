@@ -140,3 +140,17 @@ def test_eligibility_defaults_keep_existing_classes_unchanged() -> None:
     e = VerbatimEligibility(pattern="ghp_[A-Za-z0-9]{36}")
     assert e.min_distinct_chars is None
     assert e.reject_patterns == []
+
+
+def test_github_token_narrowing_rejects_low_entropy_and_placeholder_values() -> None:
+    # github_token is shared with the flow taint path and predates this
+    # branch; this branch added min_distinct_chars and reject_patterns to it.
+    # Pin the narrowing: a zeroed and a placeholder value that used to be
+    # verdict-grade no longer are, while a realistic token still is.
+    assert not is_verbatim_eligible("ghp_" + "0" * 36, _source("github_token"))
+    assert not is_verbatim_eligible(
+        "ghp_EXAMPLE" + "0" * 25, _source("github_token")
+    )
+    assert is_verbatim_eligible(
+        "ghp_0123456789abcdefghijABCDEFGHIJ012345", _source("github_token")
+    )
