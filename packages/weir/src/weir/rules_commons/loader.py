@@ -48,7 +48,11 @@ def load_rules(rules_dir: Path | None = None, *, catalog: Catalog | None = None)
                     "location and must not name a sink_tool_name"
                 )
             source = sources.get(r.source_class)
-            if source is None or not source.exposure:
+            if source is None:
+                raise ValueError(
+                    f"rule {r.id!r}: source_class {r.source_class!r} is not in the catalog"
+                )
+            if not source.exposure:
                 raise ValueError(
                     f"rule {r.id!r}: mode 'exposure' requires a source class with "
                     f"exposure: true; {r.source_class!r} is not one"

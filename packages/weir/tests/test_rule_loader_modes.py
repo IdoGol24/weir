@@ -50,8 +50,14 @@ def test_verbatim_mode_requires_a_sink(tmp_path):
         load_rules(_write(tmp_path, mode="verbatim", sink_tool_name=None))
 
 
+def test_exposure_rule_with_unknown_source_class_names_the_mistake(tmp_path):
+    with pytest.raises(ValueError, match="not in the catalog"):
+        load_rules(_write(tmp_path, mode="exposure", sink_tool_name=None,
+                          source_class="openai_api_kye"))
+
+
 def test_exposure_rule_must_name_an_exposure_class(tmp_path):
-    with pytest.raises(ValueError, match="exposure"):
+    with pytest.raises(ValueError, match="exposure: true"):
         load_rules(_write(tmp_path, mode="exposure", sink_tool_name=None,
                           source_class="financial_account_identifier"))
 
