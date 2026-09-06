@@ -47,6 +47,7 @@ tool arguments not captured - this scope is emitted by Traceloop/OpenLLMetry's L
   payloads: absent - content capture is off
 at your current telemetry: coverage reporting YES - taint/scan NO
 content capture is off; for OTel GenAI instrumentations built on the util-genai layer, set OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental and OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY to capture gen_ai.input.messages / gen_ai.output.messages / gen_ai.tool.call.arguments and unlock cross-step analysis
+exposure scan: 8 spans, 29 strings - no credential-shaped values
 ```
 
 Most exports fail this first step, because content capture ships off by
@@ -90,6 +91,11 @@ Rewording your prompts will not move a finding. Adding a step will not
 move it. If the evidence genuinely weakens, the finding is demoted and
 says why, instead of quietly flipping to green.
 
+weir asks a simpler question of the same bytes too: is a credential *present*
+in this export at all? An instrumentor that serializes an agent object into a
+span attribute writes the provider key straight into your traces - a finding
+with one location and no flow at all.
+
 ## Why you can trust it
 
 - **It reads real traces, not ones we wrote.** The suite pins a frozen
@@ -104,6 +110,9 @@ says why, instead of quietly flipping to green.
   traces; the adapter is accepted only on byte-for-byte equivalence.
 - **Claims about other people's software are sourced and dated**
   ([REMEDIATION_SOURCES.md](REMEDIATION_SOURCES.md)).
+- **Nothing weir prints is a credential.** No rendered weir output - text,
+  gauge, HTML, ledger - contains a credential-shaped value; that is a test over
+  every fixture in the corpus, not a promise.
 
 ## What ships today
 

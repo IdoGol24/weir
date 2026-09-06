@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.4.0] - unreleased
+
+### Added
+- **Credential exposure scan. Exports that exited 0 on 0.3.0 can exit 1 on
+  0.4.0.** weir now reports a credential-class value that is *present* in
+  exported telemetry, not only one that flows to a sink: an OpenAI, Anthropic,
+  AWS, Google or GitHub key, or an assignment-shaped `api_key=` field, found in
+  a span attribute, an event attribute, a status message, or a resource/scope
+  attribute. The scan reads the raw wire batch before the GenAI span filter, so
+  a vendor-attribute leak on a span weir does not otherwise map is still
+  reported. Six bundled rules fire it; the text report names the rule and
+  prints `to demote: set "stage": "shadow" in <rule file>`.
+- **Eligibility floors for credential classes:** `min_distinct_chars` and
+  `reject_patterns` (both catalog data, both compiled at load), so
+  `sk-proj-0000...`, `api_key='***'` and each provider's documented example key
+  never reach verdict grade. A key-name match alone never does either: its
+  class declares no floor.
+- `--fail-on {high,medium,low}` is real for every finding family, gated on a
+  new `RuleSpec.severity` that defaults to `high`.
+
+### Corpus
+- The committed diffspec baselines were regenerated **twice** across this
+  release, for two unrelated and unavoidable reasons: once for the catalog
+  digest, which moves when source classes or eligibility fields are added, and
+  once for the package version, which the baselines embed and which the release
+  commit bumps. Both diffs are digest-only and version-only respectively; no
+  flow fact, node count or finding moved in either.
+
+### Changed
+- The HTML report's node preview is masked for every node, not only nodes on a
+  witness path, and the adapter's undecodable-span ledger entry names the
+  span's keys rather than a raw JSON slice of it. Both were paths by which raw
+  content could reach a rendered artifact; a test now runs every credential
+  pattern over every artifact weir produces and asserts zero eligible matches.
+
 ## [0.3.0] - 2026-08-31
 
 ### Added
