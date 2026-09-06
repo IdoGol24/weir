@@ -66,3 +66,49 @@ def test_the_capture_proves_the_claims_the_spec_makes_of_it() -> None:
 def test_the_capture_carries_the_key_and_the_expectations_do_not() -> None:
     assert _KEY in CAPTURE.read_text(encoding="utf-8")
     assert _KEY not in EXPECTED.read_text(encoding="utf-8")
+
+
+def _scan_mutated(transform):
+    """Run the real pipeline over a mutated copy of the committed capture. The
+    mutation is applied to TEXT, so nothing about the fixture is special-cased."""
+    from weir.adapters.otel import decode_input
+    from weir.adapters.otel.exposure import scan_surface
+    from weir.catalog import DEFAULT_CATALOG
+    from weir.evaluate.exposure import evaluate_exposure
+    from weir.exposure import classify_exposure
+    from weir.rules_commons import load_rules
+
+    data = transform(CAPTURE.read_text(encoding="utf-8")).encode("utf-8")
+    scan = classify_exposure(scan_surface(decode_input(data)), DEFAULT_CATALOG)
+    return scan, evaluate_exposure(scan, load_rules())
+
+
+def test_changing_one_character_moves_the_fingerprint_not_the_locations() -> None:
+    baseline, base_findings = _scan_mutated(lambda t: t)
+    mutated, mut_findings = _scan_mutated(lambda t: t.replace(_KEY, _KEY[:-1] + "5"))
+    base_fp = {h.fingerprint for h in baseline.hits if h.eligible}
+    mut_fp = {h.fingerprint for h in mutated.hits if h.eligible}
+    assert base_fp != mut_fp
+    assert len(base_fp) == len(mut_fp) == 1
+    assert [h.location for h in baseline.hits] == [h.location for h in mutated.hits]
+    assert len(base_findings) == len(mut_findings)
+
+
+def test_a_placeholder_key_drops_the_verdict_and_leaves_a_triage_line() -> None:
+    # Chosen to clear min_distinct_chars (30 distinct suffix characters) so
+    # the reject list is the ONLY thing that can demote it. A low-entropy
+    # placeholder like sk-proj-REDACTEDREDACTED... is rejected by the floor
+    # first, and would make this test prove the wrong clause.
+    placeholder = "sk-proj-EXAMPLEQh7Rk2Ls9Vn4Xb6Zt1Wc8Mp3Jd5"
+    scan, findings = _scan_mutated(lambda t: t.replace(_KEY, placeholder))
+    assert not any(f.is_verdict_grade for f in findings)
+    assert any(h.source_class == "openai_api_key" and not h.eligible for h in scan.hits)
+    assert any("not eligible" in r for f in findings for r in f.demotion_reasons)
+
+
+def test_removing_every_genai_key_does_not_change_the_hits() -> None:
+    baseline, _ = _scan_mutated(lambda t: t)
+    stripped, _ = _scan_mutated(lambda t: t.replace("gen_ai.", "acme.stripped."))
+    assert [(h.span_ref, h.location.replace("acme.stripped.", "gen_ai."), h.source_class)
+            for h in stripped.hits] == [
+        (h.span_ref, h.location, h.source_class) for h in baseline.hits]
