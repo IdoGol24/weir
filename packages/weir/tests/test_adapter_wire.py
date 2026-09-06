@@ -175,3 +175,83 @@ def test_attribute_values_are_not_key_normalized() -> None:
         a for a in wire.spans[0].span.attributes if a.get("key") == "user.blob"
     )
     assert "span_id" in json.dumps(blob)
+
+
+def test_wire_span_carries_status_and_events() -> None:
+    doc = {
+        "resourceSpans": [{
+            "resource": {"attributes": [{"key": "service.name",
+                                         "value": {"stringValue": "svc"}}]},
+            "scopeSpans": [{
+                "scope": {"name": "s", "attributes": [
+                    {"key": "scope.note", "value": {"stringValue": "hi"}}]},
+                "spans": [{
+                    "spanId": "aa" * 8,
+                    "status": {"message": "boom", "code": 2},
+                    "events": [{"name": "exception", "attributes": [
+                        {"key": "exception.message",
+                         "value": {"stringValue": "detail"}}]}],
+                }],
+            }],
+        }]
+    }
+    wire = decode_input(json.dumps(doc).encode())
+    span = wire.spans[0].span
+    assert span.status["message"] == "boom"
+    assert span.status["code"] == 2
+    assert span.events[0]["name"] == "exception"
+    assert span.events[0]["attributes"][0]["key"] == "exception.message"
+    assert wire.spans[0].scope.attributes[0]["key"] == "scope.note"
+
+
+def test_a_span_without_status_or_events_still_decodes() -> None:
+    doc = {"resourceSpans": [{"scopeSpans": [{"spans": [{"spanId": "bb" * 8}]}]}]}
+    span = decode_input(json.dumps(doc).encode()).spans[0].span
+    assert span.status is None
+    assert span.events is None
+
+
+def test_a_quarantined_span_subject_carries_no_attribute_values() -> None:
+    # G4: the ledger names WHAT failed, never the bytes that failed. A raw
+    # JSON slice of the span would put an exported credential in the report.
+    doc = {"resourceSpans": [{"scopeSpans": [{"spans": [
+        {"spanId": "cc" * 8},
+        {"attributes": "bogus", "name": "sk-proj-Qh7Rk2Ls9Vn4Xb6Zt1Wc8Mp3Jd5Fg0Yu2Ae7Ri4"},
+    ]}]}]}
+    wire = decode_input(json.dumps(doc).encode())
+    quarantined = [d for d in wire.degradations if d.reason == "undecodable_span"]
+    assert len(quarantined) == 1
+    assert "sk-proj-" not in quarantined[0].subject + quarantined[0].note
+    assert "attributes" in quarantined[0].subject  # keys are named, values are not
+
+
+@pytest.mark.parametrize(
+    "overlay",
+    [
+        {"status": None},
+        {"events": None},
+        {"events": [None]},
+        {"events": ["a string"]},
+        {"events": {}},
+        {"status": "STATUS_CODE_ERROR"},
+        {"status": []},
+        {"status": {"message": None}},
+        {"events": [{"name": "x", "attributes": "nope"}]},
+        {"status": {"code": "STATUS_CODE_ERROR"}},
+        {"status": {"code": 2}},
+        {"events": [{"name": "x", "timeUnixNano": "1", "droppedAttributesCount": 0,
+                     "attributes": []}]},
+        {"status": {}},
+        {"events": []},
+        {"events": [{}]},
+    ],
+    ids=lambda o: str(o),
+)
+def test_no_status_or_events_shape_can_quarantine_a_span(overlay) -> None:
+    # These fields are parsed for the exposure scan only. Typing them would
+    # make the decoder stricter on data it used to ignore, and a quarantined
+    # span silently drops its edges out of the flow graph.
+    span = {"spanId": "aa" * 8, "name": "s", **overlay}
+    doc = {"resourceSpans": [{"scopeSpans": [{"spans": [span]}]}]}
+    wire = decode_input(json.dumps(doc).encode())
+    assert len(wire.spans) == 1, wire.degradations

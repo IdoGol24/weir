@@ -5,9 +5,9 @@ is a degradation, produced here (line/span granularity) or in stage 2.
 
 Wire scalars are permissive by design: nano fields accept str|int, ids are
 arbitrary strings (hex validity is stage-2 COMMENTARY, never a decode gate),
-attribute values stay raw. A span failing struct decode is quarantined,
-never fatal. Both key spellings are accepted: camelCase per OTLP/JSON spec,
-snake_case for vanilla-protojson exporters.
+attribute values stay raw, and so do status/events - a span failing struct
+decode is quarantined, never fatal. Both key spellings are accepted:
+camelCase per OTLP/JSON spec, snake_case for vanilla-protojson exporters.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ class OtlpRejectError(Exception):
 class WireScope(msgspec.Struct, frozen=True):
     name: str = ""
     version: str = ""
+    attributes: list[dict[str, object]] = []
 
 
 class WireSpan(msgspec.Struct, frozen=True, rename="camel"):
@@ -53,6 +54,12 @@ class WireSpan(msgspec.Struct, frozen=True, rename="camel"):
     start_time_unix_nano: str | int = 0
     end_time_unix_nano: str | int = 0
     attributes: list[dict[str, object]] = []
+    # Exposure-scan payloads only, never a decode gate: kept raw exactly like
+    # `attributes` above, so no exporter shape can quarantine a span that
+    # decoded before. The consumer guards element access, as stage 2 already
+    # does for attributes.
+    status: object = None
+    events: object = None
 
 
 class SpanInContext(msgspec.Struct, frozen=True):
@@ -199,14 +206,18 @@ def decode_input(data: bytes) -> WireInput:
                     try:
                         span = msgspec.convert(raw, type=WireSpan, strict=False)
                     except msgspec.ValidationError as exc:
-                        try:
-                            subject = json.dumps(raw)[:80]
-                        except TypeError:
-                            subject = str(raw)[:80]
+                        # G4: name the shape, never the bytes. A raw JSON
+                        # slice here would put an exported credential into
+                        # the ledger, the report, and CI logs.
+                        keys = (
+                            ",".join(sorted(cast("dict[str, object]", raw)))
+                            if isinstance(raw, dict)
+                            else type(raw).__name__
+                        )
                         degradations.append(
                             Degradation(
                                 reason=DegradationReason.UNDECODABLE_SPAN,
-                                subject=subject,
+                                subject=f"span with keys: {keys}"[:120],
                                 note=str(exc),
                             )
                         )
