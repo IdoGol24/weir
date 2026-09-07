@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.4.0] - unreleased
+## [0.4.0] - 2026-09-07
 
 ### Added
 - **Credential exposure scan. Exports that exited 0 on 0.3.0 can exit 1 on
