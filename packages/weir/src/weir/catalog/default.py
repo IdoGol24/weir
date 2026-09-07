@@ -38,12 +38,13 @@ Adding a source class needs three things, not one:
    value for those instead.
 
    `credential_field`'s `eligibility.reject_patterns` (masked/None/null/
-   REDACTED values) is inert until Task 4's classifier exists: a class with
-   no floor to clear (no `pattern`, `structure_class`, or `min_length`) is
-   never verbatim-eligible by construction, so `is_verbatim_eligible` never
-   reaches the reject-pattern check for it today, and nothing else reads that
-   list yet. Do not assume a masked `credential_field` value is already being
-   filtered out anywhere before Task 4 lands.
+   REDACTED values) never reaches `is_verbatim_eligible`'s own reject-pattern
+   check, because a class with no floor to clear (no `pattern`,
+   `structure_class`, or `min_length`) is never verbatim-eligible by
+   construction. `weir.exposure.classify` reads `spec.eligibility.reject_patterns`
+   directly instead: for a floorless class like this one, a value matching a
+   reject pattern is dropped outright rather than parked in the review queue,
+   since there is no weaker state to demote it to.
 
 Three false-positive classes are worth knowing. A structural near-miss is what
 (3) catches. A structurally valid but non-secret value is not - weir's own demo

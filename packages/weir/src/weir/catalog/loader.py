@@ -55,7 +55,7 @@ def _compile_patterns(catalog: Catalog, source: Path) -> None:
                     f"eligibility.reject_patterns[{index}] {reject!r}: {exc}"
                 ) from exc
 
-        # The exposure scan (Task 4) records content_pattern's group(1) as the
+        # The exposure scan records content_pattern's group(1) as the
         # secret value and the text before it as the display prefix for an
         # assignment-shaped pattern (see default.py item 4); a pattern with no
         # capturing group at all records group(0), the whole match, as the

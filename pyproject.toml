@@ -112,6 +112,7 @@ forbidden_modules = [
     "weir.label",
     "weir.taint",
     "weir.evaluate",
+    "weir.exposure",
     "weir.report",
     "weir.rules_commons",
     "weir.cli",
