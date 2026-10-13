@@ -68,25 +68,28 @@ def test_tool_arguments_are_judged_as_their_decoded_lines() -> None:
     # The scan reads JSON-encoded tool arguments raw, escapes and all. Its
     # verdict on each must match what credential_field finds in the decoded
     # file, line by line: a line-two assignment after an escaped line break
-    # is in the review queue, and a glued near-miss is not.
+    # is in the review queue at its decoded length, and a glued near-miss is
+    # not.
     from weir.catalog import DEFAULT_CATALOG
 
     pattern = next(
         s.content_pattern for s in DEFAULT_CATALOG.sources if s.name == "credential_field")
     expected = json.loads(EXPECTED.read_text(encoding="utf-8"))
-    flagged = {h["span_ref"] for h in expected["scan"]["hits"]
+    flagged = {h["span_ref"]: h["value_len"] for h in expected["scan"]["hits"]
                if h["source_class"] == "credential_field"
                and h["location"] == "attributes.gen_ai.tool.call.arguments"}
     capture = json.loads(CAPTURE.read_text(encoding="utf-8"))
-    decoded: dict[str, bool] = {}
+    decoded: dict[str, list[int]] = {}
     for span in capture["resourceSpans"][0]["scopeSpans"][0]["spans"]:
         for attr in span["attributes"]:
             if attr["key"] == "gen_ai.tool.call.arguments":
                 lines = json.loads(attr["value"]["stringValue"])["content"].splitlines()
                 assert len(lines) > 1, "a one-line file has no escaped line break to cross"
-                decoded[span["spanId"]] = any(re.search(pattern, line) for line in lines)
-    assert set(decoded.values()) == {True, False}, "the corpus needs a hit and a near-miss"
-    assert {span_id for span_id, hit in decoded.items() if hit} == flagged
+                decoded[span["spanId"]] = [
+                    len(m.group(1)) for line in lines for m in re.finditer(pattern, line)]
+    assert {bool(v) for v in decoded.values()} == {True, False}, (
+        "the corpus needs a hit and a near-miss")
+    assert {span_id: lens[0] for span_id, lens in decoded.items() if lens} == flagged
 
 
 def test_the_capture_carries_the_key_and_the_expectations_do_not() -> None:

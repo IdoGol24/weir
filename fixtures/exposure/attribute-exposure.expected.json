@@ -180,7 +180,7 @@
       "source_class": "credential_field",
       "span_name": "execute_tool Write",
       "span_ref": "6666666666666666",
-      "value_len": 26
+      "value_len": 24
     }
   ],
   "scan": {
@@ -316,7 +316,7 @@
         "source_class": "credential_field",
         "span_name": "execute_tool Write",
         "span_ref": "6666666666666666",
-        "value_len": 26
+        "value_len": 24
       }
     ],
     "spans_scanned": 7,
