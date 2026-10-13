@@ -78,7 +78,7 @@
     },
     {
       "name": "credential_field",
-      "content_pattern": "(?i)(?<![A-Za-z0-9])(?:(?:private|secret|access|client|refresh)[_-]?(?:key|secret|token)|api[_-]?key|apikey|secret|token|password|passwd)\\s*[=:]\\s*['\"]?([^'\"\\s,;)}\\]]{8,256})",
+      "content_pattern": "(?i)(?:(?<![A-Za-z0-9])|(?<=\\\\(?-i:[ntr])))(?:(?:private|secret|access|client|refresh)[_-]?(?:key|secret|token)|api[_-]?key|apikey|secret|token|password|passwd)\\s*[=:]\\s*['\"]?([^'\"\\s,;)}\\]]{8,256})",
       "exposure": true,
       "eligibility": {
         "reject_patterns": [
