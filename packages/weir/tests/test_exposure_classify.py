@@ -128,6 +128,35 @@ def test_the_same_key_in_two_places_shares_a_fingerprint() -> None:
     assert len({h.fingerprint for h in scan.hits}) == 1
 
 
+def test_an_assignment_after_an_escaped_line_break_is_a_triage_hit() -> None:
+    # Tool arguments arrive as JSON-encoded text, so line two of a written
+    # script sits right after a literal backslash-n: the escape's letter is
+    # glued to the key name and must still count as a boundary. The decoded
+    # line on its own is the control - it is what the detector must see.
+    for sep in ("\n", "\t", "\r\n"):
+        script = f"import urllib.request{sep}token = os.environ[\"FAKE-CANARY-TOKEN\"]"
+        args = json.dumps({"file_path": "/tmp/send.py", "content": script})
+        assert sep not in args
+        control = _scan([{"spanId": "aa" * 8, "attributes": [
+            _attr("gen_ai.tool.call.arguments", script.split(sep)[-1])]}])
+        scan = _scan([{"spanId": "aa" * 8, "attributes": [
+            _attr("gen_ai.tool.call.arguments", args)]}])
+        assert [(h.source_class, h.prefix) for h in scan.hits] == [
+            (h.source_class, h.prefix) for h in control.hits] == [("credential_field", "token")]
+
+
+def test_a_key_name_glued_to_other_letters_is_still_not_a_hit() -> None:
+    # The escape is a boundary; a plain letter is not. An identifier that
+    # merely ends in a key name stays a non-match, escaped line break or not.
+    scan = _scan([{"spanId": "aa" * 8, "attributes": [
+        _attr("a", "mytoken = FAKE-CANARY-NOTAKEY"),
+        _attr("b", "ntoken = FAKE-CANARY-NOTAKEY"),
+        _attr("c", json.dumps({"content": "import os\nmytoken = FAKE-CANARY-NOTAKEY"})),
+        _attr("d", "C:\\Windows\\NToken=FAKE-CANARY-NOTAKEY"),
+    ]}])
+    assert scan.hits == []
+
+
 def test_triage_hits_dedupe_by_span_location_and_class() -> None:
     scan = _scan([{"spanId": "aa" * 8,
                    "attributes": [_attr("k", "password=onevalue and token=anothervalue")]}])

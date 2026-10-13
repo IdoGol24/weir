@@ -119,6 +119,32 @@ def render_document() -> dict[str, Any]:
         ]),
     })
 
+    # Two Write tool calls whose arguments are JSON-encoded text, so every line
+    # after the first sits right after a literal backslash-n. The .env file's
+    # second line is a key=value assignment the scan must still see; the
+    # script's second line is an identifier that merely ends in a key name -
+    # the near-miss that must stay silent.
+    for index, (span_id, content, file_path) in enumerate([
+        ("6666666666666666", "DEBUG=1\nAPI_KEY=FAKE-CANARY-7Rk2Ls9Vn4Xb\n", ".env"),
+        ("7777777777777777", "import os\nmytoken = os.environ[\"TOKEN\"]\n", "send.py"),
+    ], start=5):
+        tool_start = _BASE_NANOS + index * _STEP_NANOS
+        spans.append({
+            "traceId": _TRACE_ID,
+            "spanId": span_id,
+            "name": "execute_tool Write",
+            "kind": 1,
+            "startTimeUnixNano": str(tool_start),
+            "endTimeUnixNano": str(tool_start + _STEP_NANOS),
+            "attributes": _sorted_attrs([
+                _attr("gen_ai.operation.name", "execute_tool"),
+                _attr("gen_ai.tool.name", "Write"),
+                _attr("gen_ai.tool.call.arguments", json.dumps(
+                    {"content": content, "file_path": file_path},
+                    sort_keys=True, separators=(",", ":"))),
+            ]),
+        })
+
     return {
         "resourceSpans": [{
             "resource": {"attributes": [_attr("service.name", "acme-crew")]},

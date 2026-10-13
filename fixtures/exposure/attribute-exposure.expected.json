@@ -289,8 +289,8 @@
         "value_len": 19
       }
     ],
-    "spans_scanned": 5,
-    "strings_scanned": 21
+    "spans_scanned": 7,
+    "strings_scanned": 27
   },
   "verdict_grade": 8
 }

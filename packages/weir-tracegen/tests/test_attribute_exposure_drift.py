@@ -2,6 +2,7 @@
 hand-edited, and both are pinned byte for byte."""
 
 import json
+import re
 from pathlib import Path
 
 from _harness.exposure import CAPTURE, EXPECTED, render_expected
@@ -61,6 +62,31 @@ def test_the_capture_proves_the_claims_the_spec_makes_of_it() -> None:
     # a credential-shaped value that failed its class's floor.
     assert all(h["fingerprint"] is None and h["last4"] is None for h in triage)
     assert not any(h["eligible"] and h["location"].startswith("events[") for h in hits)
+
+
+def test_tool_arguments_are_judged_as_their_decoded_lines() -> None:
+    # The scan reads JSON-encoded tool arguments raw, escapes and all. Its
+    # verdict on each must match what credential_field finds in the decoded
+    # file, line by line: a line-two assignment after an escaped line break
+    # is in the review queue, and a glued near-miss is not.
+    from weir.catalog import DEFAULT_CATALOG
+
+    pattern = next(
+        s.content_pattern for s in DEFAULT_CATALOG.sources if s.name == "credential_field")
+    expected = json.loads(EXPECTED.read_text(encoding="utf-8"))
+    flagged = {h["span_ref"] for h in expected["scan"]["hits"]
+               if h["source_class"] == "credential_field"
+               and h["location"] == "attributes.gen_ai.tool.call.arguments"}
+    capture = json.loads(CAPTURE.read_text(encoding="utf-8"))
+    decoded: dict[str, bool] = {}
+    for span in capture["resourceSpans"][0]["scopeSpans"][0]["spans"]:
+        for attr in span["attributes"]:
+            if attr["key"] == "gen_ai.tool.call.arguments":
+                lines = json.loads(attr["value"]["stringValue"])["content"].splitlines()
+                assert len(lines) > 1, "a one-line file has no escaped line break to cross"
+                decoded[span["spanId"]] = any(re.search(pattern, line) for line in lines)
+    assert set(decoded.values()) == {True, False}, "the corpus needs a hit and a near-miss"
+    assert {span_id for span_id, hit in decoded.items() if hit} == flagged
 
 
 def test_the_capture_carries_the_key_and_the_expectations_do_not() -> None:
