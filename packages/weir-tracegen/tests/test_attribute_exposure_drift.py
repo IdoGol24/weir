@@ -2,7 +2,6 @@
 hand-edited, and both are pinned byte for byte."""
 
 import json
-import re
 from pathlib import Path
 
 from _harness.exposure import CAPTURE, EXPECTED, render_expected
@@ -57,39 +56,60 @@ def test_the_capture_proves_the_claims_the_spec_makes_of_it() -> None:
     # hits: two different routes into the review queue.
     triage = [h for h in hits if not h["eligible"]]
     assert triage, "the corpus must exercise the triage path, not just verdict-grade"
-    assert {h["source_class"] for h in triage} == {"credential_field", "google_api_key"}
     # Both routes into the review queue: a key name with no floor to clear, and
-    # a credential-shaped value that failed its class's floor.
+    # a credential-shaped value that failed its class's floor (outside the
+    # tool-call plants, which exercise escapes, not routes).
+    assert {h["source_class"] for h in triage
+            if h["location"] != "attributes.gen_ai.tool.call.arguments"} == {
+        "credential_field", "google_api_key"}
     assert all(h["fingerprint"] is None and h["last4"] is None for h in triage)
     assert not any(h["eligible"] and h["location"].startswith("events[") for h in hits)
 
 
+def _classify_lines(lines: list[str]) -> set[tuple[str, int, bool]]:
+    """The real classifier over each decoded line on its own, so no escape is
+    left in the text it reads."""
+    from weir.adapters.otel import decode_input
+    from weir.adapters.otel.exposure import scan_surface
+    from weir.catalog import DEFAULT_CATALOG
+    from weir.exposure import classify_exposure
+
+    doc = {"resourceSpans": [{"scopeSpans": [{"spans": [{
+        "spanId": "ab" * 8,
+        "attributes": [{"key": f"line{i}", "value": {"stringValue": line}}
+                       for i, line in enumerate(lines)],
+    }]}]}]}
+    scan = classify_exposure(scan_surface(decode_input(json.dumps(doc).encode())),
+                             DEFAULT_CATALOG)
+    return {(h.source_class, h.value_len, h.eligible) for h in scan.hits}
+
+
 def test_tool_arguments_are_judged_as_their_decoded_lines() -> None:
     # The scan reads JSON-encoded tool arguments raw, escapes and all. Its
-    # verdict on each must match what credential_field finds in the decoded
-    # file, line by line: a line-two assignment after an escaped line break
-    # is in the review queue at its decoded length, and a glued near-miss is
-    # not.
-    from weir.catalog import DEFAULT_CATALOG
-
-    pattern = next(
-        s.content_pattern for s in DEFAULT_CATALOG.sources if s.name == "credential_field")
+    # verdict on each must match what the classifier finds in the decoded
+    # file, line by line: a value after an escaped line break or tab is in
+    # the review queue at its decoded length, and a glued near-miss is not.
     expected = json.loads(EXPECTED.read_text(encoding="utf-8"))
-    flagged = {h["span_ref"]: h["value_len"] for h in expected["scan"]["hits"]
-               if h["source_class"] == "credential_field"
-               and h["location"] == "attributes.gen_ai.tool.call.arguments"}
+    flagged: dict[str, set[tuple[str, int, bool]]] = {}
+    for h in expected["scan"]["hits"]:
+        if h["location"] == "attributes.gen_ai.tool.call.arguments":
+            flagged.setdefault(h["span_ref"], set()).add(
+                (h["source_class"], h["value_len"], h["eligible"]))
     capture = json.loads(CAPTURE.read_text(encoding="utf-8"))
-    decoded: dict[str, list[int]] = {}
+    decoded: dict[str, set[tuple[str, int, bool]]] = {}
     for span in capture["resourceSpans"][0]["scopeSpans"][0]["spans"]:
         for attr in span["attributes"]:
             if attr["key"] == "gen_ai.tool.call.arguments":
                 lines = json.loads(attr["value"]["stringValue"])["content"].splitlines()
                 assert len(lines) > 1, "a one-line file has no escaped line break to cross"
-                decoded[span["spanId"]] = [
-                    len(m.group(1)) for line in lines for m in re.finditer(pattern, line)]
+                decoded[span["spanId"]] = _classify_lines(lines)
     assert {bool(v) for v in decoded.values()} == {True, False}, (
         "the corpus needs a hit and a near-miss")
-    assert {span_id: lens[0] for span_id, lens in decoded.items() if lens} == flagged
+    assert {span_id: hits for span_id, hits in decoded.items() if hits} == flagged
+    # Every exposure class is exercised after an escape, not only one.
+    from weir.catalog import DEFAULT_CATALOG
+    assert {c for hits in flagged.values() for c, _, _ in hits} == {
+        s.name for s in DEFAULT_CATALOG.sources if s.exposure}
 
 
 def test_the_capture_carries_the_key_and_the_expectations_do_not() -> None:
