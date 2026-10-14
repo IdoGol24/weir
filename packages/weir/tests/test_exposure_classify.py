@@ -2,6 +2,7 @@
 ordered by span order then location, and the value never enters the record."""
 
 import json
+import re
 import time
 
 import msgspec
@@ -126,6 +127,62 @@ def test_hits_are_ordered_by_span_then_location() -> None:
 def test_the_same_key_in_two_places_shares_a_fingerprint() -> None:
     scan = _scan([{"spanId": "aa" * 8, "attributes": [_attr("a", _KEY), _attr("b", _KEY)]}])
     assert len({h.fingerprint for h in scan.hits}) == 1
+
+
+def test_an_assignment_after_an_escaped_line_break_is_a_triage_hit() -> None:
+    # Tool arguments arrive as JSON-encoded text, so line two of a written
+    # script sits right after a literal backslash-n: the escape's letter is
+    # glued to the key name and must still count as a boundary. The decoded
+    # line on its own is the control - it is what the detector must see.
+    for sep in ("\n", "\t", "\r\n"):
+        script = f"import urllib.request{sep}token = os.environ[\"FAKE-CANARY-TOKEN\"]"
+        args = json.dumps({"file_path": "/tmp/send.py", "content": script})
+        assert sep not in args
+        control = _scan([{"spanId": "aa" * 8, "attributes": [
+            _attr("gen_ai.tool.call.arguments", script.split(sep)[-1])]}])
+        scan = _scan([{"spanId": "aa" * 8, "attributes": [
+            _attr("gen_ai.tool.call.arguments", args)]}])
+        assert [(h.source_class, h.prefix) for h in scan.hits] == [
+            (h.source_class, h.prefix) for h in control.hits] == [("credential_field", "token")]
+
+
+def test_a_value_ends_at_an_escaped_line_break() -> None:
+    # The escape that starts a key name also ends the value before it: the
+    # value is measured as decoded, and the next line is not folded into it.
+    secret = "FAKE-CANARY-7Rk2Ls9Vn4Xb"
+    args = json.dumps({"content": f"DEBUG=1\nAPI_KEY={secret}\nNEXT=1\n"})
+    scan = _scan([{"spanId": "aa" * 8, "attributes": [_attr("gen_ai.tool.call.arguments", args)]}])
+    assert [(h.prefix, h.value_len) for h in scan.hits] == [("API_KEY", len(secret))]
+
+
+def test_a_masked_value_after_an_escaped_line_break_is_still_rejected() -> None:
+    scan = _scan([{"spanId": "aa" * 8, "attributes": [
+        _attr("a", json.dumps({"content": "DEBUG=1\nAPI_KEY=********\n"})),
+        _attr("b", json.dumps({"content": "DEBUG=1\ntoken=REDACTED\n"})),
+    ]}])
+    assert scan.hits == []
+
+
+def test_each_assignment_after_an_escaped_line_break_is_its_own_match() -> None:
+    pattern = next(
+        s.content_pattern for s in DEFAULT_CATALOG.sources if s.name == "credential_field")
+    text = json.dumps({"content": "A=1\nAPI_KEY=abcdefgh\nPASSWORD=hunter2hunter2"})
+    assert [m.group(1) for m in re.finditer(pattern, text)] == ["abcdefgh", "hunter2hunter2"]
+    masked = json.dumps({"content": "A=1\nAPI_KEY=********\nPASSWORD=hunter2hunter2"})
+    scan = _scan([{"spanId": "aa" * 8, "attributes": [_attr("k", masked)]}])
+    assert [h.prefix for h in scan.hits] == ["PASSWORD"]
+
+
+def test_a_key_name_glued_to_other_letters_is_still_not_a_hit() -> None:
+    # The escape is a boundary; a plain letter is not. An identifier that
+    # merely ends in a key name stays a non-match, escaped line break or not.
+    scan = _scan([{"spanId": "aa" * 8, "attributes": [
+        _attr("a", "mytoken = FAKE-CANARY-NOTAKEY"),
+        _attr("b", "ntoken = FAKE-CANARY-NOTAKEY"),
+        _attr("c", json.dumps({"content": "import os\nmytoken = FAKE-CANARY-NOTAKEY"})),
+        _attr("d", "C:\\Windows\\NToken=FAKE-CANARY-NOTAKEY"),
+    ]}])
+    assert scan.hits == []
 
 
 def test_triage_hits_dedupe_by_span_location_and_class() -> None:

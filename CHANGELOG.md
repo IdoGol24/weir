@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **The `credential_field` key=value detector now sees assignments after an
+  escaped line break.** Tool arguments arrive as JSON-encoded text, so line two
+  of a written `.env` file or script sits right after a literal `\n` (or `\t`,
+  `\r`), and that escape's letter defeated the key-name boundary: no
+  assignment past the first line reached the review queue. A JSON `\n`, `\t`
+  or `\r` escape now counts as a boundary on both sides: it starts a key name
+  and ends the value before it, so a value is measured as decoded, the next
+  line is no longer folded into it, and a masked `API_KEY=********` on line two
+  is still dropped. A key name glued to any other letter (`mytoken=`) still
+  does not match.
+
+### Corpus
+- The diffspec baselines were regenerated for the catalog digest only; no flow
+  fact, node count or finding moved. The attribute-exposure capture gains a
+  Write tool-call pair: a `.env` line-two assignment that must reach the review
+  queue, and a glued-identifier near-miss that must not.
+
 ## [0.4.0] - 2026-09-07
 
 ### Added

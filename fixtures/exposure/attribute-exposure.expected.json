@@ -163,6 +163,24 @@
       "span_name": "acme.config",
       "span_ref": "5555555555555555",
       "value_len": 19
+    },
+    {
+      "demotion_reasons": [
+        "value shape not eligible for credential_field"
+      ],
+      "fingerprint": null,
+      "fingerprint_v": 1,
+      "is_verdict_grade": false,
+      "last4": null,
+      "location": "attributes.gen_ai.tool.call.arguments",
+      "prefix": "API_KEY",
+      "rule_id": "credential-field-in-telemetry",
+      "rule_version": "1.0.0",
+      "severity": "high",
+      "source_class": "credential_field",
+      "span_name": "execute_tool Write",
+      "span_ref": "6666666666666666",
+      "value_len": 24
     }
   ],
   "scan": {
@@ -287,10 +305,22 @@
         "span_name": "acme.config",
         "span_ref": "5555555555555555",
         "value_len": 19
+      },
+      {
+        "eligible": false,
+        "fingerprint": null,
+        "fingerprint_v": 1,
+        "last4": null,
+        "location": "attributes.gen_ai.tool.call.arguments",
+        "prefix": "API_KEY",
+        "source_class": "credential_field",
+        "span_name": "execute_tool Write",
+        "span_ref": "6666666666666666",
+        "value_len": 24
       }
     ],
-    "spans_scanned": 5,
-    "strings_scanned": 21
+    "spans_scanned": 7,
+    "strings_scanned": 27
   },
   "verdict_grade": 8
 }

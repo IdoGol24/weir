@@ -192,6 +192,62 @@
                 "message": "loaded with api_key='***'"
               },
               "traceId": "b1946ac92492d2347c6235b4d2611184"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"content\":\"DEBUG=1\\nAPI_KEY=FAKE-CANARY-7Rk2Ls9Vn4Xb\\n\",\"file_path\":\".env\"}"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "Write"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1767225606000000000",
+              "kind": 1,
+              "name": "execute_tool Write",
+              "spanId": "6666666666666666",
+              "startTimeUnixNano": "1767225605000000000",
+              "traceId": "b1946ac92492d2347c6235b4d2611184"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"content\":\"import os\\nmytoken = os.environ[\\\"TOKEN\\\"]\\n\",\"file_path\":\"send.py\"}"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "Write"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1767225607000000000",
+              "kind": 1,
+              "name": "execute_tool Write",
+              "spanId": "7777777777777777",
+              "startTimeUnixNano": "1767225606000000000",
+              "traceId": "b1946ac92492d2347c6235b4d2611184"
             }
           ]
         }
