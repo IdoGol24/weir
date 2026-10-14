@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-14
+
 ### Fixed
 - **The `credential_field` key=value detector now sees assignments after an
   escaped line break.** Tool arguments arrive as JSON-encoded text, so line two
