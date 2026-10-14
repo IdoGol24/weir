@@ -248,6 +248,62 @@
               "spanId": "7777777777777777",
               "startTimeUnixNano": "1767225606000000000",
               "traceId": "b1946ac92492d2347c6235b4d2611184"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"content\":\"# rotated keys\\nghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n\\tsk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\r\\nsk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nAKIAIOSFODNN7EXAMPLE\\nAIzaFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n\",\"file_path\":\"keys.txt\"}"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "Write"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1767225608000000000",
+              "kind": 1,
+              "name": "execute_tool Write",
+              "spanId": "8888888888888888",
+              "startTimeUnixNano": "1767225607000000000",
+              "traceId": "b1946ac92492d2347c6235b4d2611184"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"content\":\"# not keys\\nxghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxsk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxsk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxAKIAIOSFODNN7EXAMPLE\\nxAIzaFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n\",\"file_path\":\"notes.txt\"}"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "Write"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1767225609000000000",
+              "kind": 1,
+              "name": "execute_tool Write",
+              "spanId": "9999999999999999",
+              "startTimeUnixNano": "1767225608000000000",
+              "traceId": "b1946ac92492d2347c6235b4d2611184"
             }
           ]
         }

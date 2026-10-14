@@ -13,12 +13,25 @@
   line is no longer folded into it, and a masked `API_KEY=********` on line two
   is still dropped. A key name glued to any other letter (`mytoken=`) still
   does not match.
+- **Every key-shaped detector now sees a value after an escaped line break.**
+  `github_token`, `openai_api_key`, `anthropic_api_key`, `aws_access_key_id`,
+  `google_api_key` and `financial_account_identifier` opened with a word
+  boundary, which read the escape's letter and the value as one word: a key or
+  IBAN on line two of JSON-encoded tool arguments or tool results was never
+  labeled: no exposure-scan hit for a key, no taint finding for any class. Each
+  now opens with `(?:\b|(?<=\\[ntr]))`, a word boundary or a JSON `\n`, `\t`
+  or `\r` escape; a value already ended at a following escape. A value glued
+  to any other letter (`xghp_...`) still does not match, and `sk-ant-` still
+  outranks `sk-` at one offset.
 
 ### Corpus
 - The diffspec baselines were regenerated for the catalog digest only; no flow
   fact, node count or finding moved. The attribute-exposure capture gains a
   Write tool-call pair: a `.env` line-two assignment that must reach the review
-  queue, and a glued-identifier near-miss that must not.
+  queue, and a glued-identifier near-miss that must not. It also gains a key
+  file with one value of each key-shaped class after a `\n`, `\t` or `\r`
+  escape, and the same values glued to a letter as the near-miss; the diffspec
+  baselines moved with the catalog digest again, digest only.
 
 ## [0.4.0] - 2026-09-07
 

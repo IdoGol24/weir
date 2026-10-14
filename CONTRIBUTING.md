@@ -60,10 +60,17 @@ A source class entry looks like this, in
 ```json
 {
   "name": "github_token",
-  "content_pattern": "\\bghp_[A-Za-z0-9]+\\b",
+  "content_pattern": "(?:\\b|(?<=\\\\[ntr]))ghp_[A-Za-z0-9]+\\b",
   "eligibility": {"pattern": "ghp_[A-Za-z0-9]{36}"}
 }
 ```
+
+Open a key-shaped `content_pattern` with `(?:\b|(?<=\\[ntr]))`, not a bare
+`\b`. Tool arguments and results often arrive as JSON-encoded text, so a value
+on line two sits right after a literal `\n` (or `\t`, `\r`) escape, and a bare
+word boundary reads the escape's letter and the value as one word and misses
+it. `test_catalog_escape_boundary.py` holds every catalog class to this, and
+fails until your new class declares a probe value there.
 
 **`content_pattern` must be strictly looser than `eligibility.pattern`.**
 This is the one trap worth stating up front. Copying the type's shape into

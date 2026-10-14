@@ -185,6 +185,50 @@ def test_a_key_name_glued_to_other_letters_is_still_not_a_hit() -> None:
     assert scan.hits == []
 
 
+# One synthetic value per key-shaped exposure class: FAKE padding that the
+# reject list demotes to triage, AWS's own documented example key id, and the
+# random-shaped _KEY so one probe is verdict-grade and carries a fingerprint.
+_KEY_SHAPED = [
+    "ghp_" + "FAKE" * 9,
+    "sk-proj-" + "FAKE" * 9,
+    "sk-ant-api03-" + "FAKE" * 16,
+    "AKIAIOSFODNN7EXAMPLE",
+    "AIza" + "FAKE" * 9,
+    _KEY,
+]
+
+
+def _graded(scan):
+    return [(h.source_class, h.eligible, h.value_len, h.prefix, h.fingerprint)
+            for h in scan.hits]
+
+
+def test_a_key_shaped_value_after_an_escaped_line_break_is_a_hit() -> None:
+    # A word boundary reads the escape's letter and the key as one word. The
+    # key on its own is the control: same class, grade, length and print.
+    for value in _KEY_SHAPED:
+        control = _scan([{"spanId": "aa" * 8, "attributes": [_attr("k", value)]}])
+        assert control.hits, value
+        for sep in ("\n", "\t", "\r\n"):
+            args = json.dumps({"file_path": "keys.txt", "content": f"# keys{sep}{value}{sep}"})
+            assert sep not in args
+            scan = _scan([{"spanId": "aa" * 8, "attributes": [_attr("k", args)]}])
+            assert _graded(scan) == _graded(control), (value, sep)
+
+
+def test_a_key_shaped_value_glued_to_an_ordinary_letter_is_still_not_a_hit() -> None:
+    # The escape is a boundary; a plain letter is not, even the one an escape
+    # ends in, and an uppercase lookalike escape is not an escape.
+    for value in _KEY_SHAPED:
+        scan = _scan([{"spanId": "aa" * 8, "attributes": [
+            _attr("a", f"x{value}"),
+            _attr("b", f"n{value}"),
+            _attr("c", json.dumps({"content": f"# keys\nx{value}"})),
+            _attr("d", f"C:\\Windows\\N{value}"),
+        ]}])
+        assert scan.hits == [], value
+
+
 def test_triage_hits_dedupe_by_span_location_and_class() -> None:
     scan = _scan([{"spanId": "aa" * 8,
                    "attributes": [_attr("k", "password=onevalue and token=anothervalue")]}])

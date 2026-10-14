@@ -1,4 +1,4 @@
-"""The bundled default catalog (C1).
+r"""The bundled default catalog (C1).
 
 The catalog itself lives in `bundled/catalog.json`. It used to be a Python
 literal here, which made constitution #4's "catalogs are data, never code"
@@ -18,9 +18,17 @@ Adding a source class needs three things, not one:
    anything `content_pattern` matches would already satisfy an identical
    `eligibility.pattern`. Eligibility becomes a tautology, and requirement
    (3) below becomes impossible to satisfy, because a near-miss would never
-   be labeled at all. For `github_token` that means `\bghp_[A-Za-z0-9]+\b`
-   as the label and `ghp_[A-Za-z0-9]{36}` as the floor: the loose one finds
-   candidates, the strict one judges them.
+   be labeled at all. For `github_token` that means
+   `(?:\b|(?<=\\[ntr]))ghp_[A-Za-z0-9]+\b` as the label and
+   `ghp_[A-Za-z0-9]{36}` as the floor: the loose one finds candidates, the
+   strict one judges them.
+
+   Open a key-shaped `content_pattern` with that `(?:\b|(?<=\\[ntr]))`, not
+   a bare `\b`: JSON-encoded text puts a value on line two right after a
+   literal `\n`, `\t` or `\r` escape, whose letter a bare word boundary reads
+   as part of the value's word. `weir.exposure.classify` recognizes both
+   leading forms when it ranks classes by literal prefix, and
+   `test_catalog_escape_boundary.py` holds every class to it.
 2. A fixture where the value reaches a sink and the finding fires.
 3. **A near-miss fixture that clears `content_pattern` and fails eligibility,
    and must NOT fire.** `content_pattern` is deliberately loose, so without

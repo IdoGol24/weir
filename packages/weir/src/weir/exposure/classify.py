@@ -27,6 +27,11 @@ _MIN_LAST4_VALUE_LEN = 12
 
 _REGEX_META = frozenset(".^$*+?{}[]\\|()")
 
+# The leading boundaries a key-shaped content_pattern may open with: the
+# escape-aware one (a word boundary, or right after a JSON \n, \t or \r
+# escape) and the plain word boundary. Longest first.
+_LEADING_BOUNDARIES = ("(?:\\b|(?<=\\\\[ntr]))", "\\b")
+
 
 class _RawHit(msgspec.Struct, frozen=True):
     """One match after subsumption, before triage/eligible dedupe. Carries
@@ -65,12 +70,16 @@ def _fingerprint(value: str) -> str:
 def _literal_prefix(pattern: str) -> str:
     """The leading LITERAL run of a content_pattern. Two classes can match at
     one offset (`sk-` and `sk-ant-`); the longer literal prefix is the more
-    specific class and wins. A leading \\b is skipped and scanning stops at the
-    first metacharacter, so `(?:AKIA|ASIA)...` and the `(?i)`-prefixed
-    credential_field pattern both yield "" and lose every tie - correct, since
-    neither is a prefix refinement of anything."""
+    specific class and wins. A leading boundary (`_LEADING_BOUNDARIES`) is
+    skipped and scanning stops at the first metacharacter, so `(?:AKIA|ASIA)...`
+    and the `(?i)`-prefixed credential_field pattern both yield "" and lose
+    every tie - correct, since neither is a prefix refinement of anything."""
+    for boundary in _LEADING_BOUNDARIES:
+        if pattern.startswith(boundary):
+            pattern = pattern[len(boundary):]
+            break
     out: list[str] = []
-    for ch in pattern.removeprefix("\\b"):
+    for ch in pattern:
         if ch in _REGEX_META:
             break
         out.append(ch)

@@ -119,14 +119,24 @@ def render_document() -> dict[str, Any]:
         ]),
     })
 
-    # Two Write tool calls whose arguments are JSON-encoded text, so every line
-    # after the first sits right after a literal backslash-n. The .env file's
-    # second line is a key=value assignment the scan must still see; the
-    # script's second line is an identifier that merely ends in a key name -
-    # the near-miss that must stay silent.
+    # Write tool calls whose arguments are JSON-encoded text, so every line
+    # after the first sits right after a literal backslash escape. The .env
+    # file's second line is a key=value assignment the scan must still see;
+    # the script's second line is an identifier that merely ends in a key name -
+    # the near-miss that must stay silent. The key file puts one value of each
+    # key-shaped class after a \n, \t or \r escape; the notes file glues the
+    # same values to a plain letter - the near-miss for those. The values are
+    # placeholders the reject lists demote (FAKE padding, AWS's documented
+    # example id), so they reach the review queue, never a verdict.
+    keys = ["ghp_" + "FAKE" * 9, "sk-proj-" + "FAKE" * 9, "sk-ant-api03-" + "FAKE" * 16,
+            "AKIAIOSFODNN7EXAMPLE", "AIza" + "FAKE" * 9]
     for index, (span_id, content, file_path) in enumerate([
         ("6666666666666666", "DEBUG=1\nAPI_KEY=FAKE-CANARY-7Rk2Ls9Vn4Xb\n", ".env"),
         ("7777777777777777", "import os\nmytoken = os.environ[\"TOKEN\"]\n", "send.py"),
+        ("8888888888888888",
+         "# rotated keys\n{}\n\t{}\r\n{}\n{}\n{}\n".format(*keys), "keys.txt"),
+        ("9999999999999999",
+         "# not keys\n" + "".join(f"x{key}\n" for key in keys), "notes.txt"),
     ], start=5):
         tool_start = _BASE_NANOS + index * _STEP_NANOS
         spans.append({
