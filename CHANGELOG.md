@@ -34,6 +34,9 @@
   file with one value of each key-shaped class after a `\n`, `\t` or `\r`
   escape, and the same values glued to a letter as the near-miss; the diffspec
   baselines moved with the catalog digest again, digest only.
+- The release commit also regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.4.0 to
+  0.4.1. That diff is version-only; no flow fact, node count or finding moved.
 
 ## [0.4.0] - 2026-09-07
 
