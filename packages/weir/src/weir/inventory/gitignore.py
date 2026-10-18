@@ -105,7 +105,8 @@ class GitIgnore:
     """Rules keyed by the directory (relative to the repository root, "" for
     the root) of the file they came from, kept in precedence order. `prefix`
     is the project's path from the repository root ("" when they are the
-    same); `add` and `ignored` take project-relative paths."""
+    same); `add` and `ignored` take project-relative paths, `add_rooted` and
+    `ignored_rooted` take paths relative to the repository root."""
 
     prefix: str = ""
     _layers: list[tuple[str, list[_Rule]]] = field(default_factory=list[tuple[str, list[_Rule]]])
@@ -114,9 +115,9 @@ class GitIgnore:
         return "/".join(part for part in (self.prefix, rel) if part)
 
     def add(self, base: str, text: str) -> None:
-        self._add_rooted(self._rooted(base), text)
+        self.add_rooted(self._rooted(base), text)
 
-    def _add_rooted(self, base: str, text: str) -> None:
+    def add_rooted(self, base: str, text: str) -> None:
         rules = parse_rules(text)
         if rules:
             self._layers.append((base, rules))
@@ -126,9 +127,9 @@ class GitIgnore:
         rules that apply to it? Does NOT look at its parents: the walker
         stops descending into an ignored directory and marks everything
         below it ignored."""
-        return self._ignored_rooted(self._rooted(rel), is_dir=is_dir)
+        return self.ignored_rooted(self._rooted(rel), is_dir=is_dir)
 
-    def _ignored_rooted(self, rel: str, *, is_dir: bool) -> bool:
+    def ignored_rooted(self, rel: str, *, is_dir: bool) -> bool:
         verdict = False
         for base, rules in self._layers:
             if base:
@@ -178,12 +179,12 @@ def base_rules(home: Path, project: Path) -> tuple[GitIgnore, bool]:
     root = next((d for d in (project, *project.parents) if (d / ".git").exists()), project)
     parts = project.relative_to(root).parts
     ignore = GitIgnore(prefix="/".join(parts))
-    ignore._add_rooted("", _read(_excludes_file(home)))
-    ignore._add_rooted("", _read(root / ".git" / "info" / "exclude"))
+    ignore.add_rooted("", _read(_excludes_file(home)))
+    ignore.add_rooted("", _read(root / ".git" / "info" / "exclude"))
     for depth in range(len(parts)):
         above = parts[:depth]
-        ignore._add_rooted("/".join(above), _read(root.joinpath(*above, ".gitignore")))
-        if ignore._ignored_rooted("/".join(parts[:depth + 1]), is_dir=True):
+        ignore.add_rooted("/".join(above), _read(root.joinpath(*above, ".gitignore")))
+        if ignore.ignored_rooted("/".join(parts[:depth + 1]), is_dir=True):
             return ignore, True
     return ignore, False
 
