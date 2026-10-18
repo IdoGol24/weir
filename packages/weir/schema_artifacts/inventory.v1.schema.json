@@ -363,6 +363,7 @@
       "enum": [
         "binary",
         "missing",
+        "symlinked_dir",
         "too_large",
         "undecodable",
         "unreadable",

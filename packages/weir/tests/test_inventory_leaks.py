@@ -1,0 +1,239 @@
+"""No value, and no fragment of 6 or more characters of one, in anything the
+inventory tests produce: screen output, JSON, error messages, the unknown
+list, the store, the key directory, reprs, and the test tree itself.
+
+One threshold everywhere: 6 characters. The scan also looks for the base64
+(all three alignments), JSON-escaped and URL-encoded forms of every value.
+A failure names the blob and offset, never the fragment, so the failure
+report cannot itself leak. The positive controls prove the scanner fires.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import pickle
+import subprocess
+import sys
+import urllib.parse
+from pathlib import Path
+
+import inventory_fakehome as fx
+import pytest
+from click.testing import CliRunner
+
+from weir.cli.main import main
+from weir.inventory import (
+    InventoryInputError,
+    InventoryInputs,
+    encode_report,
+    encode_store,
+    take_inventory,
+)
+
+THRESHOLD = 6
+_TESTS_DIR = Path(__file__).parent
+
+
+def _secret_parts(value: str) -> list[str]:
+    """A PEM block's armor (`-----BEGIN ... PRIVATE KEY-----`) is the same
+    in every key and in plenty of prose; its body is the secret."""
+    if "-----BEGIN" not in value:
+        return [value]
+    return [line for line in value.splitlines() if line and not line.startswith("-----")]
+
+
+def _forms(value: str) -> set[str]:
+    forms: set[str] = set()
+    for part in _secret_parts(value):
+        forms |= _part_forms(part)
+    return forms
+
+
+def _part_forms(value: str) -> set[str]:
+    raw = value.encode()
+    forms = {value, json.dumps(value)[1:-1], urllib.parse.quote(value, safe="")}
+    for shift in range(3):
+        encoded = base64.b64encode(b"\0" * shift + raw).decode()
+        # Drop the characters that encode the padding bytes and the trailing
+        # partial group: they depend on the neighbours, not on the value.
+        lead = (shift * 4 + 2) // 3
+        forms.add(encoded[lead:len(encoded) - 4])
+    return {f for f in forms if len(f) >= THRESHOLD}
+
+
+def _fragments(values: tuple[str, ...]) -> dict[str, int]:
+    """Every THRESHOLD-length window of every form of every value -> index."""
+    out: dict[str, int] = {}
+    for index, value in enumerate(values):
+        for form in _forms(value):
+            for i in range(len(form) - THRESHOLD + 1):
+                out.setdefault(form[i:i + THRESHOLD], index)
+    return out
+
+
+_FRAGMENTS = _fragments(fx.ALL_VALUES)
+
+
+def leaks(label: str, blob: str | bytes) -> list[tuple[str, int, int]]:
+    """(blob label, offset, value index) per leaked window. Never the text."""
+    text = blob.decode("utf-8", "replace") if isinstance(blob, bytes) else blob
+    found: list[tuple[str, int, int]] = []
+    for i in range(len(text) - THRESHOLD + 1):
+        index = _FRAGMENTS.get(text[i:i + THRESHOLD])
+        if index is not None:
+            found.append((label, i, index))
+    return found
+
+
+def _assert_clean(blobs: dict[str, str | bytes]) -> None:
+    # Hide this frame: pytest would print `blobs`, i.e. the scanned text.
+    __tracebackhide__ = True
+    assert blobs, "nothing was collected to scan"
+    found = [hit for label, blob in blobs.items() for hit in leaks(label, blob)]
+    assert not found, f"value fragments at (blob, offset, value index): {found[:10]}"
+
+
+# --- positive controls: the scanner must fire ---------------------------------
+
+
+@pytest.mark.parametrize("value", [fx.DECOY_D2, fx.AWS_SECRET_S01, fx.JWT_S16])
+def test_control_a_six_character_fragment_is_caught(value: str) -> None:
+    middle = len(value) // 2
+    assert leaks("control", f"safe text {value[middle:middle + 6]} safe text")
+
+
+def test_control_a_base64_copy_is_caught() -> None:
+    encoded = base64.b64encode(fx.MARKER_DOTENV.encode()).decode()
+    assert leaks("control", f"x {encoded} y")
+
+
+def test_control_five_characters_is_under_the_threshold() -> None:
+    sample = fx.AWS_SECRET_S01[10:15]
+    assert len(sample) == 5
+    assert not leaks("control", f"  {sample}  ")
+
+
+def test_control_the_fixture_files_themselves_are_caught(tmp_path: Path) -> None:
+    fake = fx.build(tmp_path)
+    assert leaks("fixture", (fake.home / ".aws/credentials").read_text())
+
+
+# --- the scan -------------------------------------------------------------
+
+
+def _collect_files(root: Path, blobs: dict[str, str | bytes], prefix: str) -> None:
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            blobs[f"{prefix}/{path.relative_to(root).as_posix()}"] = path.read_bytes()
+
+
+def test_nothing_the_inventory_produces_holds_a_value(tmp_path: Path) -> None:
+    fake = fx.build(tmp_path / "fixture")
+    out = tmp_path / "out"
+    out.mkdir()
+    # The default state directory, preloaded with the fixed test key so the
+    # key file is scanned too and the scan cannot pass or fail by chance.
+    (fake.home / ".weir").mkdir()
+    (fake.home / ".weir/fingerprint.key").write_text(fx.TEST_KEY_HEX + "\n")
+    blobs: dict[str, str | bytes] = {}
+    base = [
+        "inventory", "--home", str(fake.home), "--project", str(fake.project),
+        "--gitleaks", str(fake.gitleaks), "--trufflehog", str(fake.trufflehog),
+    ]
+    with_env = [*base, "--env-file", str(fake.env_file)]
+    runs = {
+        "text": with_env,
+        "json": [*with_env, "--json"],
+        "strict": [*with_env, "--strict"],
+        "store": [*with_env, "--store", str(out / "store.json"), "--key", str(fake.key)],
+        "unknown-list": [*with_env, "--unknown-list", str(out / "unknown.txt")],
+        "no-env": base,
+    }
+    for label, args in runs.items():
+        result = CliRunner().invoke(main, args)
+        assert result.exit_code in (0, 1), label
+        blobs[f"cli:{label}:stdout"] = result.stdout
+        blobs[f"cli:{label}:stderr"] = result.stderr
+
+    # Error paths: inputs that CONTAIN values must not echo them.
+    bad_gitleaks = out / "bad-gitleaks.json"
+    bad_gitleaks.write_text(json.dumps([{"RuleID": 7, "Secret": fx.OPENAI_S07}]))
+    bad_truffle = out / "bad-trufflehog.jsonl"
+    bad_truffle.write_text(f'{{"DetectorName": "x", "Raw": "{fx.GITHUB_S04}"\n')
+    bad_key = out / "bad.key"
+    bad_key.write_text(fx.AWS_SECRET_S01)
+    errors = {
+        "gitleaks": [*base, "--gitleaks", str(bad_gitleaks)],
+        "trufflehog": [*base, "--trufflehog", str(bad_truffle)],
+        "key": [*base, "--key", str(bad_key)],
+        "env-file": [*base, "--env-file", str(out / "absent.env")],
+    }
+    for label, args in errors.items():
+        result = CliRunner().invoke(main, args)
+        assert result.exit_code == 2, label
+        blobs[f"error:{label}:stdout"] = result.stdout
+        blobs[f"error:{label}:stderr"] = result.stderr
+
+    reach = fake.project / ".weir/reach.yml"
+    good_map = reach.read_text()
+    reach.write_text(good_map + f"oops: {fx.ANTHROPIC_S10}\n")
+    result = CliRunner().invoke(main, with_env)
+    assert result.exit_code == 2
+    blobs["error:map:stderr"] = result.stderr
+    reach.write_text(good_map)
+
+    # The API surface: reprs, encodings, exception text.
+    inputs = InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=fake.env_file,
+        gitleaks_reports=[fake.gitleaks], trufflehog_reports=[fake.trufflehog],
+    )
+    api = take_inventory(inputs)
+    blobs["api:report-json"] = encode_report(api.report)
+    blobs["api:store-json"] = encode_store(api.store)
+    blobs["api:report-repr"] = repr(api.report)
+    blobs["api:store-repr"] = repr(api.store)
+    blobs["api:values-repr"] = repr(api.values) + str(api.values)
+    with pytest.raises(TypeError) as refused:
+        pickle.dumps(api.values)
+    blobs["api:pickle-error"] = str(refused.value)
+    with pytest.raises(InventoryInputError) as bad:
+        take_inventory(InventoryInputs(
+            home=fake.home, project=fake.project, key_path=fake.key,
+            gitleaks_reports=[bad_gitleaks],
+        ))
+    blobs["api:input-error"] = str(bad.value)
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "weir.cli.main", *base, "--process-env", "--key", str(fake.key),
+         "--unknown-list", str(out / "process-unknown.txt")],
+        env={"ACME_DEPLOY_TOKEN": fx.MARKER_USERMCP, "PATH": "/usr/bin:/bin",
+             **({"SYSTEMROOT": r"C:\Windows"} if sys.platform == "win32" else {})},
+        capture_output=True, check=False,
+    )
+    assert proc.returncode == 0
+    blobs["subprocess:stdout"] = proc.stdout
+    blobs["subprocess:stderr"] = proc.stderr
+
+    # Every file the runs wrote: the store, the unknown lists, and the
+    # default state directory in the fake home (key, unknown list).
+    _collect_files(out, blobs, "out")
+    _collect_files(fake.home / ".weir", blobs, "home-state")
+    for name in ("bad-gitleaks.json", "bad-trufflehog.jsonl", "bad.key"):
+        blobs.pop(f"out/{name}")  # inputs this test planted, not outputs
+    assert "out/store.json" in blobs and "home-state/unknown-env.txt" in blobs
+    _assert_clean(blobs)
+
+
+def test_no_test_file_or_cache_restates_a_value() -> None:
+    """Only the fixture module may hold values: no snapshot, expectation or
+    other inventory test file restates one. Their compiled caches are scanned
+    too, except the fixture module's own bytecode, a copy of its source."""
+    blobs: dict[str, str | bytes] = {}
+    for path in sorted(_TESTS_DIR.rglob("*")):
+        if not path.is_file() or path.name.startswith("inventory_fakehome."):
+            continue
+        if "inventory" not in path.name:
+            continue
+        blobs[path.relative_to(_TESTS_DIR).as_posix()] = path.read_bytes()
+    _assert_clean(blobs)

@@ -143,6 +143,7 @@ class NotScannedReason(enum.StrEnum):
     UNREADABLE = "unreadable"
     UNDECODABLE = "undecodable"  # a standard file whose format did not parse
     VENDORED_DIR = "vendored_dir"  # a dependency directory, skipped whole
+    SYMLINKED_DIR = "symlinked_dir"  # a symlink to a directory: not followed, so no loops
     MISSING = "missing"  # a map entry or scanner result names a file that is not there
 
 

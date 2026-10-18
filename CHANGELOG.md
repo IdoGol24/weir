@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+- **`weir inventory`: which credentials an agent could reach, by name
+  only.** Four sources: a versioned list of standard credential locations
+  under the given home (`~/.aws`, Google application default credentials,
+  `~/.npmrc`, `~/.kube/config`, `~/.docker/config.json`, `~/.netrc`, git
+  credentials, gh and more, including the variables that move them); the
+  project tree, through Weir's catalog plus imported gitleaks or trufflehog
+  results; the launch environment (`--env-file` or `--process-env`) with the
+  shell startup files that re-export into it; and the approved map
+  `.weir/reach.yml`. Environment variables are secrets by name or value
+  shape, not secrets when the value is a number, boolean, path or plain
+  hostname, and otherwise unknown: a count on screen, names in a file, a
+  failure only with `--strict`, markable as fine in the map. Files a
+  `.gitignore` covers are reported per route (hidden from Grep's directory
+  search, still reachable by Read, cat and grep -r). Nothing prints, logs or
+  stores a value; `--store` writes HMAC-SHA256 fingerprints under a local
+  key plus byte offsets. `--json` emits the `weir-inventory/1` report, whose
+  schema and Python API are documented in `docs/inventory.md`. `--home` is
+  required: there is no default home.
+
 ## [0.4.1] - 2026-10-14
 
 ### Fixed

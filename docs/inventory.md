@@ -67,14 +67,19 @@ read from it.
    value twice in one file is one credential with two offsets. Dependency
    directories (`node_modules`, `.venv`, ...) are skipped whole and listed
    under `not_scanned`, as are binary, oversized (> 2 MiB) and unreadable
-   files. `.git` and `.weir` are not project files.
+   files. A symlinked file is followed; a symlinked directory is listed as
+   `symlinked_dir` and not followed. `.git` and `.weir` are not project
+   files.
 3. **Launch environment** (`environment`). The env file or process
    environment, plus every exported assignment in the shell startup files
    (`~/.bashrc`, `~/.zshrc`, `~/.profile`, fish, csh; see the list). A
    startup file that re-exports a variable is its own record, because an
    environment block is undone by a startup file the agent can read. An
    assignment from a shell expansion (`export TOKEN=$(pass show x)`) is a
-   credential by name with `value_state: dynamic`.
+   credential by name with `value_state: dynamic`. A secret assigned in a
+   startup file but never exported is still a credential, since the file is
+   readable; an unexported variable that is not a secret is not part of the
+   environment and is neither counted nor listed.
 4. **Approved map** (`map`): `<project>/.weir/reach.yml`, where a person
    declares what discovery cannot know. Strict schema: an unknown key is an
    error (exit 2), so a typo never reads as an approval.
@@ -208,7 +213,7 @@ fields in schema order, lists sorted. Top level:
 | `env_unknown` | array | `{name, location}`, sorted |
 | `env_fine` | array | `{name, location}`, sorted |
 | `git_ignored` | array | `{display, path, routes: [{route, status, note}]}` |
-| `not_scanned` | array | `{display, reason, path}`; reason is `binary`, `too_large`, `unreadable`, `undecodable`, `vendored_dir` or `missing` |
+| `not_scanned` | array | `{display, reason, path}`; reason is `binary`, `too_large`, `unreadable`, `undecodable`, `vendored_dir`, `symlinked_dir` or `missing` |
 
 A credential:
 

@@ -98,9 +98,15 @@ def walk_project(home: Path, project: Path) -> tuple[list[ProjectFile], list[Ski
             path = Path(entry.path)
             try:
                 is_dir = entry.is_dir(follow_symlinks=False)
-                is_file = entry.is_file(follow_symlinks=False)
+                # A symlinked FILE is followed: `.env -> ~/secrets/app.env`
+                # is a credential the agent reaches through the project.
+                is_file = entry.is_file()
+                is_dir_link = entry.is_symlink() and entry.is_dir()
             except OSError:
                 skipped.append(Skipped(path, NotScannedReason.UNREADABLE))
+                continue
+            if is_dir_link:
+                skipped.append(Skipped(path, NotScannedReason.SYMLINKED_DIR))
                 continue
             ignored = dir_ignored or ignore.ignored(rel, is_dir=is_dir)
             if is_dir:
@@ -123,7 +129,7 @@ _KEY = r"[A-Za-z_][A-Za-z0-9_.\-]*"
 _ASSIGNMENT = re.compile(
     rf"""(?:^|(?<=[\s{{,;(\[])|(?<=\\[ntr]))   # start, a delimiter, or a JSON escape
         (?P<kq>["']?)(?P<key>{_KEY})(?P=kq)    # key, optionally quoted
-        \s*(?::=|=>|=|:)\s*                    # operator
+        [ \t]*(?::=|=>|=|:)[ \t]*              # operator, on the same line
         (?P<val>"(?:[^"\\\n]|\\.)*"            # double-quoted value
             |'[^'\n]*'                         # single-quoted value
             |(?:(?!\\[ntr])[^\s,;'"\]}})])+)   # bare value, stopping at a JSON escape
@@ -162,9 +168,24 @@ def _unquote(raw: str) -> tuple[str, int, bool]:
     return raw, 0, False
 
 
+def _catalog_near_miss(value: str, catalog: Catalog) -> bool:
+    """Has the value a catalog class's loose shape but fails its
+    eligibility? Then it is that class's placeholder or a masked key
+    (`sk-proj-REDACTED...`, AWS's documented example), not a credential."""
+    return any(
+        spec.exposure
+        and spec.eligibility.pattern is not None
+        and re.fullmatch(spec.content_pattern, value) is not None
+        and not is_verbatim_eligible(value, spec)
+        for spec in catalog.sources
+    )
+
+
 def _acceptable(value: str, *, quoted: bool, code: bool) -> bool:
     """Is a value assigned to a secret-named key plausibly the secret?"""
     if len(value) < _MIN_VALUE_LEN or _PLACEHOLDER.fullmatch(value):
+        return False
+    if _catalog_near_miss(value, DEFAULT_CATALOG):
         return False
     if not_secret_kind(value) is not None:
         return False
@@ -177,7 +198,7 @@ def _acceptable(value: str, *, quoted: bool, code: bool) -> bool:
     return True
 
 
-def _catalog_hits(text: str, catalog: Catalog) -> Iterator[Hit]:
+def _catalog_hits(text: str, catalog: Catalog, *, code: bool) -> Iterator[Hit]:
     for spec in catalog.sources:
         if not spec.exposure:
             continue
@@ -190,7 +211,8 @@ def _catalog_hits(text: str, catalog: Catalog) -> Iterator[Hit]:
                 value = match.group(1) or ""
                 if any(re.fullmatch(p, value) for p in spec.eligibility.reject_patterns):
                     continue
-                if not _acceptable(value, quoted=True, code=False):
+                quoted = match.start(1) > 0 and text[match.start(1) - 1] in "'\""
+                if not _acceptable(value, quoted=quoted, code=code):
                     continue
                 key = match.group(0)[: match.start(1) - match.start(0)].rstrip("'\"=: \t\r\n")
                 yield Hit(
@@ -289,7 +311,7 @@ def merge_hits(hits: list[Hit]) -> list[Hit]:
 def scan_text(text: str, *, rel: str, catalog: Catalog = DEFAULT_CATALOG) -> list[Hit]:
     code = Path(rel).suffix.lower() in _CODE_SUFFIXES
     hits = [
-        *_catalog_hits(text, catalog),
+        *_catalog_hits(text, catalog, code=code),
         *_assignment_hits(text, code=code),
         *_standalone_hits(text),
     ]

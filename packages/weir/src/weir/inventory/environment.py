@@ -30,6 +30,9 @@ class EnvEntry:
     # The unexpanded text of a non-literal value (`$HOME/bin:$PATH`), kept
     # only so a PATH-style expansion can still be judged a path.
     expansion: str | None = None
+    # False for a startup-file assignment nothing exports: not part of the
+    # launch environment, but a value in a file the agent can read.
+    exported: bool = True
 
 
 @dataclass
@@ -182,11 +185,11 @@ def _entry(name: str, value: str | None, start: int, raw: str, number: int) -> E
 
 
 def parse_startup_file(text: str) -> list[EnvEntry]:
-    """Exported assignments: `export NAME=v`, `declare -x`, `typeset -x`,
-    csh `setenv NAME v`, fish `set -x NAME v`, and a plain `NAME=v` that an
-    `export NAME` anywhere in the file exports."""
+    """Assignments: `export NAME=v`, `declare -x`, `typeset -x`, csh
+    `setenv NAME v`, fish `set -x NAME v`, and plain `NAME=v`, which is
+    `exported` when an `export NAME` anywhere in the file exports it."""
     exported: list[EnvEntry] = []
-    plain: dict[str, EnvEntry] = {}
+    plain: list[EnvEntry] = []
     exported_names = {
         name for m in _EXPORTED_NAMES.finditer(text) for name in m.group(1).split()
     }
@@ -202,12 +205,16 @@ def parse_startup_file(text: str) -> list[EnvEntry]:
             value, vstart, _, raw = _shell_word(line, m.start(2))
             exported.append(_entry(m.group(1), value, offset + vstart, raw, number))
         elif (m := _FISH_SET.match(line)) is not None:
+            value, vstart, _, raw = _shell_word(line, m.start(3))
+            entry = _entry(m.group(2), value, offset + vstart, raw, number)
             if re.search(r"(?:^|\s)(?:-[A-Za-z]*x[A-Za-z]*|--export)(?=\s)", m.group(1)):
-                value, vstart, _, raw = _shell_word(line, m.start(3))
-                exported.append(_entry(m.group(2), value, offset + vstart, raw, number))
+                exported.append(entry)
+            else:
+                plain.append(entry)
         elif (m := _ASSIGN.match(line)) is not None:
             value, vstart, _, raw = _shell_word(line, m.start(2))
-            plain[m.group(1)] = _entry(m.group(1), value, offset + vstart, raw, number)
+            plain.append(_entry(m.group(1), value, offset + vstart, raw, number))
         offset += len(raw_line)
-    exported.extend(entry for name, entry in plain.items() if name in exported_names)
-    return sorted(exported, key=lambda e: (e.line or 0, e.name))
+    for entry in plain:
+        entry.exported = entry.name in exported_names
+    return sorted([*exported, *plain], key=lambda e: (e.line or 0, e.name))

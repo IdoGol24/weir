@@ -223,15 +223,25 @@ def candidate_paths(
 # core then reports the file as a whole-file credential AND as undecodable.
 
 
+_PLAIN_WORD = re.compile(r"[a-z][a-z-]*")
+
+
 def _judge(location: StandardLocation, field_name: str, value: str) -> Reason | None:
-    """Is this field of a standard credential file a credential?"""
+    """Is this field of a standard credential file a credential? A field
+    the entry names always is. Any other field needs a credential-shaped
+    value, or a secret-suggesting name with a value that is not a short or
+    plain word: docker's `credsStore: desktop` names a helper, not a secret."""
     if not_secret_kind(value) is not None:
         return None
     if field_name.lower() in location.fields:
         return Reason.LOCATION
     if value_shape(value.strip()) is not None:
         return Reason.SHAPE
-    if name_suggests_secret(field_name):
+    if (
+        name_suggests_secret(field_name)
+        and len(value) >= 8
+        and not _PLAIN_WORD.fullmatch(value)
+    ):
         return Reason.NAME
     return None
 

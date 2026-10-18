@@ -9,6 +9,7 @@ the entry index, never an entry's content.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,7 +65,7 @@ def _resolve(raw: str, project: Path) -> Path | None:
     if not raw:
         return None
     path = Path(raw)
-    return path if path.is_absolute() else project / path
+    return Path(os.path.normpath(path if path.is_absolute() else project / path))
 
 
 def _read(report: Path) -> bytes:

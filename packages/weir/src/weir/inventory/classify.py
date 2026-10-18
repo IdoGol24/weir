@@ -131,7 +131,7 @@ def _is_single_path(value: str) -> bool:
         return True
     if not _PATH_ANCHOR.match(value):
         return False
-    segments = re.split(r"[\\/]", value)
+    segments = re.split(r"[\\/]", re.sub(r"^[A-Za-z]:", "", value))
     return all(
         _PATH_SEGMENT.fullmatch(seg) is not None and not _high_entropy(seg) for seg in segments
     )
@@ -189,23 +189,22 @@ def classify_env(name: str, value: str | None) -> tuple[EnvVerdict, str | None]:
     return EnvVerdict.UNKNOWN, None
 
 
-def looks_secret_shaped(text: str) -> bool:
-    """Would printing `text` as a NAME risk printing a credential? A key or
-    a scope parsed out of a file is untrusted: a config keyed by its own
-    token must not put the token on screen."""
-    if value_shape(text) is not None:
-        return True
-    return _JWT.search(text) is not None or _URL_WITH_PASSWORD.search(text) is not None or any(
-        _contains_catalog_key(text, pattern) for pattern in _CATALOG_KEY_PATTERNS
-    )
-
-
-_CATALOG_KEY_PATTERNS = [
+_CATALOG_KEY_PATTERNS = tuple(
     re.compile(spec.content_pattern)
     for spec in DEFAULT_CATALOG.sources
     if spec.exposure and spec.eligibility.pattern is not None
-]
+)
 
 
-def _contains_catalog_key(text: str, pattern: re.Pattern[str]) -> bool:
-    return pattern.search(text) is not None
+def looks_secret_shaped(text: str) -> bool:
+    """Would printing `text` as a NAME risk printing a credential? A key or
+    a scope parsed out of a file is untrusted: a config keyed by its own
+    token must not put the token on screen. Deliberately loose - the
+    catalog's content patterns, not its eligibility - since a false positive
+    here only withholds a name."""
+    if value_shape(text) is not None:
+        return True
+    return any(
+        pattern.search(text) is not None
+        for pattern in (_JWT, _URL_WITH_PASSWORD, _PEM_PRIVATE_KEY, *_CATALOG_KEY_PATTERNS)
+    )

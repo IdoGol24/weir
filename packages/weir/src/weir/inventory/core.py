@@ -240,6 +240,9 @@ def _judge_env(
     launch_env = location.kind is LocationKind.LAUNCH_ENV
     for entry in entries:
         judged = judge(entry)
+        if not entry.exported and judged.verdict is not EnvVerdict.SECRET:
+            # Not in the launch environment: only a secret in the file matters.
+            continue
         if judged.verdict is EnvVerdict.SECRET:
             c.add(
                 Source.ENVIRONMENT, [to_hit(judged, detector)], path=path, text=text,

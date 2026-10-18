@@ -119,6 +119,13 @@ with one location and no flow at all.
 The OTel GenAI adapter, session graph, taint and evaluation, the gauge,
 HTML reports, and the trace generator behind the test corpus.
 
+`weir inventory --home DIR` lists the credentials an agent could reach -
+standard credential files, project files (with imported gitleaks or
+trufflehog results), the launch environment and shell startup files, and
+the approved map `.weir/reach.yml` - by name, source and location only. It
+never prints, logs or stores a value; what it can store is a keyed
+fingerprint plus offsets ([contract](docs/inventory.md)).
+
 Next: the `weir diff` baseline gate, more rules, more dialects.
 
 Apache-2.0, all of it, permanently. Nothing held back, nothing gated,
