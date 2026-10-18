@@ -59,6 +59,18 @@ def test_values_that_are_not_secrets(value: str, kind: str) -> None:
     assert not_secret_kind(value) == kind
 
 
+_WINDOWS_PYTHON = "C:\\Users\\Dev\\AppData\\Local\\Programs\\Python\\Python312"
+_XCODE = "/Applications/Xcode15/Contents/Developer"
+
+
+@pytest.mark.parametrize("value", [
+    _WINDOWS_PYTHON, _XCODE, f"/usr/bin:{_XCODE}:/bin", f"C:\\Windows;{_WINDOWS_PYTHON}",
+])
+def test_mixed_case_paths_with_digits_are_paths(value: str) -> None:
+    assert is_path(value)
+    assert classify_env("PATH", value) == (EnvVerdict.NOT_SECRET, "path")
+
+
 @pytest.mark.parametrize(
     "value", [fx.AWS_SECRET_S02_ROTATED, fx.AWS_SECRET_S02_SPLIT], ids=["rotated", "split"]
 )

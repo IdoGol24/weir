@@ -16,7 +16,9 @@ Step 2 before step 3 is deliberate: `GOOGLE_APPLICATION_CREDENTIALS` holds a
 path and `TOKEN_TTL` a number, and neither value is the credential. The path
 check refuses a value with a high-entropy segment, or whose segments read as
 key material once the separators are removed, so an AWS secret key that
-happens to start with "/" is not waved through as a path.
+happens to start with "/" is not waved through as a path. High entropy is
+mixed case and digits that do not read as CamelCase or digit words, so
+`C:\\Users\\Dev\\AppData\\Local\\Programs\\Python\\Python312` is still a path.
 """
 
 from __future__ import annotations
@@ -115,16 +117,24 @@ _PATH_SEGMENT = re.compile(r"[A-Za-z0-9._@~+, -]*|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?
 _VAR_ONLY = re.compile(r"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?")
 
 
+_WORD_TOKEN = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+")
+
+
 def _high_entropy(segment: str) -> bool:
-    """A long run of mixed case and digits with no separator reads as key
-    material, not a directory name."""
-    return (
+    """A long run of mixed case and digits with no separator that does not
+    read as CamelCase or digit words reads as key material, not a directory
+    name: `Python312` splits into words of 6 and 3 characters, a random key
+    into words of about 2."""
+    if not (
         len(segment) >= 20
         and not any(ch in "._- " for ch in segment)
         and any(ch.isupper() for ch in segment)
         and any(ch.islower() for ch in segment)
         and any(ch.isdigit() for ch in segment)
-    )
+    ):
+        return False
+    words = _WORD_TOKEN.findall(segment)
+    return sum(len(w) for w in words) < 3 * len(words)
 
 
 def _is_single_path(value: str) -> bool:

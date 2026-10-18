@@ -118,9 +118,12 @@ credential whatever its value looks like.
    letter, `$HOME/...`, or a `PATH`-style list of these) or a plain hostname
    (dotted name with an alphabetic top label, `localhost`, IPv4, optional
    port). A path segment of 20+ characters mixing upper case, lower case
-   and digits with no separator is key material, not a directory, and so is
-   a path whose segments read that way once the separators are removed, so
-   an AWS secret key starting with `/` is not waved through.
+   and digits with no separator, whose CamelCase and digit words average
+   under 3 characters, is key material, not a directory, and so is a path
+   whose segments read that way once the separators are removed. An AWS
+   secret key starting with `/` is not waved through, while
+   `C:\Users\Dev\AppData\Local\Programs\Python\Python312` and
+   `/Applications/Xcode15/Contents/Developer` are paths.
 3. **Name**: the name suggests a secret -> secret, reason `name`. A name is
    split into words (`ACME_API_KEY`, `clientSecret`, `_authToken`); it
    suggests a secret when a word is one of SECRET, TOKEN, PASSWORD, PASSWD,
