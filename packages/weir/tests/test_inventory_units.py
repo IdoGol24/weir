@@ -233,6 +233,13 @@ def test_startup_file_forms() -> None:
             assert text[entry.span[0]:entry.span[1]] == entry.value, entry.name
 
 
+def test_a_mixed_quote_word_never_gets_a_wrong_offset() -> None:
+    text = 'export A_TOKEN=abc"defghij"\nexport B_TOKEN="abc"\n'
+    first, second = parse_startup_file(text)
+    assert (first.value, first.span) == ("abcdefghij", None)
+    assert second.span is not None and text[second.span[0]:second.span[1]] == "abc"
+
+
 def test_unexported_secret_in_a_startup_file_is_a_credential(tmp_path: Path) -> None:
     fake = fx.build(tmp_path)
     (fake.home / ".bash_profile").write_text(

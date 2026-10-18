@@ -12,7 +12,7 @@ import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
-from weir.inventory._scan import Hit, line_of
+from weir.inventory._scan import Hit
 from weir.inventory._types import Reason
 from weir.inventory.classify import EnvVerdict, classify_env, is_dynamic, not_secret_kind
 
@@ -78,7 +78,9 @@ def parse_env_file(text: str) -> list[EnvEntry]:
     entries: list[EnvEntry] = []
     nul = "\0" in text
     offset = 0
-    for record in text.split("\0") if nul else text.splitlines(keepends=True):
+    for number, record in enumerate(
+        text.split("\0") if nul else text.splitlines(keepends=True), start=1
+    ):
         body = record if nul else record.rstrip("\r\n")
         stripped = body.lstrip()
         lead = len(body) - len(stripped)
@@ -91,7 +93,7 @@ def parse_env_file(text: str) -> list[EnvEntry]:
                 vstart = lead + len(name) + 1
                 value, vstart = (raw, vstart) if nul else _unquote(raw, vstart)
                 start = offset + vstart
-                line = None if nul else line_of(text, offset)
+                line = None if nul else number
                 entries.append(EnvEntry(name, value, (start, start + len(value)), line))
         offset += len(record) + (1 if nul else 0)
     return entries
@@ -113,9 +115,9 @@ _FISH_SET = re.compile(rf"^\s*set\s+((?:-\S+\s+)+)({_NAME})\s+(.*)$")
 
 def _shell_word(text: str, start: int) -> tuple[str | None, int, int, str]:
     """The shell word at text[start:]: (literal value or None when it
-    expands, value start, end of word). Quotes are removed; single quotes are
-    literal, double quotes and bare words expand `$` and backticks. The
-    fourth item is the word's text with quotes removed, expanded or not."""
+    expands, value start, end of word, the word's text with quotes removed).
+    Single quotes are literal; double quotes and bare words expand `$` and
+    backticks."""
     i = start
     out: list[str] = []
     dynamic = False
@@ -184,6 +186,21 @@ def _entry(name: str, value: str | None, start: int, raw: str, number: int) -> E
     return EnvEntry(name, value, span, number, None if value is not None else raw)
 
 
+def _verify_span(text: str, entry: EnvEntry) -> None:
+    """A word that mixes quoting (`A=abc"def"`) has a value that is not one
+    contiguous run of the file: never record an offset that does not hold
+    the value. Fall back to the value's first occurrence on its line."""
+    if entry.span is None or entry.value is None:
+        return
+    start, end = entry.span
+    if text[start:end] == entry.value:
+        return
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", start)
+    found = text.find(entry.value, line_start, len(text) if line_end == -1 else line_end)
+    entry.span = (found, found + len(entry.value)) if entry.value and found != -1 else None
+
+
 def parse_startup_file(text: str) -> list[EnvEntry]:
     """Assignments: `export NAME=v`, `declare -x`, `typeset -x`, csh
     `setenv NAME v`, fish `set -x NAME v`, and plain `NAME=v`, which is
@@ -194,9 +211,8 @@ def parse_startup_file(text: str) -> list[EnvEntry]:
         name for m in _EXPORTED_NAMES.finditer(text) for name in m.group(1).split()
     }
     offset = 0
-    for raw_line in text.splitlines(keepends=True):
+    for number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
         line = raw_line.rstrip("\r\n")
-        number = line_of(text, offset)
         if (m := _EXPORT.match(line)) is not None:
             for name, value, start, _, raw in _assignments(m.group(1), m.start(1)):
                 if start >= 0:
@@ -217,4 +233,6 @@ def parse_startup_file(text: str) -> list[EnvEntry]:
         offset += len(raw_line)
     for entry in plain:
         entry.exported = entry.name in exported_names
+    for entry in (*exported, *plain):
+        _verify_span(text, entry)
     return sorted([*exported, *plain], key=lambda e: (e.line or 0, e.name))
