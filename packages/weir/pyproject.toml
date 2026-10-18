@@ -9,6 +9,7 @@ dependencies = [
     "msgspec>=0.18",
     "click>=8.1",
     "jinja2>=3.1",
+    "pyyaml>=6",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

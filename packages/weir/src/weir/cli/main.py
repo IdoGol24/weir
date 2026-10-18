@@ -1,4 +1,4 @@
-"""Minimal CLI surface (L18): `weir gauge` and `weir scan` only.
+"""Minimal CLI surface (L18): `weir gauge`, `weir scan` and `weir inventory`.
 
 Thin argument parsing over the pure pipeline functions - no logic of its
 own. `weir test`/`validate`/`verify`/`feedback`/`rules list`/`events import`
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.resources
 import json as _json
+import os
 import sys
 from pathlib import Path
 
@@ -32,6 +33,16 @@ from weir.gauge.exposure import exposure_gauge_lines
 from weir.gauge.ladder import capability_ladder_lines
 from weir.gauge.provenance import provenance_gauge_lines
 from weir.graph import build_session_graph
+from weir.inventory import (
+    InventoryInputError,
+    InventoryInputs,
+    default_key_path,
+    encode_report,
+    take_inventory,
+    write_store,
+)
+from weir.inventory.core import write_private
+from weir.inventory.text import inventory_lines, unknown_list_lines
 from weir.label import label_graph
 from weir.report import exposure_lines, finding_lines, render_html_report
 from weir.rules_commons import load_rules
@@ -295,6 +306,116 @@ def scan_command(
             click.echo(line)
 
     raise SystemExit(1 if failing else 0)
+
+
+@main.command("inventory")
+@click.option(
+    "--home",
+    "home",
+    type=click.Path(file_okay=False, path_type=Path),
+    required=True,
+    help="Home directory to inventory. Required: there is no default, so a run"
+    " never reads a real home by accident.",
+)
+@click.option(
+    "--project",
+    "project",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("."),
+    show_default=True,
+    help="Project directory; its .weir/reach.yml is the approved map.",
+)
+@click.option(
+    "--env-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="The agent's launch environment as NAME=value lines (or `env -0` output).",
+)
+@click.option(
+    "--process-env",
+    is_flag=True,
+    help="Use this process's own environment as the launch environment.",
+)
+@click.option(
+    "--gitleaks",
+    "gitleaks_reports",
+    type=click.Path(dir_okay=False, path_type=Path),
+    multiple=True,
+    help="Import a gitleaks JSON report (repeatable).",
+)
+@click.option(
+    "--trufflehog",
+    "trufflehog_reports",
+    type=click.Path(dir_okay=False, path_type=Path),
+    multiple=True,
+    help="Import a trufflehog JSON report (repeatable).",
+)
+@click.option(
+    "--key",
+    "key_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Fingerprint key file, created when missing [default: HOME/.weir/fingerprint.key].",
+)
+@click.option(
+    "--unknown-list",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Where to write unknown variable names [default: HOME/.weir/unknown-env.txt].",
+)
+@click.option(
+    "--store",
+    "store_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write keyed fingerprints plus offsets here (never values).",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the weir-inventory/1 JSON report.")
+@click.option(
+    "--strict", is_flag=True, help="Exit 1 when any environment variable is unknown."
+)
+def inventory_command(
+    home: Path,
+    project: Path,
+    env_file: Path | None,
+    process_env: bool,
+    gitleaks_reports: tuple[Path, ...],
+    trufflehog_reports: tuple[Path, ...],
+    key_path: Path | None,
+    unknown_list: Path | None,
+    store_path: Path | None,
+    as_json: bool,
+    strict: bool,
+) -> None:
+    """List credentials by name, source and location. Never prints a value."""
+    if env_file is not None and process_env:
+        raise click.UsageError("--env-file and --process-env are mutually exclusive")
+    inputs = InventoryInputs(
+        home=home,
+        project=project,
+        key_path=key_path or default_key_path(home.absolute()),
+        env_file=env_file,
+        process_env=dict(os.environ) if process_env else None,
+        gitleaks_reports=gitleaks_reports,
+        trufflehog_reports=trufflehog_reports,
+    )
+    try:
+        result = take_inventory(inputs)
+    except InventoryInputError as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(2) from exc
+    report = result.report
+    unknown_path = unknown_list or home.absolute() / ".weir" / "unknown-env.txt"
+    body = "".join(line + "\n" for line in unknown_list_lines(report.env_unknown))
+    write_private(unknown_path, body.encode("utf-8"))
+    if store_path is not None:
+        write_store(store_path, result.store)
+    if as_json:
+        click.echo(encode_report(report).decode(), nl=False)
+    else:
+        for line in inventory_lines(report, unknown_list_path=unknown_path.as_posix()):
+            click.echo(line)
+    raise SystemExit(1 if strict and report.counts.env_unknown else 0)
 
 
 if __name__ == "__main__":
