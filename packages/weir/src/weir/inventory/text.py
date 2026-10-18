@@ -44,6 +44,8 @@ _STATES = {
     ValueState.LITERAL: None,
     ValueState.DYNAMIC: "value from a shell expansion",
     ValueState.ABSENT: "whole file",
+    ValueState.NOT_IN_FILE: "value not in the file",
+    ValueState.TYPED_NUMBER: "value typed as a number",
 }
 _MAX_COLUMN = 60
 

@@ -11,7 +11,13 @@ from pathlib import Path
 import inventory_fakehome as fx
 import pytest
 
-from weir.inventory import InventoryInputError, InventoryInputs, take_inventory
+from weir.inventory import (
+    Inventory,
+    InventoryInputError,
+    InventoryInputs,
+    ValueState,
+    take_inventory,
+)
 from weir.inventory.classify import (
     EnvVerdict,
     classify_env,
@@ -27,6 +33,7 @@ from weir.inventory.gitignore import GitIgnore
 from weir.inventory.locations import STANDARD_LOCATIONS, parse_location
 from weir.inventory.project import scan_text
 from weir.inventory.scanners import ScannerReportError, load_gitleaks, load_trufflehog
+from weir.inventory.text import inventory_lines
 
 # --- classification -------------------------------------------------------
 
@@ -309,10 +316,29 @@ def test_a_field_the_location_names_is_a_credential_whatever_its_value() -> None
     ]
 
 
-def test_a_named_field_typed_as_a_number_is_a_credential_without_a_value() -> None:
+def _screen_rows(report: Inventory, display: str) -> list[str]:
+    """The credential rows (indented four spaces) at this location."""
+    return [
+        line for line in inventory_lines(report, unknown_list_path=None)
+        if line.startswith("    ") and f" {display}" in line
+    ]
+
+
+def test_a_named_field_typed_as_a_number_is_a_credential_without_a_value(
+    tmp_path: Path,
+) -> None:
     text = f"users:\n- name: ci\n  user:\n    password: {fx.MARKER_DOTENV_DECIMAL}\n"
     hits = parse_location(_location("kube_config"), text)
     assert [(h.scope, h.name, h.value) for h in hits] == [("users.[ci].user", "password", None)]
+    fake = fx.build(tmp_path)
+    (fake.home / ".kube/config").write_text(text)
+    report = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key,
+    )).report
+    kube = [c for c in report.credentials if c.location.display == "~/.kube/config"]
+    assert [(c.name, c.value_state) for c in kube] == [("password", ValueState.TYPED_NUMBER)]
+    [row] = _screen_rows(report, "~/.kube/config")
+    assert row.endswith("(value typed as a number)")
 
 
 def test_undecodable_standard_file_is_still_reported(tmp_path: Path) -> None:
@@ -323,6 +349,8 @@ def test_undecodable_standard_file_is_still_reported(tmp_path: Path) -> None:
     )).report
     kube = [c for c in report.credentials if c.location.display == "~/.kube/config"]
     assert [(c.name, c.value_state.value) for c in kube] == [("config", "absent")]
+    [row] = _screen_rows(report, "~/.kube/config")
+    assert row.endswith("(whole file)")
     assert ("~/.kube/config", "undecodable") in {
         (n.display, n.reason.value) for n in report.not_scanned
     }

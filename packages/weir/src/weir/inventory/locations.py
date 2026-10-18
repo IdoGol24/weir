@@ -25,7 +25,7 @@ from typing import cast
 import msgspec
 
 from weir.inventory._scan import Hit, absolute, find_encoded, line_of
-from weir.inventory._types import Reason
+from weir.inventory._types import Reason, ValueState
 from weir.inventory.classify import name_suggests_secret, not_secret_kind, value_shape
 
 LOCATION_LIST_VERSION = 1
@@ -327,10 +327,11 @@ def _walk(
         and path[-1].lower() in location.fields
     ):
         # A named field the format typed as a number is still the credential,
-        # but its source bytes need not be `str(node)`: name it, value absent.
+        # but its source bytes need not be `str(node)`: name it, value unread.
         yield Hit(
             name=path[-1], reason=Reason.LOCATION, detectors={f"location:{location.id}"},
             value=None, spans=[], line=None, scope=".".join(path[:-1]) or None,
+            missing=ValueState.TYPED_NUMBER,
         )
 
 

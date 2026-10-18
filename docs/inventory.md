@@ -68,7 +68,7 @@ read from it.
    value twice in one file is one credential with two offsets. A scanner
    value the file it names does not hold (a gitleaks report written with
    `--redact`, or a file changed since the scan) is listed by rule and line
-   with `value_state: absent`, never fingerprinted. Dependency
+   with `value_state: not_in_file`, never fingerprinted. Dependency
    directories (`node_modules`, `.venv`, ...) are skipped whole and listed
    under `not_scanned`, as are binary, oversized (> 2 MiB) and unreadable
    files. A symlinked file is followed; a symlinked directory is listed as
@@ -236,7 +236,7 @@ A credential:
 | `source` | string | `standard_location`, `project_scan`, `environment`, `map` |
 | `reason` | string | `location`, `name`, `shape`, `scanner`, `map` |
 | `location` | object | `kind` (`file` / `launch_env`), `display`, `path` (absolute or null), `line` (1-based or null), `commit` (scanner results from git history) |
-| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (value not extracted: a whole-file credential, a scanner value its file does not hold, a standard-file field typed as a number) |
+| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_number` (a standard-file field the format typed as a number, value not read) |
 | `detectors` | array | every detector that found it, sorted: `location:<id>`, `catalog:<class>`, `assignment`, `shape:<shape>`, `launch_env`, `startup_file`, `gitleaks:<rule>`, `trufflehog:<detector>`, `map` |
 | `scope` | string or null | profile, section, host or JSON path (`default`, `github.com`, `mcpServers.acme-search.env`) |
 | `git_ignored` | boolean | a `.gitignore` rule covers the file |

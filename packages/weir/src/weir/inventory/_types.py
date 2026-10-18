@@ -50,7 +50,7 @@ class Reason(enum.StrEnum):
 
 
 class ValueState(enum.StrEnum):
-    """Whether weir holds the value in memory for this record."""
+    """Whether weir read the value for this record, and if not, why."""
 
     # The value was read and its keyed fingerprint is in the store. Nothing
     # about it is in this report.
@@ -58,11 +58,16 @@ class ValueState(enum.StrEnum):
     # The assignment is a shell expansion or command substitution
     # (`export TOKEN=$(pass show x)`): a credential by name, value unknown.
     DYNAMIC = "dynamic"
-    # A credential whose value is not extracted: a whole-file credential (a
-    # binary token database, or a file a person approved into the map with
-    # no field), a scanner result whose value its file does not hold (a
-    # redacted report), or a standard-file field the format typed as a number.
+    # A whole-file credential whose value is not extracted: a binary token
+    # database, a standard file weir cannot read or parse, or a file a person
+    # approved into the map with no field.
     ABSENT = "absent"
+    # A scanner result whose value the file it names does not hold, or that
+    # the report withheld (gitleaks `--redact`): named, never fingerprinted.
+    NOT_IN_FILE = "not_in_file"
+    # A standard-file field the format typed as a number: its source bytes
+    # need not be the number's text, so the value is not read.
+    TYPED_NUMBER = "typed_number"
 
 
 class LocationKind(enum.StrEnum):

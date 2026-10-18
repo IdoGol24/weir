@@ -13,7 +13,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
 from weir.inventory._scan import Hit
-from weir.inventory._types import Reason
+from weir.inventory._types import Reason, ValueState
 from weir.inventory.classify import EnvVerdict, classify_env, is_dynamic, not_secret_kind
 
 _NAME = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -57,7 +57,7 @@ def to_hit(judged: Judged, detector: str) -> Hit:
     return Hit(
         name=entry.name, reason=reason, detectors={detector}, value=entry.value,
         spans=[entry.span] if entry.span is not None and entry.value is not None else [],
-        line=entry.line, dynamic=entry.value is None,
+        line=entry.line, missing=ValueState.DYNAMIC,
     )
 
 

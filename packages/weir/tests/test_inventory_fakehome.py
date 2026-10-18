@@ -35,6 +35,7 @@ from weir.inventory import (
     encode_store,
     take_inventory,
 )
+from weir.inventory.text import inventory_lines
 
 
 @pytest.fixture
@@ -113,7 +114,7 @@ def test_store_holds_keyed_fingerprints_and_true_offsets(fake: fx.FakeHome) -> N
     for plant in fake.plants:
         cred = by_key[_key(plant)]
         if plant.value is None:
-            assert cred.value_state in (ValueState.DYNAMIC, ValueState.ABSENT)
+            assert cred.value_state is not ValueState.LITERAL
             continue
         assert cred.value_state is ValueState.LITERAL
         literal.add(cred.id)
@@ -342,9 +343,14 @@ def test_a_scanner_value_its_file_does_not_hold_is_never_fingerprinted(
     [plant] = [p for p in fake.plants if p.display == "./src/legacy.cfg"]
     legacy = [c for c in result.report.credentials if c.location.display == plant.display]
     assert [(c.name, c.location.line, c.value_state) for c in legacy] == [
-        (plant.name, plant.line, ValueState.ABSENT)
+        (plant.name, plant.line, ValueState.NOT_IN_FILE)
     ]
     assert legacy[0].id not in {r.credential_id for r in result.store.records}
+    [row] = [
+        line for line in inventory_lines(result.report, unknown_list_path=None)
+        if f"{plant.display}:{plant.line}" in line
+    ]
+    assert row.endswith("(value not in the file)")
 
 
 @pytest.mark.parametrize("option", ["--store", "--unknown-list", "--key"])

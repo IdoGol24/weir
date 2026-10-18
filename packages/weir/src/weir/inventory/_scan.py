@@ -14,7 +14,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from weir.inventory._types import NotScannedReason, Reason
+from weir.inventory._types import NotScannedReason, Reason, ValueState
 
 MAX_FILE_BYTES = 4 * 1024 * 1024
 _BINARY_PROBE = 8192
@@ -25,11 +25,11 @@ class Hit:
     name: str
     reason: Reason
     detectors: set[str]
-    value: str | None  # None: dynamic or absent, per `dynamic`
+    value: str | None  # None: why is `missing`
     spans: list[tuple[int, int]]  # character spans into the scanned text
     line: int | None
     scope: str | None = None
-    dynamic: bool = False
+    missing: ValueState = ValueState.ABSENT
     commit: str | None = None
     # Lower ranks name the record when hits merge: an assignment key names
     # a value better than the catalog class that also matched it.

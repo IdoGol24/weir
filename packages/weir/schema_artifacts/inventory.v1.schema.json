@@ -421,11 +421,13 @@
       "title": "Source"
     },
     "ValueState": {
-      "description": "Whether weir holds the value in memory for this record.",
+      "description": "Whether weir read the value for this record, and if not, why.",
       "enum": [
         "absent",
         "dynamic",
-        "literal"
+        "literal",
+        "not_in_file",
+        "typed_number"
       ],
       "title": "ValueState"
     }

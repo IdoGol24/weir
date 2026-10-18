@@ -289,7 +289,7 @@ def _scanner_hit(result: ScannerResult, text: str | None) -> Hit:
     return Hit(
         name=f"{result.tool}:{result.rule}", reason=Reason.SCANNER,
         detectors={f"{result.tool}:{result.rule}"}, value=value, spans=spans, line=line,
-        commit=result.commit, name_rank=35,
+        commit=result.commit, name_rank=35, missing=ValueState.NOT_IN_FILE,
     )
 
 
@@ -440,10 +440,7 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
     for f in c.found:
         name = _safe_label(f.hit.name) or "?"
         scope = _safe_label(f.hit.scope)
-        state = (
-            ValueState.LITERAL if f.hit.value is not None
-            else ValueState.DYNAMIC if f.hit.dynamic else ValueState.ABSENT
-        )
+        state = ValueState.LITERAL if f.hit.value is not None else f.hit.missing
         cred = Credential(
             id="", name=name, source=f.source, reason=f.hit.reason, location=f.location,
             value_state=state, detectors=sorted(f.hit.detectors), scope=scope,
