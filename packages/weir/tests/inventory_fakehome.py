@@ -260,7 +260,7 @@ def build(root: Path) -> FakeHome:
           JWT_S17)
     # A binary token database: whole-file, value absent.
     _write(home / ".config/gcloud/credentials.db", b"SQLite format 3\x00" + b"\x00" * 64)
-    plant(STANDARD, "~/.config/gcloud/credentials.db", "file", None)
+    plant(STANDARD, "~/.config/gcloud/credentials.db", "credentials.db", None)
     # A service-account key moved by GOOGLE_APPLICATION_CREDENTIALS (below).
     _write(home / "keys/adc-sa.json", _js({
         "type": "service_account",

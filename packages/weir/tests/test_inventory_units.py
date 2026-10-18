@@ -283,7 +283,7 @@ def test_undecodable_standard_file_is_still_reported(tmp_path: Path) -> None:
         home=fake.home, project=fake.project, key_path=fake.key,
     )).report
     kube = [c for c in report.credentials if c.location.display == "~/.kube/config"]
-    assert [(c.name, c.value_state.value) for c in kube] == [("file", "absent")]
+    assert [(c.name, c.value_state.value) for c in kube] == [("config", "absent")]
     assert ("~/.kube/config", "undecodable") in {
         (n.display, n.reason.value) for n in report.not_scanned
     }

@@ -179,7 +179,9 @@ class _Collector:
         )
 
 
-def _whole_file_hit(location_id: str, reason: Reason, name: str = "file") -> Hit:
+def _whole_file_hit(location_id: str, reason: Reason, name: str) -> Hit:
+    """A credential file as a whole, value not extracted; named after the
+    file unless a person named it in the map."""
     return Hit(
         name=name, reason=reason, detectors={location_id}, value=None, spans=[], line=None,
     )
@@ -193,9 +195,9 @@ def _standard_locations(c: _Collector, env: Mapping[str, str]) -> None:
             path = path.absolute()
             c.claimed.add(path)
             detector = f"location:{location.id}"
+            whole_file = [_whole_file_hit(detector, Reason.LOCATION, path.name)]
             if location.format == "opaque":
-                c.add(Source.STANDARD_LOCATION, [_whole_file_hit(detector, Reason.LOCATION)],
-                      path=path, text=None)
+                c.add(Source.STANDARD_LOCATION, whole_file, path=path, text=None)
                 continue
             try:
                 text = read_text(path)
@@ -203,15 +205,14 @@ def _standard_locations(c: _Collector, env: Mapping[str, str]) -> None:
                 # A credential file weir cannot read is still a credential
                 # file the agent may be able to read: report both facts.
                 c.skip(path, exc.reason)
-                c.add(Source.STANDARD_LOCATION, [_whole_file_hit(detector, Reason.LOCATION)],
-                      path=path, text=None)
+                c.add(Source.STANDARD_LOCATION, whole_file, path=path, text=None)
                 continue
             try:
                 hits = parse_location(location, text)
             except ValueError:
                 # Never surface the parser's message: it can quote the file.
                 c.skip(path, NotScannedReason.UNDECODABLE)
-                hits = [_whole_file_hit(detector, Reason.LOCATION)]
+                hits = whole_file
             c.add(Source.STANDARD_LOCATION, hits, path=path, text=text)
 
 

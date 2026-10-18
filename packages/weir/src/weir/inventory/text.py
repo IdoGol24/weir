@@ -24,19 +24,28 @@ _SOURCE_TITLES = {
     Source.ENVIRONMENT: "launch environment and shell startup files",
     Source.MAP: "approved map (.weir/reach.yml)",
 }
+# Why each credential counts, as a short code plus the legend printed under
+# the list.
 _REASONS = {
-    Reason.LOCATION: "credential field of a standard file",
-    Reason.NAME: "name suggests a secret",
-    Reason.SHAPE: "value has a credential shape",
-    Reason.SCANNER: "scanner result",
-    Reason.MAP: "approved in the map",
+    Reason.LOCATION: "field",
+    Reason.NAME: "name",
+    Reason.SHAPE: "shape",
+    Reason.SCANNER: "scanner",
+    Reason.MAP: "map",
+}
+_LEGEND = {
+    Reason.LOCATION: "a credential field of a standard credential file",
+    Reason.NAME: "the field or variable name suggests a secret",
+    Reason.SHAPE: "the value has a credential shape",
+    Reason.SCANNER: "an imported gitleaks or trufflehog result",
+    Reason.MAP: "approved in .weir/reach.yml",
 }
 _STATES = {
-    ValueState.LITERAL: "",
-    ValueState.DYNAMIC: "; value set by a shell expansion",
-    ValueState.ABSENT: "; whole file",
+    ValueState.LITERAL: None,
+    ValueState.DYNAMIC: "value from a shell expansion",
+    ValueState.ABSENT: "whole file",
 }
-_MAX_COLUMN = 48
+_MAX_COLUMN = 60
 
 
 def where(location_display: str, line: int | None, commit: str | None = None) -> str:
@@ -48,9 +57,9 @@ def _label(c: Credential) -> str:
     return f"{c.name} [{c.scope}]" if c.scope else c.name
 
 
-def _classification(c: Credential) -> str:
-    text = f"secret: {_REASONS[c.reason]}{_STATES[c.value_state]}"
-    return text + ", git-ignored" if c.git_ignored else text
+def _notes(c: Credential) -> str:
+    notes = [n for n in (_STATES[c.value_state], "git-ignored" if c.git_ignored else None) if n]
+    return f"  ({', '.join(notes)})" if notes else ""
 
 
 def unknown_list_lines(names: list[EnvVarName]) -> list[str]:
@@ -81,19 +90,26 @@ def inventory_lines(report: Inventory, *, unknown_list_path: str | None) -> list
             for c in report.credentials]
     name_w = min(max((len(r[1]) for r in rows), default=0), _MAX_COLUMN)
     where_w = min(max((len(r[2]) for r in rows), default=0), _MAX_COLUMN)
+    why_w = max(len(code) for code in _REASONS.values())
     for source in Source:
         group = [r for r in rows if r[0].source is source]
         lines.append(f"  {_SOURCE_TITLES[source]}: {len(group)}")
         for cred, label, loc in group:
+            why = _REASONS[cred.reason].ljust(why_w)
             lines.append(
-                f"    {label.ljust(name_w)}  {loc.ljust(where_w)}  {_classification(cred)}"
+                f"    {label.ljust(name_w)}  {loc.ljust(where_w)}  {why}{_notes(cred)}".rstrip()
             )
+    if rows:
+        lines.append("")
+        for i, (reason, meaning) in enumerate(_LEGEND.items()):
+            lead = "why" if i == 0 else ""
+            lines.append(f"  {lead:<5}{_REASONS[reason].ljust(why_w)}  {meaning}")
 
     if report.git_ignored:
         lines += [
             "",
-            f"git-ignored, not covered: {plural(len(report.git_ignored), 'file')}"
-            " - hidden from the Grep tool's directory search;"
+            f"git-ignored, so not covered: {plural(len(report.git_ignored), 'file')}",
+            "  hidden from the Grep tool's directory search;"
             " Read, cat and grep -r still reach them",
         ]
         lines += [f"  {g.display}" for g in report.git_ignored]
@@ -109,5 +125,9 @@ def inventory_lines(report: Inventory, *, unknown_list_path: str | None) -> list
 
     if report.not_scanned:
         lines += ["", f"not scanned: {counts.not_scanned}"]
-        lines += [f"  {n.display}  {n.reason.value.replace('_', ' ')}" for n in report.not_scanned]
+        width = min(max(len(n.display) for n in report.not_scanned), _MAX_COLUMN)
+        lines += [
+            f"  {n.display.ljust(width)}  {n.reason.value.replace('_', ' ')}"
+            for n in report.not_scanned
+        ]
     return lines
