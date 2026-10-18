@@ -40,7 +40,8 @@ weir inventory --home DIR [--project DIR] [--env-file FILE | --process-env]
 Exit codes: `0` listed (finding credentials is not a failure); `1` only with
 `--strict` and at least one unknown variable; `2` an input cannot be used
 (missing home or project, unreadable env file, malformed scanner report,
-invalid map, unusable key). An error message names the input, never content
+invalid map, unusable key) or an output cannot be written (the key, the
+unknown list, the store). An error message names the input, never content
 read from it.
 
 ## The four sources
@@ -64,7 +65,10 @@ read from it.
    `"key": "value"` whose key name suggests a secret, and standalone shapes
    (JWT, URL with a password, PEM private key). Hits covering the same bytes
    merge into one credential whose `detectors` lists every finder; the same
-   value twice in one file is one credential with two offsets. Dependency
+   value twice in one file is one credential with two offsets. A scanner
+   value the file it names does not hold (a gitleaks report written with
+   `--redact`, or a file changed since the scan) is listed by rule and line
+   with `value_state: absent`, never fingerprinted. Dependency
    directories (`node_modules`, `.venv`, ...) are skipped whole and listed
    under `not_scanned`, as are binary, oversized (> 2 MiB) and unreadable
    files. A symlinked file is followed; a symlinked directory is listed as
@@ -101,8 +105,10 @@ read from it.
 
 ## Classification
 
-Environment variables (and the fields of standard files) are judged by
-local, deterministic checks, in this order:
+Environment variables (and the fields of standard files that the location
+entry does not name) are judged by local, deterministic checks, in this
+order. A field the entry names (`aws_secret_access_key`, `_authToken`) is the
+credential whatever its value looks like.
 
 1. **Shape**: the value has a credential shape (a catalog key shape such as
    `ghp_...` or `AKIA...` that clears its eligibility pattern, a JWT, a URL
@@ -112,8 +118,9 @@ local, deterministic checks, in this order:
    letter, `$HOME/...`, or a `PATH`-style list of these) or a plain hostname
    (dotted name with an alphabetic top label, `localhost`, IPv4, optional
    port). A path segment of 20+ characters mixing upper case, lower case
-   and digits with no separator is key material, not a directory, so an AWS
-   secret key starting with `/` is not waved through.
+   and digits with no separator is key material, not a directory, and so is
+   a path whose segments read that way once the separators are removed, so
+   an AWS secret key starting with `/` is not waved through.
 3. **Name**: the name suggests a secret -> secret, reason `name`. A name is
    split into words (`ACME_API_KEY`, `clientSecret`, `_authToken`); it
    suggests a secret when a word is one of SECRET, TOKEN, PASSWORD, PASSWD,
@@ -125,8 +132,9 @@ local, deterministic checks, in this order:
    only) in the unknown-list file and in the JSON report, never a failure
    unless `--strict`, and markable as fine in the map.
 
-Project-file assignments use the name rule with a minimum value length of 8
-(the catalog's `credential_field` floor) and reject placeholders
+Project-file assignments use the same not-a-secret check (step 2) and name
+rule (step 3) with a minimum value length of 8 (the catalog's
+`credential_field` floor), and reject placeholders
 (`${VAR}`, `<your-token>`, `{{ x }}`, `***`, `changeme`, ...) and, in source
 code, unquoted identifiers and calls (`password = get_password()`).
 
@@ -138,7 +146,9 @@ printable line, and one that itself has a credential shape is replaced with
 
 Ignoring a file is not coverage. A project credential in a file a
 `.gitignore` rule covers (global excludes, `.git/info/exclude`, every
-`.gitignore` from the root down, gitignore(5) semantics, computed locally)
+`.gitignore` from the repository root down, including those above a project
+that is a subdirectory of its repository, gitignore(5) semantics, computed
+locally)
 carries `git_ignored: true`, and the file is listed in `git_ignored` with
 its per-route effect:
 
@@ -159,10 +169,10 @@ its per-route effect:
   offsets of each occurrence. Never a value, a fragment or an unkeyed hash.
   The same key and value always give the same fingerprint, so a changed
   fingerprint means a rotated value.
-- The values themselves exist only in process memory, in
-  `InventoryResult.values` (`KnownValues`), for an in-process consumer such
-  as the redaction hook. Its repr is a count, it refuses to pickle, and it is
-  not a msgspec struct, so it cannot be encoded.
+- The values themselves exist only in process memory, while the run
+  fingerprints them. Nothing returns them: the Python API gives the report
+  and the store. An accessor for an in-process consumer arrives with the
+  redaction hook task that needs it.
 
 ## Python API
 
@@ -180,7 +190,6 @@ result = take_inventory(InventoryInputs(
 ))
 result.report   # weir.inventory.Inventory: value-free, JSON via encode_report()
 result.store    # weir.inventory.Store: keyed fingerprints plus offsets
-result.values   # weir.inventory.KnownValues: id -> value, in memory only
 ```
 
 `take_inventory` raises `InventoryInputError` for an unusable input. It is
@@ -219,12 +228,12 @@ A credential:
 
 | field | type | meaning |
 | --- | --- | --- |
-| `id` | string | 16 base32 characters of a digest over the record's identity (source, displayed location, line, name, scope, commit), never over the value. Joins the record to the store and to `KnownValues`. |
+| `id` | string | 16 base32 characters of a digest over the record's identity (source, displayed location, line, name, scope, commit), never over the value. Joins the record to the store. |
 | `name` | string | field or variable name (`aws_secret_access_key`, `ACME_API_KEY`), catalog class (`github_token`), shape (`jwt`) or scanner rule (`gitleaks:generic-api-key`) |
 | `source` | string | `standard_location`, `project_scan`, `environment`, `map` |
 | `reason` | string | `location`, `name`, `shape`, `scanner`, `map` |
 | `location` | object | `kind` (`file` / `launch_env`), `display`, `path` (absolute or null), `line` (1-based or null), `commit` (scanner results from git history) |
-| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted) |
+| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (value not extracted: a whole-file credential, a scanner value its file does not hold, a standard-file field typed as a number) |
 | `detectors` | array | every detector that found it, sorted: `location:<id>`, `catalog:<class>`, `assignment`, `shape:<shape>`, `launch_env`, `startup_file`, `gitleaks:<rule>`, `trufflehog:<detector>`, `map` |
 | `scope` | string or null | profile, section, host or JSON path (`default`, `github.com`, `mcpServers.acme-search.env`) |
 | `git_ignored` | boolean | a `.gitignore` rule covers the file |

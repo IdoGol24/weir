@@ -98,40 +98,39 @@ def test_every_source_contributes(fake: fx.FakeHome) -> None:
         assert expected and by_source[source] == expected, source
 
 
-def test_values_are_held_in_memory_and_match_what_was_planted(fake: fx.FakeHome) -> None:
+def _keyed(value: str) -> str:
+    return hmac.new(bytes.fromhex(fx.TEST_KEY_HEX), value.encode(), hashlib.sha256).hexdigest()
+
+
+def test_store_holds_keyed_fingerprints_and_true_offsets(fake: fx.FakeHome) -> None:
+    """Every planted literal value, and nothing else, is in the store as its
+    keyed fingerprint at offsets that hold it. Comparisons are booleans, so
+    a failure prints the plant's key and never a value."""
     result = _run(fake)
     by_key = {_key(c): c for c in result.report.credentials}
+    records = {r.credential_id: r for r in result.store.records}
+    literal: set[str] = set()
     for plant in fake.plants:
         cred = by_key[_key(plant)]
         if plant.value is None:
             assert cred.value_state in (ValueState.DYNAMIC, ValueState.ABSENT)
-            assert cred.id not in result.values
-        else:
-            assert cred.value_state is ValueState.LITERAL
-            # A bool, so a failure prints the plant's key and never a value.
-            same = result.values.get(cred.id) == plant.value
-            assert same, f"in-memory value differs for {_key(plant)}"
-
-
-def test_store_holds_keyed_fingerprints_and_true_offsets(fake: fx.FakeHome) -> None:
-    result = _run(fake)
-    key = bytes.fromhex(fx.TEST_KEY_HEX)
-    records = {r.credential_id: r for r in result.store.records}
-    assert set(records) == {cid for cid, _ in result.values.items()}
-    for cid, value in result.values.items():
-        record = records[cid]
-        keyed = record.fingerprint == hmac.new(key, value.encode(), hashlib.sha256).hexdigest()
-        assert keyed, f"fingerprint is not HMAC-SHA256 under the key for {cid}"
+            continue
+        assert cred.value_state is ValueState.LITERAL
+        literal.add(cred.id)
+        record = records[cred.id]
+        keyed = record.fingerprint == _keyed(plant.value)
+        assert keyed, f"fingerprint is not HMAC-SHA256 of the planted value for {_key(plant)}"
         # Keyed, not a plain hash: an unkeyed sha256 would be a dictionary target.
-        plain = record.fingerprint == hashlib.sha256(value.encode()).hexdigest()
+        plain = record.fingerprint == hashlib.sha256(plant.value.encode()).hexdigest()
         assert not plain
         if record.path is None or not record.offsets:
             continue
         data = Path(record.path).read_bytes()
-        forms = {value.encode(), json.dumps(value)[1:-1].encode()}
+        forms = {plant.value.encode(), json.dumps(plant.value)[1:-1].encode()}
         for start, end in record.offsets:
             located = data[start:end] in forms
-            assert located, f"offset {start}:{end} of {cid} does not hold its value"
+            assert located, f"offset {start}:{end} of {_key(plant)} does not hold its value"
+    assert set(records) == literal
 
 
 def test_env_unknown_fine_ignored_and_not_scanned(fake: fx.FakeHome) -> None:
@@ -282,7 +281,94 @@ def test_api_process_env_mapping(fake: fx.FakeHome) -> None:
     launch = [c for c in result.report.credentials if c.location.display == "launch env"]
     assert [c.name for c in launch] == ["ACME_DEPLOY_TOKEN"]
     assert launch[0].location.path is None
-    assert result.values.get(launch[0].id) == fx.MARKER_USERMCP
+    [record] = [r for r in result.store.records if r.credential_id == launch[0].id]
+    keyed = record.fingerprint == _keyed(fx.MARKER_USERMCP)
+    assert keyed and record.path is None and record.offsets == []
+
+
+def test_paths_named_through_dot_dot_give_the_same_inventory(fake: fx.FakeHome) -> None:
+    """The gitleaks report names src/app.py by its normalized absolute path:
+    it merges with weir's own hit only if the walk normalizes the project."""
+    dotted = take_inventory(_inputs(
+        fake, home=fake.home / "work" / "..", project=fake.project / ".." / "proj",
+        env_file=fake.home / ".." / fake.env_file.name,
+    ))
+    first = _run(fake)
+    assert encode_report(dotted.report) == encode_report(first.report)
+    assert encode_store(dotted.store) == encode_store(first.store)
+
+
+def _project_plants(fake: fx.FakeHome) -> set[str]:
+    """Displays of the plants in project files that exist."""
+    return {
+        p.display for p in fake.plants
+        if p.display.startswith("./") and (fake.project / p.display[2:]).is_file()
+    }
+
+
+def test_ignore_rules_above_a_project_inside_a_repository_apply(fake: fx.FakeHome) -> None:
+    repo = fake.project.parent
+    (repo / ".git/info").mkdir(parents=True)
+    (repo / ".git/info/exclude").write_text("/proj/src/vault.go\n")
+    (repo / ".gitignore").write_text("logs/\n")
+    above = {"./src/vault.go", "./logs/session.json"}
+    assert above <= _project_plants(fake) and not above & set(fake.git_ignored)
+    report = _run(fake).report
+    assert [g.display for g in report.git_ignored] == sorted({*fake.git_ignored, *above})
+
+
+def test_a_project_in_an_ignored_directory_is_wholly_ignored(fake: fx.FakeHome) -> None:
+    repo = fake.project.parent
+    (repo / ".git").mkdir()
+    (repo / ".gitignore").write_text(f"{fake.project.name}/\n")
+    report = _run(fake).report
+    assert {g.display for g in report.git_ignored} == _project_plants(fake)
+
+
+@pytest.mark.parametrize("form", ["redact", "redact-percent", "not-in-the-file"])
+def test_a_scanner_value_its_file_does_not_hold_is_never_fingerprinted(
+    fake: fx.FakeHome, tmp_path: Path, form: str
+) -> None:
+    findings = json.loads(fake.gitleaks.read_text())
+    for finding in findings:
+        finding["Secret"] = {
+            "redact": "REDACTED", "redact-percent": finding["Secret"][:4] + "...",
+            "not-in-the-file": fx.DECOY_D1,
+        }[form]
+        finding["Match"] = "REDACTED"
+    report_path = tmp_path / "gitleaks-redacted.json"
+    report_path.write_text(json.dumps(findings))
+    result = take_inventory(_inputs(fake, gitleaks_reports=[report_path]))
+    [plant] = [p for p in fake.plants if p.display == "./src/legacy.cfg"]
+    legacy = [c for c in result.report.credentials if c.location.display == plant.display]
+    assert [(c.name, c.location.line, c.value_state) for c in legacy] == [
+        (plant.name, plant.line, ValueState.ABSENT)
+    ]
+    assert legacy[0].id not in {r.credential_id for r in result.store.records}
+
+
+@pytest.mark.parametrize("option", ["--store", "--unknown-list", "--key"])
+def test_an_output_that_cannot_be_written_exits_2(
+    fake: fx.FakeHome, tmp_path: Path, option: str
+) -> None:
+    if option == "--key":
+        if sys.platform == "win32":
+            pytest.skip("symlinks need privileges on Windows")
+        # Absent, so the key is created; its directory cannot be.
+        blocker = tmp_path / "dangling"
+        blocker.symlink_to(tmp_path / "absent")
+    else:
+        blocker = tmp_path / "a-file"
+        blocker.write_text("")
+    target = blocker / "out"
+    args = [
+        "inventory", "--home", str(fake.home), "--project", str(fake.project),
+        "--key", str(fake.key), option, str(target),
+    ]
+    result = CliRunner().invoke(main, args)
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "error: cannot" in result.stderr and str(target) in result.stderr
 
 
 # --- mutations: each comparison above must notice a broken source ----------

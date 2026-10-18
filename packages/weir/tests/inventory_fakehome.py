@@ -119,6 +119,12 @@ MARKER_USERMCP = "FAKE-EXPOSURE-usermcp-163f9cb0dcca"
 
 # Encoded or relocated copies of the values above.
 AWS_SECRET_S02_ROTATED = AWS_SECRET_S02[-4:] + AWS_SECRET_S02[:-4]  # starts with "/"
+# The rotated key with two more "/" inserted: no segment reaches 20 characters.
+AWS_SECRET_S02_SPLIT = "/".join((
+    AWS_SECRET_S02_ROTATED[:14], AWS_SECRET_S02_ROTATED[14:28], AWS_SECRET_S02_ROTATED[28:],
+))
+# The dotenv marker's hex tail in decimal: a password that reads as a number.
+MARKER_DOTENV_DECIMAL = str(int(MARKER_DOTENV.rsplit("-", 1)[1], 16))
 DOCKER_AUTH = base64.b64encode(f"ci-bot:{MARKER_AWSCREDS}".encode()).decode()
 SSH_KEY = (
     "-----BEGIN OPENSSH PRIVATE KEY-----\n"
@@ -145,8 +151,9 @@ ALL_VALUES: tuple[str, ...] = tuple(sorted({
     DECOY_D1, DECOY_D2, DECOY_D3, DECOY_D4, GITHUB_S04, GITHUB_S05, GITHUB_S06, GITHUB_S19,
     OPENAI_S07, OPENAI_S08, OPENAI_S09, ANTHROPIC_S10, ANTHROPIC_S11, ANTHROPIC_S12,
     JWT_S16, JWT_S17, JWT_S18, MARKER_DOTENV, MARKER_DOTENVLOCAL, MARKER_PRODYAML,
-    MARKER_PROJMCP, MARKER_AWSCREDS, MARKER_USERMCP, AWS_SECRET_S02_ROTATED, DOCKER_AUTH,
-    SSH_KEY, SA_PRIVATE_KEY, SA_PRIVATE_KEY_ID, UNKNOWN_EDITOR_THEME,
+    MARKER_PROJMCP, MARKER_AWSCREDS, MARKER_USERMCP, AWS_SECRET_S02_ROTATED,
+    AWS_SECRET_S02_SPLIT, MARKER_DOTENV_DECIMAL, DOCKER_AUTH, SSH_KEY, SA_PRIVATE_KEY,
+    SA_PRIVATE_KEY_ID, UNKNOWN_EDITOR_THEME,
 }))
 
 # A fixed fingerprint key, so a test run's store is byte-identical across

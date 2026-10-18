@@ -11,7 +11,10 @@ directory, `**` across directories, last match wins, deeper files override
 shallower ones, and a file under an ignored directory cannot be re-included.
 Sources, lowest precedence first: the global excludes file (core.excludesFile
 in <home>/.gitconfig, else <home>/.config/git/ignore), the repository's
-.git/info/exclude, then every .gitignore from the project root down.
+.git/info/exclude, then every .gitignore from the repository root down. The
+repository root is the nearest directory at or above the project holding
+`.git`, so a project that is a subdirectory of a repository gets the rules
+above it too, and is wholly ignored when a directory above it is.
 """
 
 from __future__ import annotations
@@ -99,12 +102,21 @@ def parse_rules(text: str) -> list[_Rule]:
 
 @dataclass
 class GitIgnore:
-    """Rules keyed by the directory (project-relative, "" for the root) of
-    the file they came from, kept in precedence order."""
+    """Rules keyed by the directory (relative to the repository root, "" for
+    the root) of the file they came from, kept in precedence order. `prefix`
+    is the project's path from the repository root ("" when they are the
+    same); `add` and `ignored` take project-relative paths."""
 
+    prefix: str = ""
     _layers: list[tuple[str, list[_Rule]]] = field(default_factory=list[tuple[str, list[_Rule]]])
 
+    def _rooted(self, rel: str) -> str:
+        return "/".join(part for part in (self.prefix, rel) if part)
+
     def add(self, base: str, text: str) -> None:
+        self._add_rooted(self._rooted(base), text)
+
+    def _add_rooted(self, base: str, text: str) -> None:
         rules = parse_rules(text)
         if rules:
             self._layers.append((base, rules))
@@ -114,6 +126,9 @@ class GitIgnore:
         rules that apply to it? Does NOT look at its parents: the walker
         stops descending into an ignored directory and marks everything
         below it ignored."""
+        return self._ignored_rooted(self._rooted(rel), is_dir=is_dir)
+
+    def _ignored_rooted(self, rel: str, *, is_dir: bool) -> bool:
         verdict = False
         for base, rules in self._layers:
             if base:
@@ -150,14 +165,27 @@ def _excludes_file(home: Path) -> Path:
     return home / ".config" / "git" / "ignore"
 
 
-def base_rules(home: Path, project: Path) -> GitIgnore:
-    ignore = GitIgnore()
-    for path in (_excludes_file(home), project / ".git" / "info" / "exclude"):
-        try:
-            ignore.add("", path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            continue
-    return ignore
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def base_rules(home: Path, project: Path) -> tuple[GitIgnore, bool]:
+    """The rules that apply before the project's own .gitignore files, and
+    whether the project itself sits in an ignored directory."""
+    root = next((d for d in (project, *project.parents) if (d / ".git").exists()), project)
+    parts = project.relative_to(root).parts
+    ignore = GitIgnore(prefix="/".join(parts))
+    ignore._add_rooted("", _read(_excludes_file(home)))
+    ignore._add_rooted("", _read(root / ".git" / "info" / "exclude"))
+    for depth in range(len(parts)):
+        above = parts[:depth]
+        ignore._add_rooted("/".join(above), _read(root.joinpath(*above, ".gitignore")))
+        if ignore._ignored_rooted("/".join(parts[:depth + 1]), is_dir=True):
+            return ignore, True
+    return ignore, False
 
 
 # Claude Code tools reference: "Grep respects .gitignore, so gitignored files

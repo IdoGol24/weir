@@ -2,15 +2,16 @@
 the internal hit record that still carries a value.
 
 `Hit` is the one place a value travels between a detector and the core. It
-is internal: the core turns it into a value-free `Credential`, a
-`StoredRecord` (keyed fingerprint plus offsets) and a `KnownValues` entry,
-and nothing else ever sees it.
+is internal: the core turns it into a value-free `Credential` and a
+`StoredRecord` (keyed fingerprint plus offsets), and nothing else ever sees
+it.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from weir.inventory._types import NotScannedReason, Reason
@@ -33,7 +34,6 @@ class Hit:
     # Lower ranks name the record when hits merge: an assignment key names
     # a value better than the catalog class that also matched it.
     name_rank: int = 50
-    extra_names: list[str] = field(default_factory=list[str])
 
 
 class Unreadable(Exception):
@@ -92,6 +92,12 @@ def find_encoded(text: str, value: str) -> list[tuple[int, int]]:
         return spans
     escaped = json.dumps(value)[1:-1]
     return find_all(text, escaped) if escaped != value else []
+
+
+def absolute(path: Path) -> Path:
+    """Absolute and lexically normalized (`a/../b` is `b`), so one file has
+    one key however an input named it."""
+    return Path(os.path.normpath(path.absolute()))
 
 
 def posix(path: Path) -> str:

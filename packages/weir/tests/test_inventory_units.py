@@ -5,14 +5,13 @@ inventory test file to that)."""
 from __future__ import annotations
 
 import json
-import pickle
 import sys
 from pathlib import Path
 
 import inventory_fakehome as fx
 import pytest
 
-from weir.inventory import InventoryInputError, InventoryInputs, KnownValues, take_inventory
+from weir.inventory import InventoryInputError, InventoryInputs, take_inventory
 from weir.inventory.classify import (
     EnvVerdict,
     classify_env,
@@ -60,19 +59,23 @@ def test_values_that_are_not_secrets(value: str, kind: str) -> None:
     assert not_secret_kind(value) == kind
 
 
-def test_a_key_that_starts_with_a_slash_is_not_a_path() -> None:
-    assert fx.AWS_SECRET_S02_ROTATED.startswith("/")
-    assert not is_path(fx.AWS_SECRET_S02_ROTATED)
-    assert classify_env("AWS_SECRET_ACCESS_KEY", fx.AWS_SECRET_S02_ROTATED) == (
-        EnvVerdict.SECRET, "name"
-    )
+@pytest.mark.parametrize(
+    "value", [fx.AWS_SECRET_S02_ROTATED, fx.AWS_SECRET_S02_SPLIT], ids=["rotated", "split"]
+)
+def test_a_key_that_starts_with_a_slash_is_not_a_path(value: str) -> None:
+    assert value.startswith("/")
+    assert not is_path(value)
+    assert classify_env("AWS_SECRET_ACCESS_KEY", value) == (EnvVerdict.SECRET, "name")
 
 
+# Ids name the shape, never the value: a test id lands in logs and reports.
 @pytest.mark.parametrize(("value", "shape"), [
-    (fx.GITHUB_S04, "github_token"), (fx.OPENAI_S07, "openai_api_key"),
-    (fx.ANTHROPIC_S10, "anthropic_api_key"), (fx.AWS_ID_S01, "aws_access_key_id"),
-    (fx.JWT_S16, "jwt"), (fx.DATABASE_URL_S13, "url_with_password"),
-    (fx.SSH_KEY, "private_key"),
+    pytest.param(value, shape, id=shape) for value, shape in [
+        (fx.GITHUB_S04, "github_token"), (fx.OPENAI_S07, "openai_api_key"),
+        (fx.ANTHROPIC_S10, "anthropic_api_key"), (fx.AWS_ID_S01, "aws_access_key_id"),
+        (fx.JWT_S16, "jwt"), (fx.DATABASE_URL_S13, "url_with_password"),
+        (fx.SSH_KEY, "private_key"),
+    ]
 ])
 def test_value_shapes(value: str, shape: str) -> None:
     assert value_shape(value) == shape
@@ -283,6 +286,23 @@ def test_pgpass_and_cargo_and_token_file() -> None:
     assert [h.line for h in token] == [2]
 
 
+def test_a_field_the_location_names_is_a_credential_whatever_its_value() -> None:
+    value = fx.MARKER_DOTENV_DECIMAL
+    assert not_secret_kind(value) == "number"
+    hits = parse_location(
+        _location("aws_credentials"), f"[default]\naws_secret_access_key = {value}\n"
+    )
+    assert [(h.scope, h.name, h.value == value) for h in hits] == [
+        ("default", "aws_secret_access_key", True)
+    ]
+
+
+def test_a_named_field_typed_as_a_number_is_a_credential_without_a_value() -> None:
+    text = f"users:\n- name: ci\n  user:\n    password: {fx.MARKER_DOTENV_DECIMAL}\n"
+    hits = parse_location(_location("kube_config"), text)
+    assert [(h.scope, h.name, h.value) for h in hits] == [("users.[ci].user", "password", None)]
+
+
 def test_undecodable_standard_file_is_still_reported(tmp_path: Path) -> None:
     fake = fx.build(tmp_path)
     (fake.home / ".kube/config").write_text("users: [unclosed\n  - token: x\n")
@@ -414,15 +434,6 @@ def test_a_bad_key_is_an_error_and_never_replaced(tmp_path: Path, content: str) 
     with pytest.raises(FingerprintKeyError):
         load_or_create_key(path)
     assert path.read_text() == content
-
-
-def test_known_values_cannot_be_printed_or_pickled() -> None:
-    values = KnownValues({"id1": fx.MARKER_DOTENV})
-    assert repr(values) == str(values) == "<KnownValues: 1 values>"
-    with pytest.raises(TypeError):
-        pickle.dumps(values)
-    same = values.get("id1") == fx.MARKER_DOTENV
-    assert same and "id1" in values and len(values) == 1
 
 
 def test_inputs_must_exist(tmp_path: Path) -> None:

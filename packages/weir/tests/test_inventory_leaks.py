@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import base64
 import json
-import pickle
 import subprocess
 import sys
 import urllib.parse
@@ -97,7 +96,9 @@ def _assert_clean(blobs: dict[str, str | bytes]) -> None:
 # --- positive controls: the scanner must fire ---------------------------------
 
 
-@pytest.mark.parametrize("value", [fx.DECOY_D2, fx.AWS_SECRET_S01, fx.JWT_S16])
+@pytest.mark.parametrize(
+    "value", [fx.DECOY_D2, fx.AWS_SECRET_S01, fx.JWT_S16], ids=["decoy", "aws", "jwt"]
+)
 def test_control_a_six_character_fragment_is_caught(value: str) -> None:
     middle = len(value) // 2
     assert leaks("control", f"safe text {value[middle:middle + 6]} safe text")
@@ -177,10 +178,17 @@ def test_nothing_the_inventory_produces_holds_a_value(tmp_path: Path) -> None:
 
     reach = fake.project / ".weir/reach.yml"
     good_map = reach.read_text()
-    reach.write_text(good_map + f"oops: {fx.ANTHROPIC_S10}\n")
-    result = CliRunner().invoke(main, with_env)
-    assert result.exit_code == 2
-    blobs["error:map:stderr"] = result.stderr
+    bad_maps = {
+        "map-value": f"oops: {fx.ANTHROPIC_S10}\n",
+        # PyYAML quotes the offending line; msgspec quotes an unknown key.
+        "map-yaml": f"  field: _authToken: {fx.ANTHROPIC_S10}\n",
+        "map-key": f"{fx.ANTHROPIC_S10}: x\n",
+    }
+    for label, extra in bad_maps.items():
+        reach.write_text(good_map + extra)
+        result = CliRunner().invoke(main, with_env)
+        assert result.exit_code == 2, label
+        blobs[f"error:{label}:stderr"] = result.stderr
     reach.write_text(good_map)
 
     # The API surface: reprs, encodings, exception text.
@@ -193,10 +201,6 @@ def test_nothing_the_inventory_produces_holds_a_value(tmp_path: Path) -> None:
     blobs["api:store-json"] = encode_store(api.store)
     blobs["api:report-repr"] = repr(api.report)
     blobs["api:store-repr"] = repr(api.store)
-    blobs["api:values-repr"] = repr(api.values) + str(api.values)
-    with pytest.raises(TypeError) as refused:
-        pickle.dumps(api.values)
-    blobs["api:pickle-error"] = str(refused.value)
     with pytest.raises(InventoryInputError) as bad:
         take_inventory(InventoryInputs(
             home=fake.home, project=fake.project, key_path=fake.key,

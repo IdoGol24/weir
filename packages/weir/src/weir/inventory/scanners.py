@@ -9,11 +9,12 @@ the entry index, never an entry's content.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import msgspec
+
+from weir.inventory._scan import absolute
 
 
 class ScannerReportError(Exception):
@@ -35,7 +36,6 @@ class _GitleaksFinding(msgspec.Struct, frozen=True):
     File: str = ""
     StartLine: int = 0
     Secret: str = ""
-    Match: str = ""
     Commit: str = ""
 
 
@@ -65,7 +65,15 @@ def _resolve(raw: str, project: Path) -> Path | None:
     if not raw:
         return None
     path = Path(raw)
-    return Path(os.path.normpath(path if path.is_absolute() else project / path))
+    return absolute(path if path.is_absolute() else project / path)
+
+
+def _gitleaks_secret(secret: str) -> str | None:
+    """`--redact` writes `REDACTED`, `--redact=N` a truncated `prefix...`:
+    neither is the credential's value."""
+    if not secret or secret == "REDACTED" or secret.endswith("..."):
+        return None
+    return secret
 
 
 def _read(report: Path) -> bytes:
@@ -85,7 +93,7 @@ def load_gitleaks(report: Path, project: Path) -> list[ScannerResult]:
     return [
         ScannerResult(
             tool="gitleaks", rule=f.RuleID, path=_resolve(f.File, project),
-            line=f.StartLine or None, commit=f.Commit or None, value=(f.Secret or f.Match) or None,
+            line=f.StartLine or None, commit=f.Commit or None, value=_gitleaks_secret(f.Secret),
         )
         for f in findings
     ]

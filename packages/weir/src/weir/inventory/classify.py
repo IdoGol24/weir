@@ -14,7 +14,8 @@ hostname is not a secret; anything else is unknown. Precedence, in order:
 
 Step 2 before step 3 is deliberate: `GOOGLE_APPLICATION_CREDENTIALS` holds a
 path and `TOKEN_TTL` a number, and neither value is the credential. The path
-check refuses a value with a high-entropy segment, so an AWS secret key that
+check refuses a value with a high-entropy segment, or whose segments read as
+key material once the separators are removed, so an AWS secret key that
 happens to start with "/" is not waved through as a path.
 """
 
@@ -132,6 +133,8 @@ def _is_single_path(value: str) -> bool:
     if not _PATH_ANCHOR.match(value):
         return False
     segments = re.split(r"[\\/]", re.sub(r"^[A-Za-z]:", "", value))
+    if _high_entropy("".join(segments)):
+        return False
     return all(
         _PATH_SEGMENT.fullmatch(seg) is not None and not _high_entropy(seg) for seg in segments
     )

@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from weir.catalog import DEFAULT_CATALOG, Catalog, is_verbatim_eligible
-from weir.inventory._scan import Hit, Unreadable, line_of, read_text
+from weir.inventory._scan import Hit, line_of
 from weir.inventory._types import NotScannedReason, Reason
 from weir.inventory.classify import (
     is_dynamic,
@@ -74,11 +74,11 @@ class Skipped:
 
 def walk_project(home: Path, project: Path) -> tuple[list[ProjectFile], list[Skipped]]:
     """Every regular file under the project, sorted, with its gitignore state."""
-    ignore = base_rules(home, project)
+    ignore, project_ignored = base_rules(home, project)
     files: list[ProjectFile] = []
     skipped: list[Skipped] = []
     # (directory, its project-relative path, whether it is ignored)
-    stack: list[tuple[Path, str, bool]] = [(project, "", False)]
+    stack: list[tuple[Path, str, bool]] = [(project, "", project_ignored)]
     while stack:
         directory, rel_dir, dir_ignored = stack.pop()
         if not dir_ignored:
@@ -318,21 +318,13 @@ def scan_text(text: str, *, rel: str, catalog: Catalog = DEFAULT_CATALOG) -> lis
     return merge_hits(hits)
 
 
-def scan_file(file: ProjectFile) -> list[Hit]:
-    """Raises Unreadable."""
-    text = read_text(file.path, max_bytes=MAX_PROJECT_FILE_BYTES)
-    return scan_text(text, rel=file.rel)
-
-
 __all__ = [
     "MAX_PROJECT_FILE_BYTES",
     "VENDORED_DIRS",
     "assignment_values",
     "ProjectFile",
     "Skipped",
-    "Unreadable",
     "merge_hits",
-    "scan_file",
     "scan_text",
     "walk_project",
 ]

@@ -16,12 +16,16 @@ typo never reads as an approval.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import msgspec
 
 MAP_RELATIVE_PATH = Path(".weir") / "reach.yml"
 MAP_VERSION = 1
+# msgspec's `- at `$.credentials[0]`` suffix: built from this schema's own
+# field names and list indices (it has no mappings), never from the map.
+_SCHEMA_PATH = re.compile(r" - at `(\$[^`]*)`$")
 
 
 class MapError(Exception):
@@ -54,12 +58,18 @@ def load_map(project: Path) -> tuple[Path, ReachMap] | None:
         raise MapError(f"cannot read {path}: {exc.strerror}") from exc
     if not data.strip():
         return path, ReachMap(version=MAP_VERSION)
+    # Never surface the parser's message: YAML errors quote the offending line
+    # and schema errors quote the unknown key, either of which can be a value.
     try:
         parsed = msgspec.yaml.decode(data, type=ReachMap)
-    except (msgspec.DecodeError, msgspec.ValidationError) as exc:
-        raise MapError(f"invalid {path}: {exc}") from exc
+    except msgspec.ValidationError as exc:
+        where = _SCHEMA_PATH.search(str(exc))
+        at = f" at {where.group(1)}" if where else ""
+        raise MapError(f"invalid {path}: does not match the map schema{at}") from None
+    except msgspec.DecodeError:
+        raise MapError(f"invalid {path}: not valid YAML") from None
     if parsed.version != MAP_VERSION:
-        raise MapError(f"{path}: unsupported version {parsed.version} (expected {MAP_VERSION})")
+        raise MapError(f"{path}: unsupported version (expected {MAP_VERSION})")
     return path, parsed
 
 

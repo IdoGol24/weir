@@ -5,8 +5,8 @@ field that can hold a credential value, a fragment of one, a masked form
 (`prefix...last4`) or a fingerprint. The report is safe to print, to write
 as `weir inventory --json`, and to hand to a consumer such as the guard
 settings generator. What a stored record carries is in `StoredRecord`: a keyed
-fingerprint plus offsets, never the value. The value itself stays in process
-memory, in `KnownValues` (see `weir.inventory.values`).
+fingerprint plus offsets, never the value. The value itself exists only in
+process memory while the inventory fingerprints it.
 
 Contract for consumers: docs/inventory.md. The JSON Schema artifact is
 packages/weir/schema_artifacts/inventory.v1.schema.json, generated from
@@ -52,14 +52,16 @@ class Reason(enum.StrEnum):
 class ValueState(enum.StrEnum):
     """Whether weir holds the value in memory for this record."""
 
-    # The value was read; it is in `KnownValues` and its keyed fingerprint is
-    # in the store. Nothing about it is in this report.
+    # The value was read and its keyed fingerprint is in the store. Nothing
+    # about it is in this report.
     LITERAL = "literal"
     # The assignment is a shell expansion or command substitution
     # (`export TOKEN=$(pass show x)`): a credential by name, value unknown.
     DYNAMIC = "dynamic"
-    # A whole-file credential whose value is not extracted: a binary token
-    # database, or a file a person approved into the map with no field.
+    # A credential whose value is not extracted: a whole-file credential (a
+    # binary token database, or a file a person approved into the map with
+    # no field), a scanner result whose value its file does not hold (a
+    # redacted report), or a standard-file field the format typed as a number.
     ABSENT = "absent"
 
 
@@ -87,8 +89,7 @@ class Location(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 class Credential(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     # Stable identifier: 16 base32 characters of a digest over the record's
     # non-secret identity (source, display location, line, name, scope,
-    # commit), never over the value. Joins this record to its StoredRecord
-    # and to KnownValues.
+    # commit), never over the value. Joins this record to its StoredRecord.
     id: str
     # Credential name: the field or variable name (`aws_secret_access_key`,
     # `ACME_API_KEY`), the catalog class (`github_token`) or the scanner rule

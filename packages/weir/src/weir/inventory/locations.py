@@ -24,7 +24,7 @@ from typing import cast
 
 import msgspec
 
-from weir.inventory._scan import Hit, find_encoded, line_of
+from weir.inventory._scan import Hit, absolute, find_encoded, line_of
 from weir.inventory._types import Reason
 from weir.inventory.classify import name_suggests_secret, not_secret_kind, value_shape
 
@@ -199,7 +199,8 @@ def _glob(base: Path, pattern: str) -> list[Path]:
 def candidate_paths(
     location: StandardLocation, home: Path, env: Mapping[str, str]
 ) -> list[Path]:
-    """Every path this entry names, default paths first, deduplicated."""
+    """Every path this entry names, default paths first, normalized and
+    deduplicated."""
     found: list[Path] = []
     for rel in location.paths:
         found.extend(_glob(home, rel))
@@ -213,7 +214,7 @@ def candidate_paths(
         for part in env.get(var, "").split(os.pathsep):
             if (path := _expand(part, home)) is not None:
                 found.append(path)
-    return list(dict.fromkeys(found))
+    return list(dict.fromkeys(absolute(p) for p in found))
 
 
 # --- format parsers --------------------------------------------------------
@@ -230,11 +231,15 @@ def _judge(location: StandardLocation, field_name: str, value: str) -> Reason | 
     """Is this field of a standard credential file a credential? A field
     the entry names always is. Any other field needs a credential-shaped
     value, or a secret-suggesting name with a value that is not a short or
-    plain word: docker's `credsStore: desktop` names a helper, not a secret."""
-    if not_secret_kind(value) is not None:
+    plain word: docker's `credsStore: desktop` names a helper, not a secret.
+    Only an unnamed field is dropped for a number, boolean, path or hostname
+    value."""
+    if not value.strip():
         return None
     if field_name.lower() in location.fields:
         return Reason.LOCATION
+    if not_secret_kind(value) is not None:
+        return None
     if value_shape(value.strip()) is not None:
         return Reason.SHAPE
     if (
@@ -317,6 +322,16 @@ def _walk(
         if reason is not None:
             scope = ".".join(path[:-1]) or None
             yield _hit(location, name, node, find_encoded(text, node), text, reason, scope)
+    elif (
+        isinstance(node, int | float) and not isinstance(node, bool) and path
+        and path[-1].lower() in location.fields
+    ):
+        # A named field the format typed as a number is still the credential,
+        # but its source bytes need not be `str(node)`: name it, value absent.
+        yield Hit(
+            name=path[-1], reason=Reason.LOCATION, detectors={f"location:{location.id}"},
+            value=None, spans=[], line=None, scope=".".join(path[:-1]) or None,
+        )
 
 
 def _parse_structured(location: StandardLocation, text: str) -> Iterator[Hit]:

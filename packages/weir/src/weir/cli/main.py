@@ -38,8 +38,8 @@ from weir.inventory import (
     InventoryInputs,
     default_key_path,
     encode_report,
+    encode_store,
     take_inventory,
-    write_store,
 )
 from weir.inventory.core import write_private
 from weir.inventory.text import inventory_lines, unknown_list_lines
@@ -308,6 +308,14 @@ def scan_command(
     raise SystemExit(1 if failing else 0)
 
 
+def _write_output(path: Path, data: bytes) -> None:
+    try:
+        write_private(path, data)
+    except OSError as exc:
+        click.echo(f"error: cannot write {path}: {exc.strerror}", err=True)
+        raise SystemExit(2) from exc
+
+
 @main.command("inventory")
 @click.option(
     "--home",
@@ -407,9 +415,9 @@ def inventory_command(
     report = result.report
     unknown_path = unknown_list or home.absolute() / ".weir" / "unknown-env.txt"
     body = "".join(line + "\n" for line in unknown_list_lines(report.env_unknown))
-    write_private(unknown_path, body.encode("utf-8"))
+    _write_output(unknown_path, body.encode("utf-8"))
     if store_path is not None:
-        write_store(store_path, result.store)
+        _write_output(store_path, encode_store(result.store))
     if as_json:
         click.echo(encode_report(report).decode(), nl=False)
     else:

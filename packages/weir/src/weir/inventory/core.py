@@ -1,6 +1,6 @@
 """The inventory core: run the four sources, then split what they found into
-a value-free report, a store of keyed fingerprints plus offsets, and the
-in-memory values.
+a value-free report and a store of keyed fingerprints plus offsets. Values
+exist only while the run fingerprints them; none is returned.
 
 Every input is explicit. There is no default home, project or environment:
 a caller that wants the real home must say so, which is what lets a guard
@@ -23,6 +23,7 @@ from weir._text_safety import flatten_untrusted
 from weir.inventory._scan import (
     Hit,
     Unreadable,
+    absolute,
     byte_spans,
     display_path,
     find_all,
@@ -87,7 +88,6 @@ from weir.inventory.scanners import (
     load_gitleaks,
     load_trufflehog,
 )
-from weir.inventory.values import KnownValues
 
 _SOURCE_ORDER = {s: i for i, s in enumerate(Source)}
 _WITHHELD = "[withheld: credential-shaped]"
@@ -118,7 +118,6 @@ class InventoryInputs:
 class InventoryResult:
     report: Inventory
     store: Store
-    values: KnownValues
 
 
 def default_key_path(home: Path) -> Path:
@@ -192,7 +191,6 @@ def _standard_locations(c: _Collector, env: Mapping[str, str]) -> None:
         for path in candidate_paths(location, c.home, env):
             if not path.is_file():
                 continue
-            path = path.absolute()
             c.claimed.add(path)
             detector = f"location:{location.id}"
             whole_file = [_whole_file_hit(detector, Reason.LOCATION, path.name)]
@@ -265,7 +263,7 @@ def _environment(
     )
     _judge_env(c, entries, path=env_file, text=env_text, detector="launch_env", location=launch)
     for rel in STARTUP_FILES:
-        path = (c.home / rel).absolute()
+        path = c.home / rel
         if not path.is_file():
             continue
         c.claimed.add(path)
@@ -285,9 +283,12 @@ def _scanner_hit(result: ScannerResult, text: str | None) -> Hit:
     line = result.line
     if line is None and spans and text is not None:
         line = line_of(text, spans[0][0])
+    # A value the file it names does not hold is not that file's credential
+    # value (a redacted or since-changed report): name the finding, no value.
+    value = result.value if text is None or spans else None
     return Hit(
         name=f"{result.tool}:{result.rule}", reason=Reason.SCANNER,
-        detectors={f"{result.tool}:{result.rule}"}, value=result.value, spans=spans, line=line,
+        detectors={f"{result.tool}:{result.rule}"}, value=value, spans=spans, line=line,
         commit=result.commit, name_rank=35,
     )
 
@@ -301,12 +302,12 @@ def _project(c: _Collector, results: list[ScannerResult]) -> dict[Path, bool]:
     elsewhere: list[ScannerResult] = []
     for result in results:
         if result.path is not None and result.commit is None:
-            by_path.setdefault(result.path.absolute(), []).append(result)
+            by_path.setdefault(result.path, []).append(result)
         else:
             elsewhere.append(result)
 
     for file in files:
-        path = file.path.absolute()
+        path = file.path
         try:
             text = read_text(path, max_bytes=MAX_PROJECT_FILE_BYTES)
         except Unreadable as exc:
@@ -334,9 +335,8 @@ def _project(c: _Collector, results: list[ScannerResult]) -> dict[Path, bool]:
         hits = [_scanner_hit(r, text) for r in by_path[path]]
         c.add(Source.PROJECT_SCAN, hits, path=path, text=text)
     for result in elsewhere:
-        path = result.path.absolute() if result.path is not None else None
-        c.add(Source.PROJECT_SCAN, [_scanner_hit(result, None)], path=path, text=None)
-    return {f.path.absolute(): f.git_ignored for f in files}
+        c.add(Source.PROJECT_SCAN, [_scanner_hit(result, None)], path=result.path, text=None)
+    return {f.path: f.git_ignored for f in files}
 
 
 def _map(c: _Collector, ignored: dict[Path, bool]) -> tuple[str | None, list[str]]:
@@ -348,7 +348,7 @@ def _map(c: _Collector, ignored: dict[Path, bool]) -> tuple[str | None, list[str
         return None, []
     map_path, reach = loaded
     for entry in reach.credentials:
-        path = resolve_entry(entry.path, home=c.home, project=c.project).absolute()
+        path = absolute(resolve_entry(entry.path, home=c.home, project=c.project))
         git_ignored = ignored.get(path, False)
         if not path.is_file():
             c.skip(path, NotScannedReason.MISSING)
@@ -393,8 +393,8 @@ def _credential_id(f: _Found, name: str, scope: str | None) -> str:
 
 
 def take_inventory(inputs: InventoryInputs) -> InventoryResult:
-    home = inputs.home.absolute()
-    project = inputs.project.absolute()
+    home = absolute(inputs.home)
+    project = absolute(inputs.project)
     for label, directory in (("home", home), ("project", project)):
         if not directory.is_dir():
             raise InventoryInputError(f"{label} directory does not exist: {directory}")
@@ -415,7 +415,7 @@ def take_inventory(inputs: InventoryInputs) -> InventoryResult:
         raise InventoryInputError(str(exc)) from exc
 
     c = _Collector(home, project)
-    env_file = inputs.env_file.absolute() if inputs.env_file is not None else None
+    env_file = absolute(inputs.env_file) if inputs.env_file is not None else None
     _standard_locations(c, env_map)
     _environment(c, entries, env_text, env_file)
     if env_file is not None:
@@ -428,8 +428,8 @@ def take_inventory(inputs: InventoryInputs) -> InventoryResult:
         Inputs(
             home=posix(home), project=posix(project), env_source=env_source,
             env_file=posix(env_file) if env_file is not None else None,
-            gitleaks_reports=[posix(p.absolute()) for p in inputs.gitleaks_reports],
-            trufflehog_reports=[posix(p.absolute()) for p in inputs.trufflehog_reports],
+            gitleaks_reports=[posix(absolute(p)) for p in inputs.gitleaks_reports],
+            trufflehog_reports=[posix(absolute(p)) for p in inputs.trufflehog_reports],
             map_file=map_file, location_list_version=LOCATION_LIST_VERSION,
         ),
     )
@@ -457,7 +457,6 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
 
     credentials: list[Credential] = []
     records: list[StoredRecord] = []
-    values: dict[str, str] = {}
     seen: dict[str, int] = {}
     for cred, f in rows:
         base = _credential_id(f, cred.name, cred.scope)
@@ -465,7 +464,6 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
         cid = base if seen[base] == 1 else f"{base}-{seen[base]}"
         credentials.append(msgspec.structs.replace(cred, id=cid))
         if f.hit.value is not None:
-            values[cid] = f.hit.value
             records.append(StoredRecord(
                 credential_id=cid, fingerprint=fingerprint(key, f.hit.value),
                 fingerprint_v=FINGERPRINT_VERSION, path=f.location.path,
@@ -513,7 +511,7 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
     store = Store(
         schema=STORE_SCHEMA, records=sorted(records, key=lambda r: r.credential_id)
     )
-    return InventoryResult(report=report, store=store, values=KnownValues(values))
+    return InventoryResult(report=report, store=store)
 
 
 def encode_report(report: Inventory) -> bytes:
@@ -537,7 +535,3 @@ def write_private(path: Path, data: bytes) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
-
-
-def write_store(path: Path, store: Store) -> None:
-    write_private(path, encode_store(store))
