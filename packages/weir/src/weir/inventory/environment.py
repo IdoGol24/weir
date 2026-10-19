@@ -477,8 +477,8 @@ def _shapes(text: str, entries: list[EnvEntry]) -> list[Hit]:
             ), None)
             if owner is None or owner.span is None:
                 loose.append(hit)
-            elif owner.value is None and (armor := _ARMOR.match(hit.value)) is not None:
-                if f"-----END {armor.group(1)}-----" in hit.value:
+            elif owner.value is None and (armor := _ARMOR.match(text, start, end)) is not None:
+                if f"-----END {armor.group(1)}-----" in text[start:end]:
                     owner.shape = hit
             else:
                 first, last = max(start, owner.span[0]), min(end, owner.span[1])
