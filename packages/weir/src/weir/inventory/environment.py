@@ -460,8 +460,11 @@ def parse_startup_file(text: str) -> StartupFile:
 def _shapes(text: str, entries: list[EnvEntry]) -> list[Hit]:
     """Credential shapes anywhere in the file, read without assignment
     parsing, one per occurrence. A shape inside an assignment's value is
-    that assignment's (one secret, one record); any other, in a
-    here-document or a continuation line or a comment, is returned."""
+    that assignment's (one secret, one record): a value read in full keeps
+    its own bytes, the shape only confirming it is a credential; a value not
+    fully read takes the shape clipped to the part its line holds. Any
+    other shape, in a here-document or a continuation line or a comment, is
+    returned."""
     loose: list[Hit] = []
     for found in scan_shapes(text):
         for start, end in found.spans:
@@ -471,8 +474,11 @@ def _shapes(text: str, entries: list[EnvEntry]) -> list[Hit]:
                 if e.shape is None and e.span is not None
                 and e.span[0] < end and start < e.span[1]
             ), None)
-            if owner is None:
+            if owner is None or owner.span is None:
                 loose.append(hit)
+            elif owner.value is not None:
+                owner.shape = replace(hit, value=owner.value, spans=[owner.span])
             else:
-                owner.shape = hit
+                first, last = max(start, owner.span[0]), min(end, owner.span[1])
+                owner.shape = replace(hit, value=text[first:last], spans=[(first, last)])
     return loose

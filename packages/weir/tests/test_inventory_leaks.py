@@ -33,6 +33,7 @@ from weir.inventory import (
     encode_store,
     take_inventory,
 )
+from weir.inventory.fingerprint import fingerprint, load_or_create_key
 from weir.inventory.text import inventory_lines, unknown_list_lines
 
 THRESHOLD = 6
@@ -419,6 +420,36 @@ def test_a_key_in_a_value_not_fully_read_is_one_credential(
     assert [(p.display, p.line, p.reason) for p in report.not_fully_read] == [
         ("~/.bash_profile", 1, PartlyReadReason.MULTI_LINE_QUOTE),
     ]
+    _assert_clean({
+        "report": encode_report(report),
+        "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),
+        "unknown-list": "\n".join(unknown_list_lines([*report.env_unknown, *report.env_fine])),
+    })
+
+
+def test_a_shaped_value_keeps_its_own_bytes_before_the_next_command(tmp_path: Path) -> None:
+    """A URL shape runs on past `;`; the assignment's own value is what is
+    fingerprinted, so it links to the same value assigned elsewhere."""
+    fake = fx.build(tmp_path / "fixture")
+    profile = fake.home / ".bash_profile"
+    profile.write_text(
+        f"export DATABASE_URL={fx.DATABASE_URL_S14}; export X_MODE=1\n"
+        f"export DB2_URL={fx.DATABASE_URL_S14}\n"
+    )
+    result = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key,
+    ))
+    report = result.report
+    first, second = [c for c in report.credentials if c.location.display == "~/.bash_profile"]
+    assert (first.name, first.location.line, second.name) == ("DATABASE_URL", 1, "DB2_URL")
+    records = {r.credential_id: r for r in result.store.records}
+    expected = fingerprint(load_or_create_key(fake.key), fx.DATABASE_URL_S14)
+    data = profile.read_bytes()
+    for cred in (first, second):
+        record = records[cred.id]
+        exact = [data[s:e] for s, e in record.offsets] == [fx.DATABASE_URL_S14.encode()]
+        assert exact and record.fingerprint == expected, cred.name
+    assert second.id in first.same_value_as
     _assert_clean({
         "report": encode_report(report),
         "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),

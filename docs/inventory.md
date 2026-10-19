@@ -96,19 +96,21 @@ read from it.
    to its delimiter line), any other quoted value its line leaves open, and
    a PEM block that meets a non-body line or the end of the file before its
    END line (reading resumes at that line) are listed in `not_fully_read` by
-   file and line. Such a value is judged by its name only: a
-   secret-suggesting name gives a credential record with
+   file and line. Every startup file is also searched as a whole for
+   credential shapes, with no assignment parsing: a catalog key shape, a
+   JWT, a URL with a password or a PEM private key. A shape inside an
+   assignment's value makes that assignment a credential under the
+   variable's name, reason `shape`: one secret, one record. A value read in
+   full keeps its own fingerprint and offsets (the shape only confirms it);
+   a value not fully read takes the fingerprint and offsets of the shape
+   clipped to the part its first line holds, `value_state: literal`. With
+   no shape on its first line, a value not fully read is judged by its name
+   only: a secret-suggesting name gives a credential record with
    `value_state: partial` (value not read), an exported neutral name goes
    to `env_unknown`, and an unexported one appears only in
-   `not_fully_read`. Every startup file is also searched as a
-   whole for credential shapes, with no assignment parsing: a catalog key
-   shape, a JWT, a URL with a password or a PEM private key. One inside an
-   assignment's value (or the part a value not fully read holds on its
-   first line) is that assignment's credential, under the variable's name,
-   with the shape's fingerprint and offsets: one secret, one record. Any
-   other, in a here-document body, a continuation line or a comment, is an
-   `environment` credential at its own line, reason `shape`. What is not
-   fully read stays listed. An env file
+   `not_fully_read`. Any other shape, in a here-document body, a
+   continuation line or a comment, is an `environment` credential at its
+   own line, reason `shape`. What is not fully read stays listed. An env file
    inside the project (`--env-file ./.env`) is still a project file: its
    values are `project_scan` records at the file, with `git_ignored` as for
    any project file, and its secret variables are also `environment`
@@ -279,7 +281,7 @@ A credential:
 | `source` | string | `standard_location`, `project_scan`, `environment`, `map` |
 | `reason` | string | `location`, `name`, `shape`, `scanner`, `map` |
 | `location` | object | `kind` (`file` / `launch_env`), `display`, `path` (absolute or null), `line` (1-based or null), `commit` (scanner results from git history) |
-| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_scalar` (a standard-file field the format typed as a number, boolean or date, such as YAML `on` or `2024-05-01`, value not read), `partial` (a startup-file value not fully read and judged by its name, listed in `not_fully_read`) |
+| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_scalar` (a standard-file field the format typed as a number, boolean or date, such as YAML `on` or `2024-05-01`, value not read), `partial` (a startup-file value not fully read, with no credential shape on its first line, judged by its name; listed in `not_fully_read`) |
 | `detectors` | array | every detector that found it, sorted: `location:<id>`, `catalog:<class>`, `assignment`, `shape:<shape>`, `launch_env`, `startup_file`, `gitleaks:<rule>`, `trufflehog:<detector>`, `map` |
 | `same_value_as` | array | ids of the other credentials whose value has the same keyed fingerprint, sorted: one secret found at several places, linked without merging the records |
 | `scope` | string or null | profile, section, host or JSON path (`default`, `github.com`, `mcpServers.acme-search.env`) |
