@@ -84,7 +84,9 @@ read from it.
    startup file but never exported is still a credential, since the file is
    readable; an unexported variable that is not a secret is not part of the
    environment and is neither counted nor listed. An export after `;`, `&&`
-   or `||` counts too (`[ -n "$PS1" ] && export GH_TOKEN=...`). An env file
+   or `||` counts too (`[ -n "$PS1" ] && export GH_TOKEN=...`). A quoted
+   value runs across lines to its closing quote, as the shell reads it, so
+   a multi-line key is one value. An env file
    inside the project (`--env-file ./.env`) is still a project file: its
    values are `project_scan` records at the file, with `git_ignored` as for
    any project file, and its secret variables are also `environment`

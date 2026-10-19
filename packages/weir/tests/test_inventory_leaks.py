@@ -23,6 +23,7 @@ from click.testing import CliRunner
 
 from weir.cli.main import main
 from weir.inventory import (
+    Inventory,
     InventoryInputError,
     InventoryInputs,
     LocationKind,
@@ -263,6 +264,46 @@ def test_multi_line_keys_in_a_plain_env_file_list_no_line_of_them(tmp_path: Path
         whole = [data[s:e] for s, e in record.offsets] == [key.encode()]
         assert whole, cred.name
     assert app.same_value_as == [] and app.id not in signing.same_value_as
+    _assert_clean({
+        "report": encode_report(report),
+        "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),
+        "unknown-list": "\n".join(unknown_list_lines([*report.env_unknown, *report.env_fine])),
+    })
+
+
+def test_a_multi_line_quoted_key_in_a_startup_file_is_one_value(tmp_path: Path) -> None:
+    """A quoted value runs to its closing quote across lines, as the shell
+    reads it: the key is one record holding the whole key, and no line of
+    it is read as a command, however short."""
+    head, body, tail = fx.SA_PRIVATE_KEY.splitlines()
+    rewrapped = "\n".join([head, body[:40], body[40:], tail])  # last body line under 20
+    fake = fx.build(tmp_path / "fixture")
+    inputs = InventoryInputs(home=fake.home, project=fake.project, key_path=fake.key)
+    before = take_inventory(inputs).report
+    bashrc = fake.home / ".bashrc"
+    with bashrc.open("a") as handle:
+        handle.write(f'export APP_PRIVATE_KEY="{rewrapped}"\n')
+    result = take_inventory(inputs)
+    report = result.report
+
+    def at_bashrc(inventory: Inventory) -> list[str]:
+        return sorted(
+            c.name for c in inventory.credentials if c.location.display == "~/.bashrc"
+        )
+
+    assert at_bashrc(report) == sorted([*at_bashrc(before), "APP_PRIVATE_KEY"])
+    assert [(e.name, e.location.display) for e in report.env_unknown] == [
+        (e.name, e.location.display) for e in before.env_unknown
+    ]
+    assert report.counts.env_withheld == before.counts.env_withheld == 0
+    [key] = [
+        c for c in report.credentials
+        if c.name == "APP_PRIVATE_KEY" and c.location.display == "~/.bashrc"
+    ]
+    [record] = [r for r in result.store.records if r.credential_id == key.id]
+    data = bashrc.read_bytes()
+    whole = [data[s:e] for s, e in record.offsets] == [rewrapped.encode()]
+    assert whole and key.same_value_as == []
     _assert_clean({
         "report": encode_report(report),
         "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),

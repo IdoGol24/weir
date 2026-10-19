@@ -341,6 +341,28 @@ def test_an_export_after_a_separator_is_an_environment_credential(tmp_path: Path
     assert [data[s:e] for s, e in record.offsets] == [fx.MARKER_DOTENV.encode()]
 
 
+def test_a_quoted_startup_file_value_runs_across_lines() -> None:
+    cert = "\n".join(
+        ["-----BEGIN CERTIFICATE-----", fx.SSH_KEY.splitlines()[1], "-----END CERTIFICATE-----"]
+    )
+    text = (
+        "# don't read this apostrophe as a quote\n"
+        f'export CA_CERT="{cert}"\n'
+        f"export SIGNING_KEY='{fx.SSH_KEY}'\n"
+        "export LOG_LEVEL=info\n"
+    )
+    entries = parse_startup_file(text)
+    assert [(e.name, e.line) for e in entries] == [
+        ("CA_CERT", 2), ("SIGNING_KEY", 5), ("LOG_LEVEL", 8),
+    ]
+    whole = [e.value for e in entries[:2]] == [cert, fx.SSH_KEY]
+    assert whole
+    for entry in entries:
+        assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
+    assert judge(entries[0]).verdict is EnvVerdict.UNKNOWN
+    assert judge(entries[1]).verdict is EnvVerdict.SECRET
+
+
 def test_a_mixed_quote_word_never_gets_a_wrong_offset() -> None:
     text = 'export A_TOKEN=abc"defghij"\nexport B_TOKEN="abc"\n'
     first, second = parse_startup_file(text)

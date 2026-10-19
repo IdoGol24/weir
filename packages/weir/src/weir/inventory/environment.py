@@ -163,11 +163,45 @@ def process_env_entries(env: Mapping[str, str]) -> list[EnvEntry]:
 _LEAD = r"^\s*(?:(?:then|else|do|\{|!)\s+)*"
 _EXPORT = re.compile(
     _LEAD
-    + r"(?:export|declare\s+-[A-Za-z]*x[A-Za-z]*|typeset\s+-[A-Za-z]*x[A-Za-z]*)\s+(.*)$"
+    + r"(?:export|declare\s+-[A-Za-z]*x[A-Za-z]*|typeset\s+-[A-Za-z]*x[A-Za-z]*)\s+(.*)$",
+    re.S,
 )
-_ASSIGN = re.compile(rf"{_LEAD}({_NAME})=(.*)$")
-_SETENV = re.compile(rf"{_LEAD}setenv\s+({_NAME})\s+(.*)$")
-_FISH_SET = re.compile(rf"{_LEAD}set\s+((?:-\S+\s+)+)({_NAME})\s+(.*)$")
+_ASSIGN = re.compile(rf"{_LEAD}({_NAME})=(.*)$", re.S)
+_SETENV = re.compile(rf"{_LEAD}setenv\s+({_NAME})\s+(.*)$", re.S)
+_FISH_SET = re.compile(rf"{_LEAD}set\s+((?:-\S+\s+)+)({_NAME})\s+(.*)$", re.S)
+
+
+def _logical_lines(text: str) -> Iterator[tuple[int, int, str]]:
+    """(offset, 1-based line, text) per line as the shell reads it: a line
+    that opens a quote runs on, across newlines, to the line that closes it,
+    so a quoted multi-line value is one word and its lines are never read
+    as commands of their own."""
+    start = 0
+    number = 1
+    quote: str | None = None
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote is not None:
+            if ch == "\\" and quote != "'":
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch == "\\" and text[i + 1:i + 2] != "\n":
+            i += 1
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "#" and (i == start or text[i - 1].isspace() or text[i - 1] in ";&|"):
+            end = text.find("\n", i)
+            i = len(text) if end == -1 else end
+            continue
+        elif ch == "\n":
+            yield start, number, text[start:i].rstrip("\r")
+            number += text.count("\n", start, i + 1)
+            start = i + 1
+        i += 1
+    if start < len(text):
+        yield start, number, text[start:].rstrip("\r")
 
 
 def _commands(line: str) -> Iterator[tuple[int, str]]:
@@ -288,16 +322,16 @@ def _verify_span(text: str, entry: EnvEntry) -> None:
 
 
 def parse_startup_file(text: str) -> list[EnvEntry]:
-    """Assignments in every simple command (`a && export NAME=v; b`):
+    """Assignments in every simple command (`a && export NAME=v; b`), a
+    quoted value running across lines as the shell reads it:
     `export NAME=v`, `declare -x`, `typeset -x`, csh `setenv NAME v`, fish
     `set -x NAME v`, and plain `NAME=v`, which is `exported` when an
     `export NAME` anywhere in the file exports it."""
     exported: list[EnvEntry] = []
     plain: list[EnvEntry] = []
     exported_names: set[str] = set()
-    offset = 0
-    for number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
-        for start, command in _commands(raw_line.rstrip("\r\n")):
+    for offset, number, line in _logical_lines(text):
+        for start, command in _commands(line):
             base = offset + start
             if (m := _EXPORT.match(command)) is not None:
                 for name, value, vstart, _, raw in _assignments(m.group(1), m.start(1)):
@@ -318,7 +352,6 @@ def parse_startup_file(text: str) -> list[EnvEntry]:
             elif (m := _ASSIGN.match(command)) is not None:
                 value, vstart, _, raw = _shell_word(command, m.start(2))
                 plain.append(_entry(m.group(1), value, base + vstart, raw, number))
-        offset += len(raw_line)
     for entry in plain:
         entry.exported = entry.name in exported_names
     for entry in (*exported, *plain):
