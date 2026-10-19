@@ -638,16 +638,31 @@ def test_a_typed_scalar_of_an_unnamed_field_is_not_a_credential() -> None:
 
 @pytest.mark.parametrize(("location_id", "text"), [
     ("npmrc", "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n"),
-    ("npmrc", "//npm.pkg.github.com/:_authToken=$GH_PACKAGES_TOKEN\n"),
     ("npmrc", '_auth = "${NPM_AUTH}"\n'),
     ("yarnrc", 'npmAuthToken: "${YARN_NPM_AUTH_TOKEN}"\n'),
-    ("docker_config", '{"auths": {"r.example": {"identitytoken": "${REGISTRY_TOKEN}"}}}'),
-    ("pypirc", "[pypi]\npassword = $PYPI_TOKEN\n"),
 ])
 def test_a_field_that_is_wholly_an_environment_reference_is_not_a_credential(
     location_id: str, text: str,
 ) -> None:
+    """npm and yarn expand a whole-value `${NAME}` from the environment."""
     assert parse_location(_location(location_id), text) == []
+
+
+@pytest.mark.parametrize(("location_id", "text", "value"), [
+    ("npmrc", "//npm.pkg.github.com/:_authToken=$GH_PACKAGES_TOKEN\n", "$GH_PACKAGES_TOKEN"),
+    ("mysql_options", "[client]\npassword = $ecretPw1\n", "$ecretPw1"),
+    ("pypirc", "[pypi]\npassword = ${PYPI_TOKEN}\n", "${PYPI_TOKEN}"),
+    ("docker_config", '{"auths": {"r.example": {"identitytoken": "${REG_TOKEN}"}}}',
+     "${REG_TOKEN}"),
+    ("kube_config", "users:\n- name: ci\n  user:\n    password: $uper5ecret\n", "$uper5ecret"),
+])
+def test_a_reference_the_tool_does_not_expand_is_the_credential(
+    location_id: str, text: str, value: str,
+) -> None:
+    """Only npm and yarn expand references, and only the braced form: npm reads
+    a bare `$NAME` literally, and so do MySQL, twine, docker and kubectl."""
+    hits = parse_location(_location(location_id), text)
+    assert [(h.reason.value, h.value) for h in hits] == [("location", value)]
 
 
 def test_an_environment_reference_inside_a_value_is_still_the_value() -> None:
@@ -699,6 +714,34 @@ def test_google_endpoint_fields_are_not_credentials(location_id: str) -> None:
     })
     names = sorted(h.name for h in parse_location(_location(location_id), text))
     assert names == ["private_key", "private_key_id"]
+
+
+@pytest.mark.parametrize("credential_source", [
+    {
+        "environment_id": "aws1",
+        "region_url": "http://169.254.169.254/latest/meta-data/placement/availability-zone",
+        "url": "http://169.254.169.254/latest/meta-data/iam/security-credentials",
+        "regional_cred_verification_url":
+            "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15",
+        "imdsv2_session_token_url": "http://169.254.169.254/latest/api/token",
+    },
+    {
+        "file": "/var/run/secrets/acme/token.json",
+        "format": {"type": "json", "subject_token_field_name": "access_token"},
+    },
+])
+def test_google_workload_identity_source_fields_are_not_credentials(
+    credential_source: dict[str, object],
+) -> None:
+    text = json.dumps({
+        "audience": "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p",
+        "subject_token_type": "urn:ietf:params:aws:token-type:aws4_request",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "service_account_impersonation_url":
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/ci:token",
+        "credential_source": credential_source,
+    })
+    assert parse_location(_location("google_application_default_credentials"), text) == []
 
 
 def test_a_plain_google_field_still_counts_for_a_credential_shape() -> None:

@@ -175,11 +175,12 @@ read from it.
 Environment variables (and the fields of standard files that the location
 entry does not name) are judged by local, deterministic checks, in this
 order. A field the entry names (`aws_secret_access_key`, `_authToken`) is the
-credential whatever its value looks like, with one exception: a
-standard-file field whose whole value is an environment reference
-(`_authToken=${NPM_TOKEN}`, `password = $PYPI_TOKEN`) is not a credential at
-that file and is not fingerprinted. The tool expands it from the
-environment, so the variable is judged there, in the launch environment.
+credential whatever its value looks like, with one exception: in
+`~/.npmrc` and `~/.yarnrc.yml`, whose tools expand references, a field whose
+whole value is `${NAME}` (`_authToken=${NPM_TOKEN}`) is not a credential at
+that file and is not fingerprinted; the variable is judged in the launch
+environment. Every other standard file reads such a value literally, so
+`password = $PYPI_TOKEN` in `~/.pypirc` stays a credential.
 An entry may also name **plain** fields, whose names suggest a secret but
 are not one (Google's `token_uri`, `auth_uri`, `token_url`); a plain field
 counts only when its value has a credential shape (step 1). The

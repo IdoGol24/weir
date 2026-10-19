@@ -179,13 +179,12 @@ def not_secret_kind(value: str) -> str | None:
 
 
 _DYNAMIC = re.compile(r"\$[A-Za-z_{(]|`")
-_ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)")
+_ENV_REFERENCE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 
 
 def is_env_reference(value: str) -> bool:
-    """The whole value is one environment variable reference, `${NAME}` or
-    `$NAME` (npm's `_authToken=${NPM_TOKEN}`): the value lives in that
-    variable, not in the file."""
+    """The whole value is one braced environment variable reference,
+    `${NAME}`, as npm and yarn expand it (`_authToken=${NPM_TOKEN}`)."""
     return _ENV_REFERENCE.fullmatch(value.strip()) is not None
 
 

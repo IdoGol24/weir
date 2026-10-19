@@ -11,8 +11,8 @@ paths are checked as well.
 | aws_config | `~/.aws/config` | ini | `aws_access_key_id`, `aws_secret_access_key`, `aws_security_token`, `aws_session_token` | - | `AWS_CONFIG_FILE` |
 | aws_sso_cache | `~/.aws/sso/cache/*.json` | json | `accesstoken`, `clientsecret`, `refreshtoken` | - | - |
 | aws_cli_cache | `~/.aws/cli/cache/*.json` | json | `accesskeyid`, `secretaccesskey`, `sessiontoken` | - | - |
-| google_application_default_credentials | `~/.config/gcloud/application_default_credentials.json`<br>`~/AppData/Roaming/gcloud/application_default_credentials.json` | json | `client_secret`, `private_key`, `private_key_id`, `refresh_token` | `auth_provider_x509_cert_url`, `auth_uri`, `client_x509_cert_url`, `service_account_impersonation_url`, `subject_token_type`, `token_info_url`, `token_uri`, `token_url`, `type`, `universe_domain` | `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_CONFIG`/`application_default_credentials.json` |
-| gcloud_legacy_credentials | `~/.config/gcloud/legacy_credentials/*/adc.json`<br>`~/AppData/Roaming/gcloud/legacy_credentials/*/adc.json` | json | `client_secret`, `private_key`, `private_key_id`, `refresh_token` | `auth_provider_x509_cert_url`, `auth_uri`, `client_x509_cert_url`, `service_account_impersonation_url`, `subject_token_type`, `token_info_url`, `token_uri`, `token_url`, `type`, `universe_domain` | `CLOUDSDK_CONFIG`/`legacy_credentials/*/adc.json` |
+| google_application_default_credentials | `~/.config/gcloud/application_default_credentials.json`<br>`~/AppData/Roaming/gcloud/application_default_credentials.json` | json | `client_secret`, `private_key`, `private_key_id`, `refresh_token` | `auth_provider_x509_cert_url`, `auth_uri`, `client_x509_cert_url`, `imdsv2_session_token_url`, `service_account_impersonation_url`, `subject_token_field_name`, `subject_token_type`, `token_info_url`, `token_uri`, `token_url`, `type`, `universe_domain` | `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_CONFIG`/`application_default_credentials.json` |
+| gcloud_legacy_credentials | `~/.config/gcloud/legacy_credentials/*/adc.json`<br>`~/AppData/Roaming/gcloud/legacy_credentials/*/adc.json` | json | `client_secret`, `private_key`, `private_key_id`, `refresh_token` | `auth_provider_x509_cert_url`, `auth_uri`, `client_x509_cert_url`, `imdsv2_session_token_url`, `service_account_impersonation_url`, `subject_token_field_name`, `subject_token_type`, `token_info_url`, `token_uri`, `token_url`, `type`, `universe_domain` | `CLOUDSDK_CONFIG`/`legacy_credentials/*/adc.json` |
 | gcloud_token_databases | `~/.config/gcloud/credentials.db`<br>`~/.config/gcloud/access_tokens.db`<br>`~/AppData/Roaming/gcloud/credentials.db`<br>`~/AppData/Roaming/gcloud/access_tokens.db` | opaque | - | - | `CLOUDSDK_CONFIG`/`credentials.db`, `CLOUDSDK_CONFIG`/`access_tokens.db` |
 | npmrc | `~/.npmrc` | npmrc | `_auth`, `_authtoken`, `_password`, `password` | - | `NPM_CONFIG_USERCONFIG`, `npm_config_userconfig` |
 | yarnrc | `~/.yarnrc.yml` | yaml | `npmauthident`, `npmauthtoken` | - | - |
@@ -37,9 +37,12 @@ paths are checked as well.
 
 Any other field of these files also counts when its name suggests a secret or
 its value has a credential shape (docs/inventory.md, "Classification"). A plain
-field counts only for its value's shape. A value that is wholly an environment
-reference (`${NAME}`, `$NAME`) is never a credential at the file: the variable
-is judged in the launch environment.
+field counts only for its value's shape.
+
+Entries whose tool expands environment references: npmrc, yarnrc.
+There a value that is wholly `${NAME}` is not a credential at the file: the
+variable is judged in the launch environment. Every other entry reads such a
+value literally.
 
 ## Shell startup files
 

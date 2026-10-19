@@ -48,6 +48,9 @@ class StandardLocation:
     # Lowercased field names known NOT to be secret although the name may
     # suggest one (Google's `token_uri`): judged by their value's shape only.
     plain_fields: frozenset[str] = frozenset()
+    # The tool expands a whole-value `${NAME}` from the environment (npm,
+    # yarn), so such a value is no credential at the file.
+    expands_env: bool = False
     # Variables naming the file itself.
     env_files: tuple[str, ...] = ()
     # (variable naming a directory, path of the file inside it).
@@ -61,11 +64,12 @@ _AWS_FIELDS = frozenset({
 })
 _GOOGLE_FIELDS = frozenset({"client_secret", "refresh_token", "private_key", "private_key_id"})
 # The endpoint and type fields of Google credential files (authorized user,
-# service account, external account): URLs and labels, never secrets.
+# service account, external account and its `credential_source`): URLs and
+# labels, never secrets.
 _GOOGLE_PLAIN_FIELDS = frozenset({
     "token_uri", "token_url", "token_info_url", "auth_uri", "auth_provider_x509_cert_url",
     "client_x509_cert_url", "service_account_impersonation_url", "subject_token_type",
-    "universe_domain", "type",
+    "universe_domain", "type", "imdsv2_session_token_url", "subject_token_field_name",
 })
 _GCLOUD_DIRS = (".config/gcloud", "AppData/Roaming/gcloud")
 
@@ -106,11 +110,12 @@ STANDARD_LOCATIONS: tuple[StandardLocation, ...] = (
     ),
     StandardLocation(
         "npmrc", (".npmrc",), "npmrc",
-        frozenset({"_authtoken", "_auth", "_password", "password"}),
+        frozenset({"_authtoken", "_auth", "_password", "password"}), expands_env=True,
         env_files=("NPM_CONFIG_USERCONFIG", "npm_config_userconfig"),
     ),
     StandardLocation(
         "yarnrc", (".yarnrc.yml",), "yaml", frozenset({"npmauthtoken", "npmauthident"}),
+        expands_env=True,
     ),
     StandardLocation(
         "kube_config", (".kube/config",), "yaml",
@@ -243,16 +248,16 @@ _PLAIN_WORD = re.compile(r"[a-z][a-z-]*")
 
 
 def _judge(location: StandardLocation, field_name: str, value: str) -> Reason | None:
-    """Is this field of a standard credential file a credential? A value
-    that is wholly an environment reference (`${NPM_TOKEN}`) never is: the
-    tool expands it from the environment, where the variable is judged. A
-    field the entry names otherwise always is. Any other field needs a
+    """Is this field of a standard credential file a credential? In a file
+    whose tool expands references, a value that is wholly `${NPM_TOKEN}`
+    never is: the variable is judged in the environment. A field the entry
+    names otherwise always is. Any other field needs a
     credential-shaped value, or a secret-suggesting name with a value that is
     not a short or plain word: docker's `credsStore: desktop` names a helper,
     not a secret. A field the entry names as plain is judged by shape only.
     Only an unnamed field is dropped for a number, boolean, path or hostname
     value."""
-    if not value.strip() or is_env_reference(value):
+    if not value.strip() or (location.expands_env and is_env_reference(value)):
         return None
     name = field_name.lower()
     if name in location.fields:
@@ -496,9 +501,13 @@ def render_locations_doc() -> str:
         "",
         "Any other field of these files also counts when its name suggests a secret or",
         "its value has a credential shape (docs/inventory.md, \"Classification\"). A plain",
-        "field counts only for its value's shape. A value that is wholly an environment",
-        "reference (`${NAME}`, `$NAME`) is never a credential at the file: the variable",
-        "is judged in the launch environment.",
+        "field counts only for its value's shape.",
+        "",
+        "Entries whose tool expands environment references: "
+        + ", ".join(loc.id for loc in STANDARD_LOCATIONS if loc.expands_env) + ".",
+        "There a value that is wholly `${NAME}` is not a credential at the file: the",
+        "variable is judged in the launch environment. Every other entry reads such a",
+        "value literally.",
         "",
         "## Shell startup files",
         "",
