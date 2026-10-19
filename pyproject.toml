@@ -76,7 +76,27 @@ source_modules = [
     "weir.evaluate",
     "weir.exposure",
 ]
-forbidden_modules = ["weir.cli", "weir.adapters"]
+forbidden_modules = ["weir.cli", "weir.adapters", "weir.inventory"]
+
+[[tool.importlinter.contracts]]
+# The inventory reads files and holds credential values in memory, so it is a
+# leaf beside the trace pipeline: it reuses the catalog's detectors and
+# nothing else, and no rendering or CLI code can reach into it backwards.
+name = "inventory reaches only the catalog"
+type = "forbidden"
+source_modules = ["weir.inventory"]
+forbidden_modules = [
+    "weir.cli",
+    "weir.adapters",
+    "weir.graph",
+    "weir.gauge",
+    "weir.label",
+    "weir.taint",
+    "weir.evaluate",
+    "weir.exposure",
+    "weir.report",
+    "weir.rules_commons",
+]
 
 [[tool.importlinter.contracts]]
 name = "tracegen is dev-side only: the engine never imports it"

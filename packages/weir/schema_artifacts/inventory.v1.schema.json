@@ -1,0 +1,586 @@
+{
+  "$defs": {
+    "Counts": {
+      "additionalProperties": false,
+      "properties": {
+        "credentials": {
+          "type": "integer"
+        },
+        "distinct_values": {
+          "type": "integer"
+        },
+        "env_fine": {
+          "type": "integer"
+        },
+        "env_not_secret": {
+          "type": "integer"
+        },
+        "env_unknown": {
+          "type": "integer"
+        },
+        "env_withheld": {
+          "type": "integer"
+        },
+        "environment": {
+          "type": "integer"
+        },
+        "git_ignored_files": {
+          "type": "integer"
+        },
+        "intended_gaps": {
+          "type": "integer"
+        },
+        "map": {
+          "type": "integer"
+        },
+        "map_dirs": {
+          "type": "integer"
+        },
+        "not_fully_read": {
+          "type": "integer"
+        },
+        "not_scanned": {
+          "type": "integer"
+        },
+        "project_scan": {
+          "type": "integer"
+        },
+        "standard_location": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "credentials",
+        "distinct_values",
+        "standard_location",
+        "project_scan",
+        "environment",
+        "map",
+        "env_not_secret",
+        "env_withheld",
+        "env_unknown",
+        "env_fine",
+        "intended_gaps",
+        "map_dirs",
+        "git_ignored_files",
+        "not_scanned",
+        "not_fully_read"
+      ],
+      "title": "Counts",
+      "type": "object"
+    },
+    "Credential": {
+      "additionalProperties": false,
+      "properties": {
+        "detectors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "git_ignored": {
+          "default": false,
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "same_value_as": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "value_state": {
+          "$ref": "#/$defs/ValueState"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "source",
+        "reason",
+        "location",
+        "value_state",
+        "detectors",
+        "same_value_as"
+      ],
+      "title": "Credential",
+      "type": "object"
+    },
+    "EnvSource": {
+      "enum": [
+        "file",
+        "none",
+        "process"
+      ],
+      "title": "EnvSource"
+    },
+    "EnvVarName": {
+      "additionalProperties": false,
+      "description": "An environment variable by NAME only: an unknown, or one marked fine.",
+      "properties": {
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "location"
+      ],
+      "title": "EnvVarName",
+      "type": "object"
+    },
+    "GitIgnoredFile": {
+      "additionalProperties": false,
+      "description": "A project file holding a credential that .gitignore covers. Ignored\n    files are not protected; this reports what ignoring does per route.",
+      "properties": {
+        "display": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "routes": {
+          "items": {
+            "$ref": "#/$defs/Route"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "display",
+        "path",
+        "routes"
+      ],
+      "title": "GitIgnoredFile",
+      "type": "object"
+    },
+    "Inputs": {
+      "additionalProperties": false,
+      "properties": {
+        "env_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "env_source": {
+          "$ref": "#/$defs/EnvSource"
+        },
+        "gitleaks_reports": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "home": {
+          "type": "string"
+        },
+        "location_list_version": {
+          "type": "integer"
+        },
+        "map_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "map_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MapStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "trufflehog_reports": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "home",
+        "project",
+        "env_source",
+        "env_file",
+        "gitleaks_reports",
+        "trufflehog_reports",
+        "map_file",
+        "map_status",
+        "location_list_version"
+      ],
+      "title": "Inputs",
+      "type": "object"
+    },
+    "Inventory": {
+      "additionalProperties": false,
+      "description": "The value-free inventory report: `weir inventory --json` emits exactly\n    this, and `take_inventory()` returns it as `InventoryResult.report`.",
+      "properties": {
+        "counts": {
+          "$ref": "#/$defs/Counts"
+        },
+        "credentials": {
+          "items": {
+            "$ref": "#/$defs/Credential"
+          },
+          "type": "array"
+        },
+        "env_fine": {
+          "items": {
+            "$ref": "#/$defs/EnvVarName"
+          },
+          "type": "array"
+        },
+        "env_unknown": {
+          "items": {
+            "$ref": "#/$defs/EnvVarName"
+          },
+          "type": "array"
+        },
+        "git_ignored": {
+          "items": {
+            "$ref": "#/$defs/GitIgnoredFile"
+          },
+          "type": "array"
+        },
+        "inputs": {
+          "$ref": "#/$defs/Inputs"
+        },
+        "intended_gaps": {
+          "items": {
+            "$ref": "#/$defs/MapEntry"
+          },
+          "type": "array"
+        },
+        "map_dirs": {
+          "items": {
+            "$ref": "#/$defs/MapEntry"
+          },
+          "type": "array"
+        },
+        "not_fully_read": {
+          "items": {
+            "$ref": "#/$defs/PartlyRead"
+          },
+          "type": "array"
+        },
+        "not_scanned": {
+          "items": {
+            "$ref": "#/$defs/NotScanned"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "inputs",
+        "counts",
+        "credentials",
+        "env_unknown",
+        "env_fine",
+        "intended_gaps",
+        "map_dirs",
+        "git_ignored",
+        "not_scanned",
+        "not_fully_read"
+      ],
+      "title": "Inventory",
+      "type": "object"
+    },
+    "Location": {
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "display": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/LocationKind"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "display"
+      ],
+      "title": "Location",
+      "type": "object"
+    },
+    "LocationKind": {
+      "enum": [
+        "file",
+        "launch_env"
+      ],
+      "title": "LocationKind"
+    },
+    "MapEntry": {
+      "additionalProperties": false,
+      "description": "A location the approved map names that the inventory carries rather\n    than judges: an intended gap (a secret the agent's own work needs), or an\n    extra location that is a directory.",
+      "properties": {
+        "display": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/MapKind"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "display"
+      ],
+      "title": "MapEntry",
+      "type": "object"
+    },
+    "MapKind": {
+      "enum": [
+        "dir",
+        "env_var",
+        "file"
+      ],
+      "title": "MapKind"
+    },
+    "MapStatus": {
+      "description": "The approved map's `status`. Only `approved` changes the inventory.",
+      "enum": [
+        "approved",
+        "proposed"
+      ],
+      "title": "MapStatus"
+    },
+    "NotScanned": {
+      "additionalProperties": false,
+      "description": "Something the inventory did not read, stated rather than hidden.",
+      "properties": {
+        "display": {
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "$ref": "#/$defs/NotScannedReason"
+        }
+      },
+      "required": [
+        "display",
+        "reason"
+      ],
+      "title": "NotScanned",
+      "type": "object"
+    },
+    "NotScannedReason": {
+      "enum": [
+        "binary",
+        "missing",
+        "symlinked_dir",
+        "too_large",
+        "undecodable",
+        "unreadable",
+        "vendored_dir"
+      ],
+      "title": "NotScannedReason"
+    },
+    "PartlyRead": {
+      "additionalProperties": false,
+      "description": "A place in a shell startup file that is present but not fully read.\n    Startup files are read line by line; what that cannot read is stated.",
+      "properties": {
+        "display": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/PartlyReadReason"
+        }
+      },
+      "required": [
+        "display",
+        "path",
+        "line",
+        "reason"
+      ],
+      "title": "PartlyRead",
+      "type": "object"
+    },
+    "PartlyReadReason": {
+      "enum": [
+        "heredoc",
+        "multi_line_quote",
+        "unclosed_pem"
+      ],
+      "title": "PartlyReadReason"
+    },
+    "Reason": {
+      "description": "Why a record counts as a credential.",
+      "enum": [
+        "location",
+        "map",
+        "name",
+        "scanner",
+        "shape"
+      ],
+      "title": "Reason"
+    },
+    "Route": {
+      "additionalProperties": false,
+      "properties": {
+        "note": {
+          "type": "string"
+        },
+        "route": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/RouteStatus"
+        }
+      },
+      "required": [
+        "route",
+        "status",
+        "note"
+      ],
+      "title": "Route",
+      "type": "object"
+    },
+    "RouteStatus": {
+      "enum": [
+        "hidden",
+        "reachable"
+      ],
+      "title": "RouteStatus"
+    },
+    "Source": {
+      "description": "The four inventory sources (design brief, \"Component specs: Inventory\").",
+      "enum": [
+        "environment",
+        "map",
+        "project_scan",
+        "standard_location"
+      ],
+      "title": "Source"
+    },
+    "ValueState": {
+      "description": "Whether weir read the value for this record, and if not, why.",
+      "enum": [
+        "absent",
+        "dynamic",
+        "literal",
+        "not_in_file",
+        "partial",
+        "typed_scalar"
+      ],
+      "title": "ValueState"
+    }
+  },
+  "$ref": "#/$defs/Inventory"
+}

@@ -52,3 +52,10 @@ Siblings: the derived-tests rule says HOW a fixture is validated (derive from
 the artifact, prove by mutation). The producer-assertion rule says WHO may
 assert (telemetry meta-claims are input, never trusted). This rule says WHEN a
 fixture may exist at all.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.

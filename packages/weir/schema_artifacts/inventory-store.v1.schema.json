@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "Store": {
+      "additionalProperties": false,
+      "properties": {
+        "records": {
+          "items": {
+            "$ref": "#/$defs/StoredRecord"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "records"
+      ],
+      "title": "Store",
+      "type": "object"
+    },
+    "StoredRecord": {
+      "additionalProperties": false,
+      "description": "What the inventory may store about one value: a keyed fingerprint\n    (HMAC-SHA256 under the local key) plus where the value sits. No value,\n    no fragment, no unkeyed hash.",
+      "properties": {
+        "credential_id": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "fingerprint_v": {
+          "type": "integer"
+        },
+        "offsets": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "credential_id",
+        "fingerprint",
+        "fingerprint_v",
+        "path",
+        "offsets"
+      ],
+      "title": "StoredRecord",
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Store"
+}
