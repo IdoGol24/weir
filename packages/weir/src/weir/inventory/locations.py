@@ -322,16 +322,14 @@ def _walk(
         if reason is not None:
             scope = ".".join(path[:-1]) or None
             yield _hit(location, name, node, find_encoded(text, node), text, reason, scope)
-    elif (
-        isinstance(node, int | float) and not isinstance(node, bool) and path
-        and path[-1].lower() in location.fields
-    ):
-        # A named field the format typed as a number is still the credential,
-        # but its source bytes need not be `str(node)`: name it, value unread.
+    elif node is not None and path and path[-1].lower() in location.fields:
+        # A named field the format typed as a number, boolean or date is still
+        # the credential, but its source bytes need not be `str(node)` (YAML
+        # reads `on` as True): name it, value unread.
         yield Hit(
             name=path[-1], reason=Reason.LOCATION, detectors={f"location:{location.id}"},
             value=None, spans=[], line=None, scope=".".join(path[:-1]) or None,
-            missing=ValueState.TYPED_NUMBER,
+            missing=ValueState.TYPED_SCALAR,
         )
 
 

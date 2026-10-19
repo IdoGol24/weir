@@ -65,6 +65,17 @@
         "id": {
           "type": "string"
         },
+        "launch_env": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/Location"
+            }
+          ],
+          "default": null
+        },
         "location": {
           "$ref": "#/$defs/Location"
         },
@@ -427,7 +438,7 @@
         "dynamic",
         "literal",
         "not_in_file",
-        "typed_number"
+        "typed_scalar"
       ],
       "title": "ValueState"
     }

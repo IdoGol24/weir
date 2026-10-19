@@ -92,6 +92,7 @@ from weir.inventory.scanners import (
 _SOURCE_ORDER = {s: i for i, s in enumerate(Source)}
 _WITHHELD = "[withheld: credential-shaped]"
 _LAUNCH_ENV = "launch env"
+_LAUNCH_ENV_DETECTOR = "launch_env"
 
 
 class InventoryInputError(Exception):
@@ -131,6 +132,14 @@ class _Found:
     location: Location
     git_ignored: bool = False
     byte_offsets: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
+    launch_env: Location | None = None
+
+
+def _launch_location(path: Path | None, line: int | None) -> Location:
+    return Location(
+        kind=LocationKind.LAUNCH_ENV, display=_LAUNCH_ENV,
+        path=posix(path) if path is not None else None, line=line,
+    )
 
 
 @dataclass
@@ -159,18 +168,33 @@ class _Collector:
         git_ignored: bool = False, launch_env: bool = False,
     ) -> None:
         for hit in hits:
+            also: Location | None = None
             if launch_env:
-                location = Location(
-                    kind=LocationKind.LAUNCH_ENV, display=_LAUNCH_ENV,
-                    path=posix(path) if path is not None else None, line=hit.line,
-                )
+                location = _launch_location(path, hit.line)
             elif path is not None:
                 location = self.file_location(path, hit.line, hit.commit)
+                if _LAUNCH_ENV_DETECTOR in hit.detectors:
+                    also = _launch_location(path, hit.line)
             else:
                 tool = hit.name.split(":")[0]
                 location = Location(kind=LocationKind.FILE, display=f"{tool} result")
             offsets = byte_spans(text, hit.spans) if text is not None else []
-            self.found.append(_Found(source, hit, location, git_ignored, offsets))
+            self.found.append(_Found(source, hit, location, git_ignored, offsets, also))
+
+    def take_launch_env(self, path: Path) -> list[Hit]:
+        """Remove the launch-env records read from this env file and return
+        their hits, so the project walk records each value once, at the file."""
+        where = posix(path)
+        keep: list[_Found] = []
+        taken: list[Hit] = []
+        for f in self.found:
+            launch = f.location.kind is LocationKind.LAUNCH_ENV
+            if launch and f.location.path == where and f.hit.spans:
+                taken.append(f.hit)
+            else:
+                keep.append(f)
+        self.found = keep
+        return taken
 
     def skip(self, path: Path, reason: NotScannedReason) -> None:
         self.not_scanned.append(
@@ -257,11 +281,10 @@ def _judge_env(
 def _environment(
     c: _Collector, entries: list[EnvEntry], env_text: str | None, env_file: Path | None
 ) -> None:
-    launch = Location(
-        kind=LocationKind.LAUNCH_ENV, display=_LAUNCH_ENV,
-        path=posix(env_file) if env_file is not None else None,
+    _judge_env(
+        c, entries, path=env_file, text=env_text, detector=_LAUNCH_ENV_DETECTOR,
+        location=_launch_location(env_file, None),
     )
-    _judge_env(c, entries, path=env_file, text=env_text, detector="launch_env", location=launch)
     for rel in STARTUP_FILES:
         path = c.home / rel
         if not path.is_file():
@@ -293,8 +316,12 @@ def _scanner_hit(result: ScannerResult, text: str | None) -> Hit:
     )
 
 
-def _project(c: _Collector, results: list[ScannerResult]) -> dict[Path, bool]:
-    """Returns {file: git-ignored} for every project file walked."""
+def _project(
+    c: _Collector, results: list[ScannerResult], env_file: Path | None
+) -> dict[Path, bool]:
+    """Returns {file: git-ignored} for every project file walked. An env file
+    inside the project is a project file too: each value it holds is one
+    record at the file that also names the launch env."""
     files, skipped = walk_project(c.home, c.project)
     for s in skipped:
         c.skip(s.path, s.reason)
@@ -316,6 +343,8 @@ def _project(c: _Collector, results: list[ScannerResult]) -> dict[Path, bool]:
         hits = [] if path in c.claimed else scan_text(text, rel=file.rel)
         scanner = [_scanner_hit(r, text) for r in by_path.pop(path, [])]
         located = [h for h in scanner if h.spans]
+        if path == env_file and path not in c.claimed:
+            located += c.take_launch_env(path)
         if located:
             hits = merge_hits(hits + located)
         hits += [h for h in scanner if not h.spans]
@@ -418,9 +447,7 @@ def take_inventory(inputs: InventoryInputs) -> InventoryResult:
     env_file = absolute(inputs.env_file) if inputs.env_file is not None else None
     _standard_locations(c, env_map)
     _environment(c, entries, env_text, env_file)
-    if env_file is not None:
-        c.claimed.add(env_file)
-    ignored = _project(c, results)
+    ignored = _project(c, results, env_file)
     map_file, fine = _map(c, ignored)
 
     return _assemble(
@@ -444,7 +471,7 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
         cred = Credential(
             id="", name=name, source=f.source, reason=f.hit.reason, location=f.location,
             value_state=state, detectors=sorted(f.hit.detectors), scope=scope,
-            git_ignored=f.git_ignored,
+            git_ignored=f.git_ignored, launch_env=f.launch_env,
         )
         rows.append((cred, f))
     rows.sort(key=lambda r: (

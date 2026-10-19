@@ -30,7 +30,7 @@ weir inventory --home DIR [--project DIR] [--env-file FILE | --process-env]
 | `--env-file` | The agent's launch environment as `NAME=value` lines (dotenv style: `export ` and one level of matching quotes are stripped, `#` lines skipped), or NUL-separated `env -0` output. |
 | `--process-env` | Use this process's own environment as the launch environment. Without either option only shell startup files are read, and the report says so. |
 | `--gitleaks` | Import a gitleaks JSON report (`gitleaks detect --report-format json`). Repeatable. Relative `File` paths resolve against the project. |
-| `--trufflehog` | Import a trufflehog JSON report (`trufflehog filesystem|git --json`, one result per line, or a JSON array). Repeatable. |
+| `--trufflehog` | Import a trufflehog JSON report (`trufflehog filesystem|git --json`, one result per line). Repeatable. |
 | `--key` | Fingerprint key file, created (mode 0600) when missing. Default `HOME/.weir/fingerprint.key`. |
 | `--unknown-list` | Where the unknown environment variable names go. Default `HOME/.weir/unknown-env.txt`. Always written, one `NAME<TAB>location` per line, names only. |
 | `--store` | Write the fingerprint store here (keyed fingerprints plus offsets, mode 0600). Nothing is stored without it. |
@@ -83,7 +83,12 @@ read from it.
    credential by name with `value_state: dynamic`. A secret assigned in a
    startup file but never exported is still a credential, since the file is
    readable; an unexported variable that is not a secret is not part of the
-   environment and is neither counted nor listed.
+   environment and is neither counted nor listed. An export after `;`, `&&`
+   or `||` counts too (`[ -n "$PS1" ] && export GH_TOKEN=...`). An env file
+   inside the project (`--env-file ./.env`) is still a project file: each
+   value it holds is one `project_scan` record at the file, with
+   `git_ignored` as for any project file, and its `launch_env` names the
+   launch environment, so no value is counted twice.
 4. **Approved map** (`map`): `<project>/.weir/reach.yml`, where a person
    declares what discovery cannot know. Strict schema: an unknown key is an
    error (exit 2), so a typo never reads as an approval.
@@ -134,6 +139,13 @@ credential whatever its value looks like.
 4. Anything else is **unknown**: a count on screen, the full list (names
    only) in the unknown-list file and in the JSON report, never a failure
    unless `--strict`, and markable as fine in the map.
+
+Step 2 comes before step 3, so a value that is not a secret wins over a
+name that suggests one, as the design brief states it: a number, boolean,
+path or plain hostname is not a secret. `DB_PASSWORD=84736251` is therefore
+not a credential and not an unknown; it only adds one to `env_not_secret`.
+The same holds for `password = "84736251"` in a project file. Only a field
+a standard location entry names stays a credential whatever its value.
 
 Project-file assignments use the same not-a-secret check (step 2) and name
 rule (step 3) with a minimum value length of 8 (the catalog's
@@ -205,7 +217,7 @@ What a settings generator reads from `report`:
 | need | where |
 | --- | --- |
 | credential files to deny (Read rules, sandbox read blocks) | `credentials[].location` with `kind: file`: `path` (absolute) and `display` (`~/...` under the home, `./...` under the project, absolute elsewhere, forward slashes) |
-| environment secrets to mask or deny | `credentials[]` with `source: environment` and `location.kind: launch_env`: `name` |
+| environment secrets to mask or deny | `credentials[]` with `source: environment` and `location.kind: launch_env`, or with `launch_env` set: `name` |
 | startup files that re-export a secret | `credentials[]` with `source: environment` and `location.kind: file` |
 | files whose `.gitignore` entry is no protection | `git_ignored[]` |
 | what was not looked at | `not_scanned[]`, `inputs.env_source` (`none` = no launch environment given) |
@@ -236,10 +248,11 @@ A credential:
 | `source` | string | `standard_location`, `project_scan`, `environment`, `map` |
 | `reason` | string | `location`, `name`, `shape`, `scanner`, `map` |
 | `location` | object | `kind` (`file` / `launch_env`), `display`, `path` (absolute or null), `line` (1-based or null), `commit` (scanner results from git history) |
-| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_number` (a standard-file field the format typed as a number, value not read) |
+| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_scalar` (a standard-file field the format typed as a number, boolean or date, such as YAML `on` or `2024-05-01`, value not read) |
 | `detectors` | array | every detector that found it, sorted: `location:<id>`, `catalog:<class>`, `assignment`, `shape:<shape>`, `launch_env`, `startup_file`, `gitleaks:<rule>`, `trufflehog:<detector>`, `map` |
 | `scope` | string or null | profile, section, host or JSON path (`default`, `github.com`, `mcpServers.acme-search.env`) |
 | `git_ignored` | boolean | a `.gitignore` rule covers the file |
+| `launch_env` | object or null | the value is also in the launch environment, because the env file given as it is this project file: a `launch_env` location (same shape as `location`). Null otherwise |
 
 ## The store (`weir-inventory-store/1`)
 

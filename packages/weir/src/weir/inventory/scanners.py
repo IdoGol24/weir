@@ -101,25 +101,17 @@ def load_gitleaks(report: Path, project: Path) -> list[ScannerResult]:
 
 def load_trufflehog(report: Path, project: Path) -> list[ScannerResult]:
     """A trufflehog JSON report (`trufflehog filesystem|git --json`): one
-    result per line. A JSON array of results is accepted too."""
-    data = _read(report)
+    result per line."""
     decoder = msgspec.json.Decoder(_TrufflehogResult)
     results: list[_TrufflehogResult] = []
-    stripped = data.lstrip()
-    try:
-        if stripped.startswith(b"["):
-            results = msgspec.json.decode(stripped, type=list[_TrufflehogResult])
-        else:
-            for number, line in enumerate(data.splitlines(), start=1):
-                if line.strip():
-                    try:
-                        results.append(decoder.decode(line))
-                    except (msgspec.DecodeError, msgspec.ValidationError) as exc:
-                        raise ScannerReportError(
-                            f"not a trufflehog JSON report: {report}: line {number}: {exc}"
-                        ) from exc
-    except (msgspec.DecodeError, msgspec.ValidationError) as exc:
-        raise ScannerReportError(f"not a trufflehog JSON report: {report}: {exc}") from exc
+    for number, line in enumerate(_read(report).splitlines(), start=1):
+        if line.strip():
+            try:
+                results.append(decoder.decode(line))
+            except (msgspec.DecodeError, msgspec.ValidationError) as exc:
+                raise ScannerReportError(
+                    f"not a trufflehog JSON report: {report}: line {number}: {exc}"
+                ) from exc
     out: list[ScannerResult] = []
     for r in results:
         where = r.SourceMetadata.Data.Filesystem or r.SourceMetadata.Data.Git

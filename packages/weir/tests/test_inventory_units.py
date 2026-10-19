@@ -9,12 +9,18 @@ import sys
 from pathlib import Path
 
 import inventory_fakehome as fx
+import msgspec
 import pytest
 
 from weir.inventory import (
+    Credential,
     Inventory,
     InventoryInputError,
     InventoryInputs,
+    Location,
+    LocationKind,
+    Reason,
+    Source,
     ValueState,
     take_inventory,
 )
@@ -255,6 +261,39 @@ def test_startup_file_forms() -> None:
             assert text[entry.span[0]:entry.span[1]] == entry.value, entry.name
 
 
+def test_startup_file_commands_after_a_separator() -> None:
+    text = (
+        f'[ -n "$PS1" ] && export A_TOKEN={fx.MARKER_USERMCP}\n'
+        f"cd ~; export B_TOKEN={fx.MARKER_PROJMCP}\n"
+        f"export C_MODE=1; export D_TOKEN={fx.MARKER_DOTENV} || true\n"
+        f"if true; then export E_TOKEN={fx.MARKER_PRODYAML}; fi\n"
+        f"true && F_TOKEN={fx.MARKER_AWSCREDS}; true && export F_TOKEN\n"
+        f"echo 'x; export G_TOKEN={fx.MARKER_DOTENVLOCAL}' # ; export H_TOKEN=1\n"
+    )
+    entries = {e.name: e for e in parse_startup_file(text)}
+    assert set(entries) == {"A_TOKEN", "B_TOKEN", "C_MODE", "D_TOKEN", "E_TOKEN", "F_TOKEN"}
+    assert all(e.exported for e in entries.values())
+    assert [entries[n].line for n in sorted(entries)] == [1, 2, 3, 3, 4, 5]
+    for entry in entries.values():
+        assert entry.span is not None and entry.value is not None
+        assert text[entry.span[0]:entry.span[1]] == entry.value, entry.name
+
+
+def test_an_export_after_a_separator_is_an_environment_credential(tmp_path: Path) -> None:
+    fake = fx.build(tmp_path)
+    (fake.home / ".bash_profile").write_text(
+        f'[ -n "$PS1" ] && export LATE_TOKEN={fx.MARKER_DOTENV}\n'
+    )
+    result = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key,
+    ))
+    [cred] = [c for c in result.report.credentials if c.location.display == "~/.bash_profile"]
+    assert (cred.name, cred.source, cred.location.line) == ("LATE_TOKEN", "environment", 1)
+    [record] = [r for r in result.store.records if r.credential_id == cred.id]
+    data = (fake.home / ".bash_profile").read_bytes()
+    assert [data[s:e] for s, e in record.offsets] == [fx.MARKER_DOTENV.encode()]
+
+
 def test_a_mixed_quote_word_never_gets_a_wrong_offset() -> None:
     text = 'export A_TOKEN=abc"defghij"\nexport B_TOKEN="abc"\n'
     first, second = parse_startup_file(text)
@@ -274,6 +313,54 @@ def test_unexported_secret_in_a_startup_file_is_a_credential(tmp_path: Path) -> 
     assert names == {"LOCAL_TOKEN"}
     # An unexported unknown is not an environment variable at all.
     assert "LOCAL_NOTE" not in {e.name for e in report.env_unknown}
+
+
+def test_an_env_file_inside_the_project_is_one_record_per_value_at_both_locations(
+    tmp_path: Path,
+) -> None:
+    fake = fx.build(tmp_path)
+    dotenv = fake.project / ".env"
+    with dotenv.open("a") as handle:
+        handle.write("SHORT_TOKEN=abc12x\n")  # under the project floor, a secret by name
+    plain = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key,
+    ))
+    launched = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=dotenv,
+    ))
+
+    def launch(c: Credential) -> Location:
+        return Location(
+            kind=LocationKind.LAUNCH_ENV, display="launch env", path=c.location.path,
+            line=c.location.line,
+        )
+
+    at_env = [c for c in plain.report.credentials if c.location.display == "./.env"]
+    assert at_env and all(c.git_ignored for c in at_env)
+    expected = [
+        msgspec.structs.replace(
+            c, launch_env=launch(c), detectors=sorted({*c.detectors, "launch_env"}),
+        ) if c in at_env else c
+        for c in plain.report.credentials
+    ]
+    [short] = [c for c in launched.report.credentials if c.name == "SHORT_TOKEN"]
+    assert (short.source, short.location.display, short.git_ignored, short.launch_env) == (
+        Source.PROJECT_SCAN, "./.env", True, launch(short),
+    )
+    assert short.detectors == ["launch_env"]
+    rest = [c for c in launched.report.credentials if c is not short]
+    assert [msgspec.structs.replace(c, reason=Reason.NAME) for c in rest] == [
+        msgspec.structs.replace(c, reason=Reason.NAME) for c in expected
+    ]
+    kinds = {c.location.kind for c in launched.report.credentials}
+    assert LocationKind.LAUNCH_ENV not in kinds
+    assert launched.report.git_ignored == plain.report.git_ignored
+    plain_records = {r.credential_id: r for r in plain.store.records}
+    assert {r.credential_id: r for r in launched.store.records if r.credential_id != short.id} == (
+        plain_records
+    )
+    [row] = [r for r in _screen_rows(launched.report, "./.env") if "SHORT_TOKEN" in r]
+    assert row.endswith("(also launch env, git-ignored)")
 
 
 # --- standard formats -------------------------------------------------------
@@ -324,10 +411,11 @@ def _screen_rows(report: Inventory, display: str) -> list[str]:
     ]
 
 
-def test_a_named_field_typed_as_a_number_is_a_credential_without_a_value(
-    tmp_path: Path,
+@pytest.mark.parametrize("value", [fx.MARKER_DOTENV_DECIMAL, "on", "no", "true", "2024-05-01"])
+def test_a_named_field_with_a_typed_scalar_is_a_credential_without_a_value(
+    tmp_path: Path, value: str,
 ) -> None:
-    text = f"users:\n- name: ci\n  user:\n    password: {fx.MARKER_DOTENV_DECIMAL}\n"
+    text = f"users:\n- name: ci\n  user:\n    password: {value}\n"
     hits = parse_location(_location("kube_config"), text)
     assert [(h.scope, h.name, h.value) for h in hits] == [("users.[ci].user", "password", None)]
     fake = fx.build(tmp_path)
@@ -336,9 +424,25 @@ def test_a_named_field_typed_as_a_number_is_a_credential_without_a_value(
         home=fake.home, project=fake.project, key_path=fake.key,
     )).report
     kube = [c for c in report.credentials if c.location.display == "~/.kube/config"]
-    assert [(c.name, c.value_state) for c in kube] == [("password", ValueState.TYPED_NUMBER)]
+    assert [(c.name, c.value_state) for c in kube] == [("password", ValueState.TYPED_SCALAR)]
     [row] = _screen_rows(report, "~/.kube/config")
-    assert row.endswith("(value typed as a number)")
+    assert row.endswith("(value typed as a non-string)")
+
+
+@pytest.mark.parametrize(("location_id", "text"), [
+    ("docker_config", '{"auths": {"r.example": {"auth": true}}}'),
+    ("docker_config", '{"auths": {"r.example": {"password": 12.5}}}'),
+    ("cargo_credentials", "[registry]\ntoken = 2024-05-01\n"),
+    ("cargo_credentials", "[registry]\ntoken = false\n"),
+])
+def test_typed_scalars_of_named_fields_in_json_and_toml(location_id: str, text: str) -> None:
+    hits = parse_location(_location(location_id), text)
+    assert [(h.value, h.missing) for h in hits] == [(None, ValueState.TYPED_SCALAR)]
+
+
+def test_a_typed_scalar_of_an_unnamed_field_is_not_a_credential() -> None:
+    text = "users:\n- name: ci\n  user:\n    insecure: true\n    retries: 3\n"
+    assert parse_location(_location("kube_config"), text) == []
 
 
 def test_undecodable_standard_file_is_still_reported(tmp_path: Path) -> None:
@@ -426,16 +530,6 @@ def test_scanner_errors_never_quote_the_report(tmp_path: Path) -> None:
         load_trufflehog(truffle, tmp_path)
     assert "line 2" in str(exc.value)
     assert fx.MARKER_DOTENV[6:12] not in str(exc.value)
-
-
-def test_trufflehog_json_array_is_accepted(tmp_path: Path) -> None:
-    truffle = tmp_path / "t.json"
-    truffle.write_text(json.dumps([{
-        "DetectorName": "URI", "Raw": fx.MARKER_DOTENV,
-        "SourceMetadata": {"Data": {"Filesystem": {"file": "a.txt", "line": 4}}},
-    }]))
-    [result] = load_trufflehog(truffle, tmp_path)
-    assert (result.rule, result.path, result.line) == ("URI", tmp_path / "a.txt", 4)
 
 
 # --- map ------------------------------------------------------------------------

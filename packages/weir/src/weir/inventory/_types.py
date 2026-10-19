@@ -65,9 +65,10 @@ class ValueState(enum.StrEnum):
     # A scanner result whose value the file it names does not hold, or that
     # the report withheld (gitleaks `--redact`): named, never fingerprinted.
     NOT_IN_FILE = "not_in_file"
-    # A standard-file field the format typed as a number: its source bytes
-    # need not be the number's text, so the value is not read.
-    TYPED_NUMBER = "typed_number"
+    # A standard-file field the format typed as a number, boolean or date:
+    # its source bytes need not be the typed value's text, so the value is
+    # not read.
+    TYPED_SCALAR = "typed_scalar"
 
 
 class LocationKind(enum.StrEnum):
@@ -113,6 +114,10 @@ class Credential(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     # True when a .gitignore rule covers the file. Ignoring a file is NOT
     # coverage: see `Inventory.git_ignored`.
     git_ignored: bool = False
+    # The value is also in the agent's launch environment: the env file given
+    # as the launch environment is this project file. One record, two
+    # locations: `location` is the file, this is the launch env.
+    launch_env: Location | None = None
 
 
 class EnvVarName(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

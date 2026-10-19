@@ -57,7 +57,7 @@ def to_hit(judged: Judged, detector: str) -> Hit:
     return Hit(
         name=entry.name, reason=reason, detectors={detector}, value=entry.value,
         spans=[entry.span] if entry.span is not None and entry.value is not None else [],
-        line=entry.line, missing=ValueState.DYNAMIC,
+        line=entry.line, missing=ValueState.DYNAMIC, name_rank=10,
     )
 
 
@@ -105,12 +105,47 @@ def process_env_entries(env: Mapping[str, str]) -> list[EnvEntry]:
 
 # --- shell startup files ---------------------------------------------------
 
+# A command may follow a reserved word on its line: `if x; then export A=1; fi`.
+_LEAD = r"^\s*(?:(?:then|else|do|\{|!)\s+)*"
 _EXPORT = re.compile(
-    r"^\s*(?:export|declare\s+-[A-Za-z]*x[A-Za-z]*|typeset\s+-[A-Za-z]*x[A-Za-z]*)\s+(.*)$"
+    _LEAD
+    + r"(?:export|declare\s+-[A-Za-z]*x[A-Za-z]*|typeset\s+-[A-Za-z]*x[A-Za-z]*)\s+(.*)$"
 )
-_ASSIGN = re.compile(rf"^\s*({_NAME})=(.*)$")
-_SETENV = re.compile(rf"^\s*setenv\s+({_NAME})\s+(.*)$")
-_FISH_SET = re.compile(rf"^\s*set\s+((?:-\S+\s+)+)({_NAME})\s+(.*)$")
+_ASSIGN = re.compile(rf"{_LEAD}({_NAME})=(.*)$")
+_SETENV = re.compile(rf"{_LEAD}setenv\s+({_NAME})\s+(.*)$")
+_FISH_SET = re.compile(rf"{_LEAD}set\s+((?:-\S+\s+)+)({_NAME})\s+(.*)$")
+
+
+def _commands(line: str) -> Iterator[tuple[int, str]]:
+    """The simple commands on one line, as (start, text): split at unquoted
+    `;`, `&` and `|` (so `&&` and `||` too), ending at an unquoted comment.
+    A parenthesized group or `$(...)` is not split."""
+    start = 0
+    depth = 0
+    quote: str | None = None
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quote is not None:
+            if ch == "\\" and quote != "'":
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch == "\\":
+            i += 1
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(depth - 1, 0)
+        elif ch == "#" and (i == 0 or line[i - 1].isspace() or line[i - 1] in ";&|"):
+            break
+        elif ch in ";&|" and depth == 0:
+            yield start, line[start:i]
+            start = i + 1
+        i += 1
+    yield start, line[start:min(i, len(line))]
 
 
 def _shell_word(text: str, start: int) -> tuple[str | None, int, int, str]:
@@ -178,9 +213,6 @@ def _assignments(rest: str, base: int) -> Iterator[tuple[str, str | None, int, i
             yield name, None, -1, -1, ""
 
 
-_EXPORTED_NAMES = re.compile(rf"(?:^|[;&|])\s*export\s+((?:{_NAME}[ \t]*)+)(?=$|[;&|#])", re.M)
-
-
 def _entry(name: str, value: str | None, start: int, raw: str, number: int) -> EnvEntry:
     span = (start, start + len(value)) if value is not None else None
     return EnvEntry(name, value, span, number, None if value is not None else raw)
@@ -202,34 +234,36 @@ def _verify_span(text: str, entry: EnvEntry) -> None:
 
 
 def parse_startup_file(text: str) -> list[EnvEntry]:
-    """Assignments: `export NAME=v`, `declare -x`, `typeset -x`, csh
-    `setenv NAME v`, fish `set -x NAME v`, and plain `NAME=v`, which is
-    `exported` when an `export NAME` anywhere in the file exports it."""
+    """Assignments in every simple command (`a && export NAME=v; b`):
+    `export NAME=v`, `declare -x`, `typeset -x`, csh `setenv NAME v`, fish
+    `set -x NAME v`, and plain `NAME=v`, which is `exported` when an
+    `export NAME` anywhere in the file exports it."""
     exported: list[EnvEntry] = []
     plain: list[EnvEntry] = []
-    exported_names = {
-        name for m in _EXPORTED_NAMES.finditer(text) for name in m.group(1).split()
-    }
+    exported_names: set[str] = set()
     offset = 0
     for number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
-        line = raw_line.rstrip("\r\n")
-        if (m := _EXPORT.match(line)) is not None:
-            for name, value, start, _, raw in _assignments(m.group(1), m.start(1)):
-                if start >= 0:
-                    exported.append(_entry(name, value, offset + start, raw, number))
-        elif (m := _SETENV.match(line)) is not None:
-            value, vstart, _, raw = _shell_word(line, m.start(2))
-            exported.append(_entry(m.group(1), value, offset + vstart, raw, number))
-        elif (m := _FISH_SET.match(line)) is not None:
-            value, vstart, _, raw = _shell_word(line, m.start(3))
-            entry = _entry(m.group(2), value, offset + vstart, raw, number)
-            if re.search(r"(?:^|\s)(?:-[A-Za-z]*x[A-Za-z]*|--export)(?=\s)", m.group(1)):
-                exported.append(entry)
-            else:
-                plain.append(entry)
-        elif (m := _ASSIGN.match(line)) is not None:
-            value, vstart, _, raw = _shell_word(line, m.start(2))
-            plain.append(_entry(m.group(1), value, offset + vstart, raw, number))
+        for start, command in _commands(raw_line.rstrip("\r\n")):
+            base = offset + start
+            if (m := _EXPORT.match(command)) is not None:
+                for name, value, vstart, _, raw in _assignments(m.group(1), m.start(1)):
+                    if vstart >= 0:
+                        exported.append(_entry(name, value, base + vstart, raw, number))
+                    else:
+                        exported_names.add(name)
+            elif (m := _SETENV.match(command)) is not None:
+                value, vstart, _, raw = _shell_word(command, m.start(2))
+                exported.append(_entry(m.group(1), value, base + vstart, raw, number))
+            elif (m := _FISH_SET.match(command)) is not None:
+                value, vstart, _, raw = _shell_word(command, m.start(3))
+                entry = _entry(m.group(2), value, base + vstart, raw, number)
+                if re.search(r"(?:^|\s)(?:-[A-Za-z]*x[A-Za-z]*|--export)(?=\s)", m.group(1)):
+                    exported.append(entry)
+                else:
+                    plain.append(entry)
+            elif (m := _ASSIGN.match(command)) is not None:
+                value, vstart, _, raw = _shell_word(command, m.start(2))
+                plain.append(_entry(m.group(1), value, base + vstart, raw, number))
         offset += len(raw_line)
     for entry in plain:
         entry.exported = entry.name in exported_names

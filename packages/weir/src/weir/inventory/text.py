@@ -45,7 +45,7 @@ _STATES = {
     ValueState.DYNAMIC: "value from a shell expansion",
     ValueState.ABSENT: "whole file",
     ValueState.NOT_IN_FILE: "value not in the file",
-    ValueState.TYPED_NUMBER: "value typed as a number",
+    ValueState.TYPED_SCALAR: "value typed as a non-string",
 }
 _MAX_COLUMN = 60
 
@@ -60,7 +60,13 @@ def _label(c: Credential) -> str:
 
 
 def _notes(c: Credential) -> str:
-    notes = [n for n in (_STATES[c.value_state], "git-ignored" if c.git_ignored else None) if n]
+    notes = [
+        n for n in (
+            _STATES[c.value_state],
+            "also launch env" if c.launch_env is not None else None,
+            "git-ignored" if c.git_ignored else None,
+        ) if n
+    ]
     return f"  ({', '.join(notes)})" if notes else ""
 
 
