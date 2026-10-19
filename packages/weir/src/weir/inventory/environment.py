@@ -173,6 +173,8 @@ _SETENV = re.compile(rf"{_LEAD}setenv\s+({_NAME})\s+(.*)$")
 _FISH_SET = re.compile(rf"{_LEAD}set\s+((?:-\S+\s+)+)({_NAME})\s+(.*)$")
 _NAME_EQ = re.compile(rf"({_NAME})(=?)")
 _HEREDOC = re.compile(r"<<-?[ \t]*\\?([\"']?)([A-Za-z_][A-Za-z0-9_]*)\1")
+# A line inside a PEM block: base64, or a header such as `Proc-Type: 4,ENCRYPTED`.
+_PEM_BODY = re.compile(r"[A-Za-z0-9+/=]*|[A-Za-z][A-Za-z0-9-]*:.*")
 
 
 def _commands(line: str) -> Iterator[tuple[int, str]]:
@@ -308,23 +310,32 @@ def _read_value(
 ) -> tuple[EnvEntry, int, PartlyReadReason | None]:
     """The assignment of `name` whose value starts at text[pos:], on the
     line text[line[0]:line[1]]: (entry, end of what it covers, why it was
-    not fully read). A value opening a PEM block runs to its END line; one
-    with no END line, or a quote its line leaves open, is not read."""
+    not fully read). A quoted value its line leaves open after a PEM BEGIN
+    line runs to its END line while every line between reads as a PEM body
+    line; at any other line it stops there, not read. Any other quote its
+    line leaves open is not read either."""
     first, last = line
     value, vstart, end, raw, closed = _shell_word(text[first:last], pos - first)
     vstart += first
     end += first
-    if vstart < last and (armor := _ARMOR.match(text, vstart)) is not None:
+    if not closed and vstart > pos and (armor := _ARMOR.match(text, vstart, last)) is not None:
         marker = f"-----END {armor.group(1)}-----"
-        close = text.find(marker, vstart)
-        if close == -1:
-            return EnvEntry(name, None, None, number, partial=True), end, (
-                PartlyReadReason.UNCLOSED_PEM
-            )
-        stop = close + len(marker)
-        quoted = vstart > pos and text.startswith(text[vstart - 1], stop)
-        value = text[vstart:stop]
-        return EnvEntry(name, value, (vstart, stop), number), stop + quoted, None
+        newline = text.find("\n", last)
+        at = len(text) if newline == -1 else newline + 1
+        while at < len(text):
+            newline = text.find("\n", at)
+            body = text[at:len(text) if newline == -1 else newline].rstrip("\r")
+            if (close := body.find(marker)) != -1:
+                stop = at + close + len(marker)
+                quoted = text.startswith(text[vstart - 1], stop)
+                value = text[vstart:stop]
+                return EnvEntry(name, value, (vstart, stop), number), stop + quoted, None
+            if _PEM_BODY.fullmatch(body.strip()) is None:
+                break
+            at = len(text) if newline == -1 else newline + 1
+        return EnvEntry(name, None, None, number, partial=True), at, (
+            PartlyReadReason.UNCLOSED_PEM
+        )
     if not closed:
         return EnvEntry(name, None, None, number, partial=True), end, (
             PartlyReadReason.MULTI_LINE_QUOTE
@@ -365,8 +376,9 @@ def parse_startup_file(text: str) -> StartupFile:
     `set -x NAME v`, and plain `NAME=v`, which is `exported` when an
     `export NAME` anywhere in the file exports it.
 
-    Each line is read on its own: no quote carries to the next line. A
-    value opening a PEM block runs to its `-----END <label>-----` line.
+    Each line is read on its own: no quote carries to the next line, except
+    that a quoted value its line leaves open after `-----BEGIN <label>-----`
+    runs to its `-----END <label>-----` line through PEM body lines.
     What is not fully read is reported, never skipped silently: a
     here-document (its body skipped to its delimiter line), a quoted value
     its line leaves open, a PEM block with no END line."""

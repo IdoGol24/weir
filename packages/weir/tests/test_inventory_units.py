@@ -395,6 +395,34 @@ def test_startup_files_are_read_line_by_line() -> None:
         assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
 
 
+def test_only_an_open_quoted_begin_line_runs_to_its_end_line() -> None:
+    cert = "\n".join(
+        ["-----BEGIN CERTIFICATE-----", fx.SSH_KEY.splitlines()[1], "-----END CERTIFICATE-----"]
+    )
+    text = (
+        'PEM_START="-----BEGIN CERTIFICATE-----"\n'  # 1: closed, a one-line value
+        f"export GH_TOKEN={fx.GITHUB_S05}\n"  # 2
+        "-----END CERTIFICATE-----\n"  # 3: an unrelated END line
+        f'export CA_CERT="{cert}"\n'  # 4-6
+        'export NOTE_KEY="-----BEGIN PRIVATE KEY-----\n'  # 7: meets a non-body line
+        f"export B_TOKEN={fx.MARKER_PROJMCP}\n"  # 8
+    )
+    parsed = parse_startup_file(text)
+    entries = parsed.entries
+    assert [(e.name, e.line, e.partial) for e in entries] == [
+        ("PEM_START", 1, False), ("GH_TOKEN", 2, False), ("CA_CERT", 4, False),
+        ("NOTE_KEY", 7, True), ("B_TOKEN", 8, False),
+    ]
+    values = [e.value for e in entries if not e.partial] == [
+        "-----BEGIN CERTIFICATE-----", fx.GITHUB_S05, cert, fx.MARKER_PROJMCP,
+    ]
+    assert values
+    assert parsed.not_fully_read == [(7, PartlyReadReason.UNCLOSED_PEM)]
+    for entry in entries:
+        if not entry.partial:
+            assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
+
+
 def test_a_mixed_quote_word_never_gets_a_wrong_offset() -> None:
     text = 'export A_TOKEN=abc"defghij"\nexport B_TOKEN="abc"\n'
     first, second = parse_startup_file(text).entries

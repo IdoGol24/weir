@@ -87,12 +87,20 @@ read from it.
    or `||` counts too (`[ -n "$PS1" ] && export GH_TOKEN=...`). Startup
    files are read line by line, with no imitation of the shell: no quote
    carries to the next line, so a stray apostrophe cannot hide a later
-   line. A value opening a PEM block (`-----BEGIN <label>-----`) runs to its
-   `-----END <label>-----` line, so a multi-line key is one value. Nothing
-   is skipped silently: a here-document (its body is skipped to its
-   delimiter line), a quoted value its line leaves open and a PEM block
-   with no END line are listed in `not_fully_read` by file and line, and
-   such a value is a record with `value_state: partial`, value not read. An env file
+   line. The one exception is a multi-line key: a quoted value its line
+   leaves open after `-----BEGIN <label>-----` runs to its
+   `-----END <label>-----` line while every line between reads as a PEM
+   body line (base64, or a header such as `Proc-Type:`), and is then one
+   value. A header-only value whose quote closes on its line is a one-line
+   value. Nothing is skipped silently: a here-document (its body is skipped
+   to its delimiter line), any other quoted value its line leaves open, and
+   a PEM block that meets a non-body line or the end of the file before its
+   END line (reading resumes at that line) are listed in `not_fully_read` by
+   file and line. Such a value is judged by its name only: a
+   secret-suggesting name gives a credential record with
+   `value_state: partial` (value not read), an exported neutral name goes
+   to `env_unknown`, and an unexported one appears only in
+   `not_fully_read`. An env file
    inside the project (`--env-file ./.env`) is still a project file: its
    values are `project_scan` records at the file, with `git_ignored` as for
    any project file, and its secret variables are also `environment`
@@ -263,7 +271,7 @@ A credential:
 | `source` | string | `standard_location`, `project_scan`, `environment`, `map` |
 | `reason` | string | `location`, `name`, `shape`, `scanner`, `map` |
 | `location` | object | `kind` (`file` / `launch_env`), `display`, `path` (absolute or null), `line` (1-based or null), `commit` (scanner results from git history) |
-| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_scalar` (a standard-file field the format typed as a number, boolean or date, such as YAML `on` or `2024-05-01`, value not read), `partial` (a startup-file value not fully read, listed in `not_fully_read`) |
+| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_scalar` (a standard-file field the format typed as a number, boolean or date, such as YAML `on` or `2024-05-01`, value not read), `partial` (a startup-file value not fully read and judged by its name, listed in `not_fully_read`) |
 | `detectors` | array | every detector that found it, sorted: `location:<id>`, `catalog:<class>`, `assignment`, `shape:<shape>`, `launch_env`, `startup_file`, `gitleaks:<rule>`, `trufflehog:<detector>`, `map` |
 | `same_value_as` | array | ids of the other credentials whose value has the same keyed fingerprint, sorted: one secret found at several places, linked without merging the records |
 | `scope` | string or null | profile, section, host or JSON path (`default`, `github.com`, `mcpServers.acme-search.env`) |

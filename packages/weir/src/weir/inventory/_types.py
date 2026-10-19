@@ -69,8 +69,10 @@ class ValueState(enum.StrEnum):
     # its source bytes need not be the typed value's text, so the value is
     # not read.
     TYPED_SCALAR = "typed_scalar"
-    # A startup-file value not fully read: a quoted value its line leaves
-    # open, or a PEM block with no END line. Listed in `not_fully_read`.
+    # A startup-file value not fully read (a quoted value its line leaves
+    # open, a PEM block that does not reach its END line), judged by its
+    # name only: a credential when the name suggests a secret. Every such
+    # value is listed in `not_fully_read`, credential or not.
     PARTIAL = "partial"
 
 
