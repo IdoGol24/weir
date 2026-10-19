@@ -100,7 +100,11 @@ read from it.
    secret-suggesting name gives a credential record with
    `value_state: partial` (value not read), an exported neutral name goes
    to `env_unknown`, and an unexported one appears only in
-   `not_fully_read`. An env file
+   `not_fully_read`. Each span not fully read (a here-document body, an
+   unread value) is still searched for credential shapes, with no
+   assignment parsing: a catalog key shape, a JWT, a URL with a password or
+   a PEM private key found there is an `environment` credential at its own
+   file and line, reason `shape`, and the span stays listed. An env file
    inside the project (`--env-file ./.env`) is still a project file: its
    values are `project_scan` records at the file, with `git_ignored` as for
    any project file, and its secret variables are also `environment`

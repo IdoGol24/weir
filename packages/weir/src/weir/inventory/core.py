@@ -79,6 +79,7 @@ from weir.inventory.project import (
     MAX_PROJECT_FILE_BYTES,
     assignment_values,
     merge_hits,
+    scan_shapes,
     scan_text,
     walk_project,
 )
@@ -289,6 +290,19 @@ def _environment(
             PartlyRead(display=c.display(path), path=posix(path), line=line, reason=why)
             for line, why in parsed.not_fully_read
         )
+        c.add(Source.ENVIRONMENT, _unread_shapes(text, parsed.unread), path=path, text=text)
+
+
+def _unread_shapes(text: str, spans: list[tuple[int, int]]) -> list[Hit]:
+    """Credential shapes inside the spans of a startup file it could not
+    fully read, at their own lines in the file."""
+    hits: list[Hit] = []
+    for start, end in spans:
+        for hit in scan_shapes(text[start:end]):
+            hit.spans = [(s + start, e + start) for s, e in hit.spans]
+            hit.line = line_of(text, hit.spans[0][0])
+            hits.append(hit)
+    return hits
 
 
 def _scanner_hit(result: ScannerResult, text: str | None) -> Hit:

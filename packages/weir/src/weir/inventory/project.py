@@ -308,6 +308,14 @@ def merge_hits(hits: list[Hit]) -> list[Hit]:
     return list(by_value.values())
 
 
+def scan_shapes(text: str, catalog: Catalog = DEFAULT_CATALOG) -> list[Hit]:
+    """Credential shapes only, no assignment parsing: the catalog's
+    key-shaped classes and the standalone shapes (JWT, URL with a password,
+    PEM private key)."""
+    hits = [*_catalog_hits(text, catalog, code=False), *_standalone_hits(text)]
+    return merge_hits([h for h in hits if h.reason is Reason.SHAPE])
+
+
 def scan_text(text: str, *, rel: str, catalog: Catalog = DEFAULT_CATALOG) -> list[Hit]:
     code = Path(rel).suffix.lower() in _CODE_SUFFIXES
     hits = [
@@ -325,6 +333,7 @@ __all__ = [
     "ProjectFile",
     "Skipped",
     "merge_hits",
+    "scan_shapes",
     "scan_text",
     "walk_project",
 ]

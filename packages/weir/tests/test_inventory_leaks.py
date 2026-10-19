@@ -361,6 +361,37 @@ def test_a_stray_quote_hides_no_later_line_and_is_reported(tmp_path: Path) -> No
     })
 
 
+def test_a_key_in_a_here_document_body_is_still_a_credential(tmp_path: Path) -> None:
+    """A here-document body is not read as commands, but it is still
+    searched for credential shapes: a key there is a credential at its own
+    line, and the here-document stays listed as not fully read."""
+    fake = fx.build(tmp_path / "fixture")
+    profile = fake.home / ".bash_profile"
+    profile.write_text(
+        "cat > ~/.config/app/env <<EOF\n"  # 1
+        f"export ACME_UPLINK={fx.OPENAI_S09}\n"  # 2
+        "EOF\n"  # 3
+    )
+    result = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key,
+    ))
+    report = result.report
+    [cred] = [c for c in report.credentials if c.location.display == "~/.bash_profile"]
+    assert (cred.source, cred.reason, cred.location.line) == ("environment", "shape", 2)
+    assert all(d.startswith(("catalog:", "shape:")) for d in cred.detectors)
+    [record] = [r for r in result.store.records if r.credential_id == cred.id]
+    exact = [profile.read_bytes()[s:e] for s, e in record.offsets] == [fx.OPENAI_S09.encode()]
+    assert exact
+    assert [(p.display, p.line, p.reason) for p in report.not_fully_read] == [
+        ("~/.bash_profile", 1, PartlyReadReason.HEREDOC),
+    ]
+    _assert_clean({
+        "report": encode_report(report),
+        "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),
+        "unknown-list": "\n".join(unknown_list_lines([*report.env_unknown, *report.env_fine])),
+    })
+
+
 def test_no_test_file_or_cache_restates_a_value() -> None:
     """Only the fixture module may hold values: no snapshot, expectation or
     other inventory test file restates one. Their compiled caches are scanned

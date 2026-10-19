@@ -307,13 +307,14 @@ def _heredocs(line: str) -> list[str]:
 
 def _read_value(
     text: str, line: tuple[int, int], pos: int, name: str, number: int
-) -> tuple[EnvEntry, int, PartlyReadReason | None]:
+) -> tuple[EnvEntry, int, tuple[PartlyReadReason, int, int] | None]:
     """The assignment of `name` whose value starts at text[pos:], on the
-    line text[line[0]:line[1]]: (entry, end of what it covers, why it was
-    not fully read). A quoted value its line leaves open after a PEM BEGIN
-    line runs to its END line while every line between reads as a PEM body
-    line; at any other line it stops there, not read. Any other quote its
-    line leaves open is not read either."""
+    line text[line[0]:line[1]]: (entry, end of what it covers, and when it
+    was not fully read, why and the span left unread). A quoted value its
+    line leaves open after a PEM BEGIN line runs to its END line while
+    every line between reads as a PEM body line; at any other line it
+    stops there, not read. Any other quote its line leaves open is not
+    read either."""
     first, last = line
     value, vstart, end, raw, closed = _shell_word(text[first:last], pos - first)
     vstart += first
@@ -334,11 +335,11 @@ def _read_value(
                 break
             at = len(text) if newline == -1 else newline + 1
         return EnvEntry(name, None, None, number, partial=True), at, (
-            PartlyReadReason.UNCLOSED_PEM
+            PartlyReadReason.UNCLOSED_PEM, vstart, at,
         )
     if not closed:
         return EnvEntry(name, None, None, number, partial=True), end, (
-            PartlyReadReason.MULTI_LINE_QUOTE
+            PartlyReadReason.MULTI_LINE_QUOTE, vstart, last,
         )
     return _entry(name, value, vstart, raw, number), end, None
 
@@ -368,6 +369,9 @@ class StartupFile:
     entries: list[EnvEntry]
     # (1-based line, why) for each place the file was not fully read.
     not_fully_read: list[tuple[int, PartlyReadReason]]
+    # [start, end) of each span left unread: a here-document body, a value
+    # not fully read. The caller still searches them for credential shapes.
+    unread: list[tuple[int, int]]
 
 
 def parse_startup_file(text: str) -> StartupFile:
@@ -386,6 +390,7 @@ def parse_startup_file(text: str) -> StartupFile:
     plain: list[EnvEntry] = []
     exported_names: set[str] = set()
     partly: set[tuple[int, PartlyReadReason]] = set()
+    unread: list[tuple[int, int]] = []
     lines = text.splitlines(keepends=True)
     starts = [0]
     for raw_line in lines:
@@ -417,11 +422,13 @@ def parse_startup_file(text: str) -> StartupFile:
             elif (m := _ASSIGN.match(command)) is not None:
                 assigned.append((m.group(1), base + m.start(2), False))
         for name, at, is_export in assigned:
-            entry, end, why = _read_value(text, (first, first + len(line)), at, name, number)
+            entry, end, part = _read_value(text, (first, first + len(line)), at, name, number)
             (exported if is_export else plain).append(entry)
             consumed = max(consumed, end)
-            if why is not None:
+            if part is not None:
+                why, start, stop = part
                 partly.add((number, why))
+                unread.append((start, stop))
         body = index + 1
         for delimiter in _heredocs(rest):
             partly.add((number, PartlyReadReason.HEREDOC))
@@ -431,6 +438,7 @@ def parse_startup_file(text: str) -> StartupFile:
             if close is None:
                 break
             consumed = max(consumed, starts[close + 1])
+            unread.append((starts[body], starts[close]))
             body = close + 1
     for entry in plain:
         entry.exported = entry.name in exported_names
@@ -439,4 +447,5 @@ def parse_startup_file(text: str) -> StartupFile:
     return StartupFile(
         entries=sorted([*exported, *plain], key=lambda e: (e.line or 0, e.name)),
         not_fully_read=sorted(partly),
+        unread=unread,
     )
