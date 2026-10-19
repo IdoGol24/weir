@@ -63,7 +63,8 @@ def _notes(c: Credential) -> str:
     notes = [
         n for n in (
             _STATES[c.value_state],
-            "also launch env" if c.launch_env is not None else None,
+            f"same value as {plural(len(c.same_value_as), 'other')}"
+            if c.same_value_as else None,
             "git-ignored" if c.git_ignored else None,
         ) if n
     ]
@@ -92,7 +93,8 @@ def inventory_lines(report: Inventory, *, unknown_list_path: str | None) -> list
         f"  launch env  {env}",
         f"  map         {inputs.map_file or 'none (.weir/reach.yml not found)'}",
         "",
-        f"{plural(counts.credentials, 'credential')}",
+        f"{plural(counts.credentials, 'credential')}"
+        f" ({plural(counts.distinct_values, 'distinct value')} read)",
     ]
     rows = [(c, _label(c), where(c.location.display, c.location.line, c.location.commit))
             for c in report.credentials]
@@ -130,6 +132,8 @@ def inventory_lines(report: Inventory, *, unknown_list_path: str | None) -> list
     if counts.env_fine:
         lines.append(f"marked fine in the map: {counts.env_fine}")
     lines.append(f"not secrets (number, boolean, path, hostname, empty): {counts.env_not_secret}")
+    if counts.env_withheld:
+        lines.append(f"names withheld (they read as key material): {counts.env_withheld}")
 
     if report.not_scanned:
         lines += ["", f"not scanned: {counts.not_scanned}"]

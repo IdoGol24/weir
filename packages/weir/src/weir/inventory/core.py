@@ -77,7 +77,6 @@ from weir.inventory.locations import (
 from weir.inventory.project import (
     MAX_PROJECT_FILE_BYTES,
     assignment_values,
-    fold_into,
     merge_hits,
     scan_text,
     walk_project,
@@ -93,7 +92,6 @@ from weir.inventory.scanners import (
 _SOURCE_ORDER = {s: i for i, s in enumerate(Source)}
 _WITHHELD = "[withheld: credential-shaped]"
 _LAUNCH_ENV = "launch env"
-_LAUNCH_ENV_DETECTOR = "launch_env"
 
 
 class InventoryInputError(Exception):
@@ -133,7 +131,6 @@ class _Found:
     location: Location
     git_ignored: bool = False
     byte_offsets: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
-    launch_env: Location | None = None
 
 
 def _launch_location(path: Path | None, line: int | None) -> Location:
@@ -151,6 +148,7 @@ class _Collector:
     not_scanned: list[NotScanned] = field(default_factory=list[NotScanned])
     env_unknown: list[EnvVarName] = field(default_factory=list[EnvVarName])
     env_not_secret: int = 0
+    env_withheld: int = 0
     # Files sources 1 and 3 already read: the project walk skips them so a
     # project that is (or contains) the home does not report them twice.
     claimed: set[Path] = field(default_factory=set[Path])
@@ -169,33 +167,15 @@ class _Collector:
         git_ignored: bool = False, launch_env: bool = False,
     ) -> None:
         for hit in hits:
-            also: Location | None = None
             if launch_env:
                 location = _launch_location(path, hit.line)
             elif path is not None:
                 location = self.file_location(path, hit.line, hit.commit)
-                if _LAUNCH_ENV_DETECTOR in hit.detectors:
-                    also = _launch_location(path, hit.line)
             else:
                 tool = hit.name.split(":")[0]
                 location = Location(kind=LocationKind.FILE, display=f"{tool} result")
             offsets = byte_spans(text, hit.spans) if text is not None else []
-            self.found.append(_Found(source, hit, location, git_ignored, offsets, also))
-
-    def take_launch_env(self, path: Path) -> list[Hit]:
-        """Remove the launch-env records read from this env file and return
-        their hits, so the project walk records each variable once, at the file."""
-        where = posix(path)
-        keep: list[_Found] = []
-        taken: list[Hit] = []
-        for f in self.found:
-            launch = f.location.kind is LocationKind.LAUNCH_ENV
-            if launch and f.location.path == where and f.hit.spans:
-                taken.append(f.hit)
-            else:
-                keep.append(f)
-        self.found = keep
-        return taken
+            self.found.append(_Found(source, hit, location, git_ignored, offsets))
 
     def skip(self, path: Path, reason: NotScannedReason) -> None:
         self.not_scanned.append(
@@ -272,6 +252,8 @@ def _judge_env(
                 Source.ENVIRONMENT, [to_hit(judged, detector)], path=path, text=text,
                 launch_env=launch_env,
             )
+        elif looks_secret_shaped(entry.name):
+            c.env_withheld += 1
         elif judged.verdict is EnvVerdict.UNKNOWN:
             where = msgspec.structs.replace(location, line=entry.line)
             c.env_unknown.append(EnvVarName(name=entry.name, location=where))
@@ -283,7 +265,7 @@ def _environment(
     c: _Collector, entries: list[EnvEntry], env_text: str | None, env_file: Path | None
 ) -> None:
     _judge_env(
-        c, entries, path=env_file, text=env_text, detector=_LAUNCH_ENV_DETECTOR,
+        c, entries, path=env_file, text=env_text, detector="launch_env",
         location=_launch_location(env_file, None),
     )
     for rel in STARTUP_FILES:
@@ -317,12 +299,10 @@ def _scanner_hit(result: ScannerResult, text: str | None) -> Hit:
     )
 
 
-def _project(
-    c: _Collector, results: list[ScannerResult], env_file: Path | None
-) -> dict[Path, bool]:
+def _project(c: _Collector, results: list[ScannerResult]) -> dict[Path, bool]:
     """Returns {file: git-ignored} for every project file walked. An env file
-    inside the project is a project file too: each variable it sets is one
-    record at the file, under its own name, that also names the launch env."""
+    inside the project is a project file too, reported here as well as by
+    the launch environment."""
     files, skipped = walk_project(c.home, c.project)
     for s in skipped:
         c.skip(s.path, s.reason)
@@ -346,8 +326,6 @@ def _project(
         located = [h for h in scanner if h.spans]
         if located:
             hits = merge_hits(hits + located)
-        if path == env_file and path not in c.claimed:
-            hits = fold_into(c.take_launch_env(path), hits, text)
         hits += [h for h in scanner if not h.spans]
         c.add(Source.PROJECT_SCAN, hits, path=path, text=text, git_ignored=file.git_ignored)
 
@@ -448,7 +426,7 @@ def take_inventory(inputs: InventoryInputs) -> InventoryResult:
     env_file = absolute(inputs.env_file) if inputs.env_file is not None else None
     _standard_locations(c, env_map)
     _environment(c, entries, env_text, env_file)
-    ignored = _project(c, results, env_file)
+    ignored = _project(c, results)
     map_file, fine = _map(c, ignored)
 
     return _assemble(
@@ -471,8 +449,8 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
         state = ValueState.LITERAL if f.hit.value is not None else f.hit.missing
         cred = Credential(
             id="", name=name, source=f.source, reason=f.hit.reason, location=f.location,
-            value_state=state, detectors=sorted(f.hit.detectors), scope=scope,
-            git_ignored=f.git_ignored, launch_env=f.launch_env,
+            value_state=state, detectors=sorted(f.hit.detectors), same_value_as=[],
+            scope=scope, git_ignored=f.git_ignored,
         )
         rows.append((cred, f))
     rows.sort(key=lambda r: (
@@ -494,6 +472,16 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
                 fingerprint_v=FINGERPRINT_VERSION, path=f.location.path,
                 offsets=f.byte_offsets,
             ))
+    by_value: dict[str, list[str]] = {}
+    for record in records:
+        by_value.setdefault(record.fingerprint, []).append(record.credential_id)
+    same = {cid: ids for ids in by_value.values() for cid in ids}
+    credentials = [
+        msgspec.structs.replace(
+            cred, same_value_as=sorted(i for i in same.get(cred.id, []) if i != cred.id),
+        )
+        for cred in credentials
+    ]
 
     unknown_sorted = sorted(
         c.env_unknown, key=lambda e: (e.name, e.location.display, e.location.line or 0)
@@ -517,11 +505,13 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
         inputs=inputs,
         counts=Counts(
             credentials=len(credentials),
+            distinct_values=len(by_value),
             standard_location=by_source[Source.STANDARD_LOCATION],
             project_scan=by_source[Source.PROJECT_SCAN],
             environment=by_source[Source.ENVIRONMENT],
             map=by_source[Source.MAP],
             env_not_secret=c.env_not_secret,
+            env_withheld=c.env_withheld,
             env_unknown=len(env_unknown),
             env_fine=len(env_fine),
             git_ignored_files=len(ignored_files),

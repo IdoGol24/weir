@@ -12,19 +12,17 @@ import inventory_fakehome as fx
 import msgspec
 import pytest
 
+from weir._text_safety import plural
 from weir.inventory import (
     Credential,
     Inventory,
     InventoryInputError,
     InventoryInputs,
-    Location,
     LocationKind,
-    Reason,
     Source,
     ValueState,
     take_inventory,
 )
-from weir.inventory._scan import Hit
 from weir.inventory.classify import (
     EnvVerdict,
     classify_env,
@@ -38,7 +36,7 @@ from weir.inventory.environment import parse_env_file, parse_startup_file
 from weir.inventory.fingerprint import FingerprintKeyError, fingerprint, load_or_create_key
 from weir.inventory.gitignore import GitIgnore
 from weir.inventory.locations import STANDARD_LOCATIONS, parse_location
-from weir.inventory.project import fold_into, scan_text
+from weir.inventory.project import scan_text
 from weir.inventory.scanners import ScannerReportError, load_gitleaks, load_trufflehog
 from weir.inventory.text import inventory_lines
 
@@ -237,6 +235,23 @@ def test_env_file_quoted_value_across_lines() -> None:
     assert (level.name, level.line) == ("LOG_LEVEL", fx.SA_PRIVATE_KEY.count("\n") + 2)
 
 
+def test_env_file_unquoted_value_ends_before_a_comment() -> None:
+    text = (
+        f"A_TOKEN={fx.MARKER_USERMCP}   # rotated\n"
+        "PORT=3000 # dev\n"
+        "B_MODE=x#y\n"
+        f'C_TOKEN="{fx.MARKER_PROJMCP} # kept"\n'
+        "D_MODE=v  \n"
+    )
+    entries = {e.name: e for e in parse_env_file(text)}
+    exact = entries["A_TOKEN"].value == fx.MARKER_USERMCP
+    kept = entries["C_TOKEN"].value == f"{fx.MARKER_PROJMCP} # kept"
+    assert exact and kept
+    assert [entries[n].value for n in ("PORT", "B_MODE", "D_MODE")] == ["3000", "x#y", "v"]
+    for entry in entries.values():
+        assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
+
+
 def test_env_file_nul_separated() -> None:
     text = f"ACME_DEPLOY_TOKEN={fx.MARKER_USERMCP}\0MULTI=a\nb\0"
     entries = parse_env_file(text)
@@ -325,13 +340,18 @@ def test_unexported_secret_in_a_startup_file_is_a_credential(tmp_path: Path) -> 
     assert "LOCAL_NOTE" not in {e.name for e in report.env_unknown}
 
 
-def test_an_env_file_inside_the_project_is_one_record_per_variable_at_both_locations(
+def _launch_env_records(report: Inventory) -> list[Credential]:
+    return [c for c in report.credentials if c.location.kind is LocationKind.LAUNCH_ENV]
+
+
+def test_an_env_file_inside_the_project_is_a_project_file_and_the_launch_env(
     tmp_path: Path,
 ) -> None:
     fake = fx.build(tmp_path)
     dotenv = fake.project / ".env"
     with dotenv.open("a") as handle:
-        handle.write("SHORT_TOKEN=abc12x\n")  # under the project floor, a secret by name
+        # under the project floor, a secret by name; the comment is not the value
+        handle.write("SHORT_TOKEN=abc12x  # rotated\n")
     plain = take_inventory(InventoryInputs(
         home=fake.home, project=fake.project, key_path=fake.key,
     ))
@@ -339,73 +359,61 @@ def test_an_env_file_inside_the_project_is_one_record_per_variable_at_both_locat
         home=fake.home, project=fake.project, key_path=fake.key, env_file=dotenv,
     ))
 
-    def launch(c: Credential) -> Location:
-        return Location(
-            kind=LocationKind.LAUNCH_ENV, display="launch env", path=c.location.path,
-            line=c.location.line,
-        )
+    def unlinked(creds: list[Credential]) -> list[Credential]:
+        return [msgspec.structs.replace(c, same_value_as=[]) for c in creds]
 
-    at_env = [c for c in plain.report.credentials if c.location.display == "./.env"]
-    assert at_env and all(c.git_ignored for c in at_env)
-    expected = [
-        msgspec.structs.replace(
-            c, launch_env=launch(c), detectors=sorted({*c.detectors, "launch_env"}),
-        ) if c in at_env else c
-        for c in plain.report.credentials
-    ]
-    [short] = [c for c in launched.report.credentials if c.name == "SHORT_TOKEN"]
-    assert (short.source, short.location.display, short.git_ignored, short.launch_env) == (
-        Source.PROJECT_SCAN, "./.env", True, launch(short),
+    launch = _launch_env_records(launched.report)
+    rest = [c for c in launched.report.credentials if c not in launch]
+    assert unlinked(rest) == unlinked(plain.report.credentials)
+    assert {c.name for c in launch} == {"ACME_API_KEY", "OPENAI_API_KEY", "SHORT_TOKEN"}
+    assert all(
+        c.source is Source.ENVIRONMENT and c.location.path == dotenv.as_posix() for c in launch
     )
-    assert short.detectors == ["launch_env"]
-    rest = [c for c in launched.report.credentials if c is not short]
-    assert [msgspec.structs.replace(c, reason=Reason.NAME) for c in rest] == [
-        msgspec.structs.replace(c, reason=Reason.NAME) for c in expected
-    ]
-    kinds = {c.location.kind for c in launched.report.credentials}
-    assert LocationKind.LAUNCH_ENV not in kinds
+    at_env = {c.name: c for c in rest if c.location.display == "./.env"}
+    assert at_env and all(c.git_ignored for c in at_env.values())
+    linked = [c for c in launch if c.name in at_env]
+    assert {c.name for c in linked} == {"ACME_API_KEY", "OPENAI_API_KEY"}
+    for cred in linked:
+        assert at_env[cred.name].id in cred.same_value_as
+        assert cred.id in at_env[cred.name].same_value_as
+    [short] = [c for c in launch if c.name == "SHORT_TOKEN"]
+    assert short.same_value_as == []
+    data = dotenv.read_bytes()
+    [record] = [r for r in launched.store.records if r.credential_id == short.id]
+    assert [data[s:e] for s, e in record.offsets] == [b"abc12x"]
+    assert launched.report.counts.distinct_values == plain.report.counts.distinct_values + 1
     assert launched.report.git_ignored == plain.report.git_ignored
     plain_records = {r.credential_id: r for r in plain.store.records}
-    assert {r.credential_id: r for r in launched.store.records if r.credential_id != short.id} == (
-        plain_records
-    )
-    [row] = [r for r in _screen_rows(launched.report, "./.env") if "SHORT_TOKEN" in r]
-    assert row.endswith("(also launch env, git-ignored)")
-
-
-def test_fold_into_keeps_a_hit_wider_than_its_owner() -> None:
-    text = "x" * 40
-
-    def hit(name: str, span: tuple[int, int], reason: Reason = Reason.NAME) -> Hit:
-        return Hit(
-            name=name, reason=reason, detectors={name}, value=text[span[0]:span[1]],
-            spans=[span], line=1,
-        )
-
-    owner = hit("OWNER", (10, 20))
-    folded = fold_into([owner], [hit("inner", (12, 18), Reason.SHAPE), hit("wide", (5, 30))], text)
-    assert [(h.name, h.spans) for h in folded] == [("wide", [(5, 30)]), ("OWNER", [(10, 20)])]
-    assert (owner.detectors, owner.reason) == ({"OWNER", "inner"}, Reason.SHAPE)
+    assert {
+        r.credential_id: r for r in launched.store.records if r.credential_id in plain_records
+    } == plain_records
+    [acme] = [c for c in linked if c.name == "ACME_API_KEY"]
+    [row] = [r for r in _screen_rows(launched.report, "launch env") if "ACME_API_KEY" in r]
+    assert row.endswith(f"(same value as {plural(len(acme.same_value_as), 'other')})")
 
 
 def test_a_multi_line_quoted_key_in_a_project_env_file_is_recorded_whole(
     tmp_path: Path,
 ) -> None:
+    key = fx.SA_PRIVATE_KEY.rstrip()
     fake = fx.build(tmp_path)
     dotenv = fake.project / ".env"
-    dotenv.write_text(f'APP_PRIVATE_KEY="{fx.SA_PRIVATE_KEY}"\nLOG_LEVEL=info\n')
+    dotenv.write_text(f'APP_PRIVATE_KEY="{key}"\nLOG_LEVEL=info\n')
     result = take_inventory(InventoryInputs(
         home=fake.home, project=fake.project, key_path=fake.key, env_file=dotenv,
     ))
-    at_env = [c for c in result.report.credentials if c.location.display == "./.env"]
-    assert [(c.name, c.location.line, c.launch_env is not None) for c in at_env] == [
-        ("APP_PRIVATE_KEY", 1, True)
+    [launch] = _launch_env_records(result.report)
+    assert (launch.name, launch.location.line) == ("APP_PRIVATE_KEY", 1)
+    [pem] = [
+        c for c in result.report.credentials
+        if c.location.display == "./.env" and "shape:private_key" in c.detectors
     ]
-    assert "shape:private_key" in at_env[0].detectors
-    [record] = [r for r in result.store.records if r.credential_id == at_env[0].id]
+    assert launch.same_value_as == [pem.id] and pem.same_value_as == [launch.id]
     data = dotenv.read_bytes()
-    whole = [data[s:e] for s, e in record.offsets] == [fx.SA_PRIVATE_KEY.encode()]
-    assert whole
+    for cred in (launch, pem):
+        [record] = [r for r in result.store.records if r.credential_id == cred.id]
+        whole = [data[s:e] for s, e in record.offsets] == [key.encode()]
+        assert whole, cred.source
     launch_unknown = [
         e.name for e in result.report.env_unknown if e.location.kind is LocationKind.LAUNCH_ENV
     ]
@@ -420,22 +428,24 @@ def test_two_variables_holding_one_value_in_a_project_env_file_stay_two_records(
     dotenv.write_text(
         f"DATABASE_URL={fx.DATABASE_URL_S14}\nDIRECT_URL={fx.DATABASE_URL_S14}\n"
     )
-    launched = take_inventory(InventoryInputs(
+    result = take_inventory(InventoryInputs(
         home=fake.home, project=fake.project, key_path=fake.key, env_file=dotenv,
     ))
-    at_env = [c for c in launched.report.credentials if c.location.display == "./.env"]
-    assert [(c.name, c.location.line) for c in at_env] == [("DATABASE_URL", 1), ("DIRECT_URL", 2)]
-    for cred in at_env:
-        assert cred.launch_env is not None and cred.launch_env.line == cred.location.line
-    kinds = {c.location.kind for c in launched.report.credentials}
-    assert LocationKind.LAUNCH_ENV not in kinds
+    launch = _launch_env_records(result.report)
+    assert [(c.name, c.location.line) for c in launch] == [("DATABASE_URL", 1), ("DIRECT_URL", 2)]
+    [project] = [c for c in result.report.credentials if c.location.display == "./.env"]
+    linked = [*launch, project]
+    ids = {c.id for c in linked}
+    for cred in linked:
+        assert cred.same_value_as == sorted(ids - {cred.id})
 
     data = dotenv.read_bytes()
-    ids = {c.id for c in at_env}
-    records = [r for r in launched.store.records if r.credential_id in ids]
-    assert len(records) == 2 and len({r.fingerprint for r in records}) == 1
-    for record in records:
-        assert [data[s:e] for s, e in record.offsets] == [fx.DATABASE_URL_S14.encode()]
+    records = {r.credential_id: r for r in result.store.records if r.credential_id in ids}
+    assert len({r.fingerprint for r in records.values()}) == 1
+    for cred in launch:
+        offsets = records[cred.id].offsets
+        assert [data[s:e] for s, e in offsets] == [fx.DATABASE_URL_S14.encode()]
+        assert data.count(b"\n", 0, offsets[0][0]) + 1 == cred.location.line
 
 
 # --- standard formats -------------------------------------------------------

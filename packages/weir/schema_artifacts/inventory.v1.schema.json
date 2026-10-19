@@ -6,6 +6,9 @@
         "credentials": {
           "type": "integer"
         },
+        "distinct_values": {
+          "type": "integer"
+        },
         "env_fine": {
           "type": "integer"
         },
@@ -13,6 +16,9 @@
           "type": "integer"
         },
         "env_unknown": {
+          "type": "integer"
+        },
+        "env_withheld": {
           "type": "integer"
         },
         "environment": {
@@ -36,11 +42,13 @@
       },
       "required": [
         "credentials",
+        "distinct_values",
         "standard_location",
         "project_scan",
         "environment",
         "map",
         "env_not_secret",
+        "env_withheld",
         "env_unknown",
         "env_fine",
         "git_ignored_files",
@@ -65,17 +73,6 @@
         "id": {
           "type": "string"
         },
-        "launch_env": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/Location"
-            }
-          ],
-          "default": null
-        },
         "location": {
           "$ref": "#/$defs/Location"
         },
@@ -84,6 +81,12 @@
         },
         "reason": {
           "$ref": "#/$defs/Reason"
+        },
+        "same_value_as": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "scope": {
           "anyOf": [
@@ -110,7 +113,8 @@
         "reason",
         "location",
         "value_state",
-        "detectors"
+        "detectors",
+        "same_value_as"
       ],
       "title": "Credential",
       "type": "object"

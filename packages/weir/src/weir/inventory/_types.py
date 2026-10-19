@@ -108,16 +108,16 @@ class Credential(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     # Every detector that found this record, sorted (`location:aws`,
     # `catalog:github_token`, `assignment`, `gitleaks:generic-api-key`, ...).
     detectors: list[str]
+    # Ids of the other records whose value has the same keyed fingerprint,
+    # sorted: one secret found at several places (a project .env that is
+    # also the launch environment), linked without merging the records.
+    same_value_as: list[str]
     # Profile, section, host or server the field belongs to (`default`,
     # `github.com`, `mcpServers.acme-search.env`). None when the format has none.
     scope: str | None = None
     # True when a .gitignore rule covers the file. Ignoring a file is NOT
     # coverage: see `Inventory.git_ignored`.
     git_ignored: bool = False
-    # The value is also in the agent's launch environment: the env file given
-    # as the launch environment is this project file. One record, two
-    # locations: `location` is the file, this is the launch env.
-    launch_env: Location | None = None
 
 
 class EnvVarName(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -186,11 +186,15 @@ class Inputs(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
 class Counts(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     credentials: int
+    # Distinct keyed fingerprints among the records whose value was read.
+    distinct_values: int
     standard_location: int
     project_scan: int
     environment: int
     map: int
     env_not_secret: int
+    # Variables whose NAME reads as key material, never listed.
+    env_withheld: int
     env_unknown: int
     env_fine: int
     git_ignored_files: int

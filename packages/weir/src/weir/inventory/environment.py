@@ -81,7 +81,8 @@ def _closing_quote(text: str, start: int, quote: str) -> int:
 def parse_env_file(text: str) -> list[EnvEntry]:
     """`NAME=value` per line (dotenv style: `export ` and one level of
     quotes are stripped, `#` lines skipped; a quoted value runs to its
-    closing quote, across lines), or NUL-separated `env -0` output. The
+    closing quote, across lines; an unquoted value ends before a ` #`
+    comment and trailing blanks), or NUL-separated `env -0` output. The
     value is taken literally: an env file holds what the process had,
     after the shell expanded it."""
     if "\0" in text:
@@ -103,7 +104,7 @@ def parse_env_file(text: str) -> list[EnvEntry]:
             name, raw = stripped.split("=", 1)
             if re.fullmatch(_NAME, name):
                 start = pos + lead + len(name) + 1
-                value = raw
+                value = re.split(r"\s+#", raw, maxsplit=1)[0].rstrip()
                 if raw[:1] in ("'", '"'):
                     close = _closing_quote(text, start + 1, raw[0])
                     if close != -1:

@@ -212,10 +212,11 @@ _CATALOG_KEY_PATTERNS = tuple(
 def looks_secret_shaped(text: str) -> bool:
     """Would printing `text` as a NAME risk printing a credential? A key or
     a scope parsed out of a file is untrusted: a config keyed by its own
-    token must not put the token on screen. Deliberately loose - the
-    catalog's content patterns, not its eligibility - since a false positive
+    token must not put the token on screen, nor may a line of a multi-line
+    key read as a name. Deliberately loose - the catalog's content patterns,
+    not its eligibility, and any high-entropy run - since a false positive
     here only withholds a name."""
-    if value_shape(text) is not None:
+    if value_shape(text) is not None or _high_entropy(text):
         return True
     return any(
         pattern.search(text) is not None

@@ -29,6 +29,7 @@ from weir.inventory import (
     encode_store,
     take_inventory,
 )
+from weir.inventory.text import inventory_lines, unknown_list_lines
 
 THRESHOLD = 6
 _TESTS_DIR = Path(__file__).parent
@@ -227,6 +228,23 @@ def test_nothing_the_inventory_produces_holds_a_value(tmp_path: Path) -> None:
         blobs.pop(f"out/{name}")  # inputs this test planted, not outputs
     assert "out/store.json" in blobs and "home-state/unknown-env.txt" in blobs
     _assert_clean(blobs)
+
+
+def test_a_multi_line_key_in_a_plain_env_file_lists_no_line_of_it(tmp_path: Path) -> None:
+    """`env > file` writes a multi-line value as raw lines: a key's body
+    line (`<base64>==`) reads as `NAME=value`. Its name is withheld."""
+    fake = fx.build(tmp_path / "fixture")
+    env_file = tmp_path / "plain.env"
+    env_file.write_text(f"APP_PRIVATE_KEY={fx.SA_PRIVATE_KEY}LOG_LEVEL=info\n")
+    report = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=env_file,
+    )).report
+    assert report.counts.env_withheld == 1
+    _assert_clean({
+        "report": encode_report(report),
+        "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),
+        "unknown-list": "\n".join(unknown_list_lines([*report.env_unknown, *report.env_fine])),
+    })
 
 
 def test_no_test_file_or_cache_restates_a_value() -> None:
