@@ -27,7 +27,13 @@
         "git_ignored_files": {
           "type": "integer"
         },
+        "intended_gaps": {
+          "type": "integer"
+        },
         "map": {
+          "type": "integer"
+        },
+        "map_dirs": {
           "type": "integer"
         },
         "not_fully_read": {
@@ -54,6 +60,8 @@
         "env_withheld",
         "env_unknown",
         "env_fine",
+        "intended_gaps",
+        "map_dirs",
         "git_ignored_files",
         "not_scanned",
         "not_fully_read"
@@ -212,6 +220,16 @@
             }
           ]
         },
+        "map_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MapStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "project": {
           "type": "string"
         },
@@ -230,6 +248,7 @@
         "gitleaks_reports",
         "trufflehog_reports",
         "map_file",
+        "map_status",
         "location_list_version"
       ],
       "title": "Inputs",
@@ -269,6 +288,18 @@
         "inputs": {
           "$ref": "#/$defs/Inputs"
         },
+        "intended_gaps": {
+          "items": {
+            "$ref": "#/$defs/MapEntry"
+          },
+          "type": "array"
+        },
+        "map_dirs": {
+          "items": {
+            "$ref": "#/$defs/MapEntry"
+          },
+          "type": "array"
+        },
         "not_fully_read": {
           "items": {
             "$ref": "#/$defs/PartlyRead"
@@ -292,6 +323,8 @@
         "credentials",
         "env_unknown",
         "env_fine",
+        "intended_gaps",
+        "map_dirs",
         "git_ignored",
         "not_scanned",
         "not_fully_read"
@@ -355,6 +388,62 @@
         "launch_env"
       ],
       "title": "LocationKind"
+    },
+    "MapEntry": {
+      "additionalProperties": false,
+      "description": "A location the approved map names that the inventory carries rather\n    than judges: an intended gap (a secret the agent's own work needs), or an\n    extra location that is a directory.",
+      "properties": {
+        "display": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/MapKind"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "display"
+      ],
+      "title": "MapEntry",
+      "type": "object"
+    },
+    "MapKind": {
+      "enum": [
+        "dir",
+        "env_var",
+        "file"
+      ],
+      "title": "MapKind"
+    },
+    "MapStatus": {
+      "description": "The approved map's `status`. Only `approved` changes the inventory.",
+      "enum": [
+        "approved",
+        "proposed"
+      ],
+      "title": "MapStatus"
     },
     "NotScanned": {
       "additionalProperties": false,

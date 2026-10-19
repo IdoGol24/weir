@@ -26,9 +26,14 @@ import msgspec
 
 from weir.inventory._scan import Hit, absolute, find_encoded, line_of
 from weir.inventory._types import Reason, ValueState
-from weir.inventory.classify import name_suggests_secret, not_secret_kind, value_shape
+from weir.inventory.classify import (
+    is_env_reference,
+    name_suggests_secret,
+    not_secret_kind,
+    value_shape,
+)
 
-LOCATION_LIST_VERSION = 1
+LOCATION_LIST_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,9 @@ class StandardLocation:
     # Lowercased field names that ARE the credential in this format. Any
     # other field still counts when its name or its value's shape says so.
     fields: frozenset[str] = frozenset()
+    # Lowercased field names known NOT to be secret although the name may
+    # suggest one (Google's `token_uri`): judged by their value's shape only.
+    plain_fields: frozenset[str] = frozenset()
     # Variables naming the file itself.
     env_files: tuple[str, ...] = ()
     # (variable naming a directory, path of the file inside it).
@@ -52,6 +60,13 @@ _AWS_FIELDS = frozenset({
     "aws_access_key_id", "aws_secret_access_key", "aws_session_token", "aws_security_token",
 })
 _GOOGLE_FIELDS = frozenset({"client_secret", "refresh_token", "private_key", "private_key_id"})
+# The endpoint and type fields of Google credential files (authorized user,
+# service account, external account): URLs and labels, never secrets.
+_GOOGLE_PLAIN_FIELDS = frozenset({
+    "token_uri", "token_url", "token_info_url", "auth_uri", "auth_provider_x509_cert_url",
+    "client_x509_cert_url", "service_account_impersonation_url", "subject_token_type",
+    "universe_domain", "type",
+})
 _GCLOUD_DIRS = (".config/gcloud", "AppData/Roaming/gcloud")
 
 STANDARD_LOCATIONS: tuple[StandardLocation, ...] = (
@@ -73,14 +88,14 @@ STANDARD_LOCATIONS: tuple[StandardLocation, ...] = (
     StandardLocation(
         "google_application_default_credentials",
         tuple(f"{d}/application_default_credentials.json" for d in _GCLOUD_DIRS),
-        "json", _GOOGLE_FIELDS,
+        "json", _GOOGLE_FIELDS, _GOOGLE_PLAIN_FIELDS,
         env_files=("GOOGLE_APPLICATION_CREDENTIALS",),
         env_dirs=(("CLOUDSDK_CONFIG", "application_default_credentials.json"),),
     ),
     StandardLocation(
         "gcloud_legacy_credentials",
         tuple(f"{d}/legacy_credentials/*/adc.json" for d in _GCLOUD_DIRS),
-        "json", _GOOGLE_FIELDS,
+        "json", _GOOGLE_FIELDS, _GOOGLE_PLAIN_FIELDS,
         env_dirs=(("CLOUDSDK_CONFIG", "legacy_credentials/*/adc.json"),),
     ),
     StandardLocation(
@@ -228,22 +243,27 @@ _PLAIN_WORD = re.compile(r"[a-z][a-z-]*")
 
 
 def _judge(location: StandardLocation, field_name: str, value: str) -> Reason | None:
-    """Is this field of a standard credential file a credential? A field
-    the entry names always is. Any other field needs a credential-shaped
-    value, or a secret-suggesting name with a value that is not a short or
-    plain word: docker's `credsStore: desktop` names a helper, not a secret.
+    """Is this field of a standard credential file a credential? A value
+    that is wholly an environment reference (`${NPM_TOKEN}`) never is: the
+    tool expands it from the environment, where the variable is judged. A
+    field the entry names otherwise always is. Any other field needs a
+    credential-shaped value, or a secret-suggesting name with a value that is
+    not a short or plain word: docker's `credsStore: desktop` names a helper,
+    not a secret. A field the entry names as plain is judged by shape only.
     Only an unnamed field is dropped for a number, boolean, path or hostname
     value."""
-    if not value.strip():
+    if not value.strip() or is_env_reference(value):
         return None
-    if field_name.lower() in location.fields:
+    name = field_name.lower()
+    if name in location.fields:
         return Reason.LOCATION
     if not_secret_kind(value) is not None:
         return None
     if value_shape(value.strip()) is not None:
         return Reason.SHAPE
     if (
-        name_suggests_secret(field_name)
+        name not in location.plain_fields
+        and name_suggests_secret(field_name)
         and len(value) >= 8
         and not _PLAIN_WORD.fullmatch(value)
     ):
@@ -458,22 +478,27 @@ def render_locations_doc() -> str:
         "Variables are read from the launch environment being inventoried; the default",
         "paths are checked as well.",
         "",
-        "| id | paths | format | credential fields | moved by |",
-        "| --- | --- | --- | --- | --- |",
+        "| id | paths | format | credential fields | plain fields | moved by |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for loc in STANDARD_LOCATIONS:
         paths = "<br>".join(f"`~/{p}`" for p in loc.paths)
         fields = ", ".join(f"`{f}`" for f in sorted(loc.fields)) or "-"
+        plain = ", ".join(f"`{f}`" for f in sorted(loc.plain_fields)) or "-"
         moved = [f"`{v}`" for v in loc.env_files]
         moved += [f"`{v}`/`{inner}`" for v, inner in loc.env_dirs]
         moved += [f"`{v}` (list)" for v in loc.env_path_lists]
         lines.append(
-            f"| {loc.id} | {paths} | {loc.format} | {fields} | {', '.join(moved) or '-'} |"
+            f"| {loc.id} | {paths} | {loc.format} | {fields} | {plain} "
+            f"| {', '.join(moved) or '-'} |"
         )
     lines += [
         "",
         "Any other field of these files also counts when its name suggests a secret or",
-        "its value has a credential shape (docs/inventory.md, \"Classification\").",
+        "its value has a credential shape (docs/inventory.md, \"Classification\"). A plain",
+        "field counts only for its value's shape. A value that is wholly an environment",
+        "reference (`${NAME}`, `$NAME`) is never a credential at the file: the variable",
+        "is judged in the launch environment.",
         "",
         "## Shell startup files",
         "",

@@ -59,8 +59,8 @@ class ValueState(enum.StrEnum):
     # (`export TOKEN=$(pass show x)`): a credential by name, value unknown.
     DYNAMIC = "dynamic"
     # A whole-file credential whose value is not extracted: a binary token
-    # database, a standard file weir cannot read or parse, or a file a person
-    # approved into the map with no field.
+    # database, a standard file weir cannot read or parse, or a file an
+    # approved map names as an extra location.
     ABSENT = "absent"
     # A scanner result whose value the file it names does not hold, or that
     # the report withheld (gitleaks `--redact`): named, never fingerprinted.
@@ -187,6 +187,34 @@ class PartlyRead(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     reason: PartlyReadReason
 
 
+class MapStatus(enum.StrEnum):
+    """The approved map's `status`. Only `approved` changes the inventory."""
+
+    PROPOSED = "proposed"  # written by the onboarding skill, not yet approved
+    APPROVED = "approved"  # a person approved it
+
+
+class MapKind(enum.StrEnum):
+    FILE = "file"
+    DIR = "dir"
+    ENV_VAR = "env_var"
+
+
+class MapEntry(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """A location the approved map names that the inventory carries rather
+    than judges: an intended gap (a secret the agent's own work needs), or an
+    extra location that is a directory."""
+
+    kind: MapKind
+    # `~/...` under the home, `./...` under the project, absolute elsewhere;
+    # `env:NAME` for an environment variable.
+    display: str
+    # Absolute path, forward slashes. None for an environment variable.
+    path: str | None = None
+    # The variable's name for `env_var`, else None.
+    name: str | None = None
+
+
 class EnvSource(enum.StrEnum):
     FILE = "file"  # --env-file
     PROCESS = "process"  # --process-env: the running process's environment
@@ -202,6 +230,8 @@ class Inputs(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     trufflehog_reports: list[str]
     # <project>/.weir/reach.yml when it exists, else None.
     map_file: str | None
+    # Its `status`, None without a map. A `proposed` map changes nothing.
+    map_status: MapStatus | None
     location_list_version: int
 
 
@@ -218,6 +248,8 @@ class Counts(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     env_withheld: int
     env_unknown: int
     env_fine: int
+    intended_gaps: int
+    map_dirs: int
     git_ignored_files: int
     not_scanned: int
     not_fully_read: int
@@ -235,8 +267,13 @@ class Inventory(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     # Unknown environment variables, names only, sorted. On screen they are
     # a count; the full list goes to a file.
     env_unknown: list[EnvVarName]
-    # Variables the map marks fine (`env: {fine: [...]}`) that were present.
+    # Unknown variables an approved map marks fine (`unknown_env` entries
+    # with `mark: fine`) that were present.
     env_fine: list[EnvVarName]
+    # The approved map's `intended_gaps`, carried as written, sorted by display.
+    intended_gaps: list[MapEntry]
+    # The approved map's `extra_locations` of kind `dir`: carried, not read.
+    map_dirs: list[MapEntry]
     git_ignored: list[GitIgnoredFile]
     not_scanned: list[NotScanned]
     not_fully_read: list[PartlyRead]

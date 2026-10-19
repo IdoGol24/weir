@@ -43,6 +43,9 @@ from weir.inventory._types import (
     Inventory,
     Location,
     LocationKind,
+    MapEntry,
+    MapKind,
+    MapStatus,
     NotScanned,
     NotScannedReason,
     PartlyRead,
@@ -77,12 +80,11 @@ from weir.inventory.locations import (
 )
 from weir.inventory.project import (
     MAX_PROJECT_FILE_BYTES,
-    assignment_values,
     merge_hits,
     scan_text,
     walk_project,
 )
-from weir.inventory.reach_map import MapError, load_map, resolve_entry
+from weir.inventory.reach_map import MapError, MapLocation, env_name, load_map, resolve_entry
 from weir.inventory.scanners import (
     ScannerReportError,
     ScannerResult,
@@ -355,38 +357,53 @@ def _project(c: _Collector, results: list[ScannerResult]) -> dict[Path, bool]:
     return {f.path: f.git_ignored for f in files}
 
 
-def _map(c: _Collector, ignored: dict[Path, bool]) -> tuple[str | None, list[str]]:
+@dataclass
+class _MapRead:
+    file: str | None = None
+    status: MapStatus | None = None
+    fine: list[str] = field(default_factory=list[str])
+    intended_gaps: list[MapEntry] = field(default_factory=list[MapEntry])
+    dirs: list[MapEntry] = field(default_factory=list[MapEntry])
+
+
+def _map_entry(c: _Collector, item: MapLocation) -> MapEntry:
+    if (name := env_name(item.location)) is not None:
+        return MapEntry(kind=item.kind, display=_safe_label(item.location) or "?", name=name)
+    path = absolute(resolve_entry(item.location, home=c.home, project=c.project))
+    return MapEntry(
+        kind=item.kind, display=_safe_label(c.display(path)) or "?", path=posix(path)
+    )
+
+
+def _map(c: _Collector, ignored: dict[Path, bool]) -> _MapRead:
     try:
         loaded = load_map(c.project)
     except MapError as exc:
         raise InventoryInputError(str(exc)) from exc
     if loaded is None:
-        return None, []
+        return _MapRead()
     map_path, reach = loaded
-    for entry in reach.credentials:
-        path = absolute(resolve_entry(entry.path, home=c.home, project=c.project))
-        git_ignored = ignored.get(path, False)
+    read = _MapRead(file=posix(map_path), status=reach.status)
+    if not reach.approved:
+        # A proposal is a person's to approve; until then it changes nothing.
+        return read
+    for item in reach.extra_locations:
+        path = absolute(resolve_entry(item.location, home=c.home, project=c.project))
+        if item.kind is MapKind.DIR:
+            if not path.is_dir():
+                c.skip(path, NotScannedReason.MISSING)
+            read.dirs.append(_map_entry(c, item))
+            continue
         if not path.is_file():
             c.skip(path, NotScannedReason.MISSING)
             continue
-        if entry.field is None:
-            hit = _whole_file_hit("map", Reason.MAP, entry.name or path.name)
-            c.add(Source.MAP, [hit], path=path, text=None, git_ignored=git_ignored)
-            continue
-        try:
-            text = read_text(path)
-        except Unreadable as exc:
-            c.skip(path, exc.reason)
-            c.add(Source.MAP, [_whole_file_hit("map", Reason.MAP, entry.name or entry.field)],
-                  path=path, text=None, git_ignored=git_ignored)
-            continue
-        hits = [
-            Hit(name=entry.name or entry.field, reason=Reason.MAP, detectors={"map"},
-                value=h.value, spans=h.spans, line=h.line)
-            for h in assignment_values(text, entry.field)
-        ] or [_whole_file_hit("map", Reason.MAP, entry.name or entry.field)]
-        c.add(Source.MAP, hits, path=path, text=text, git_ignored=git_ignored)
-    return posix(map_path), list(reach.env.fine)
+        c.add(
+            Source.MAP, [_whole_file_hit("map", Reason.MAP, path.name)], path=path, text=None,
+            git_ignored=ignored.get(path, False),
+        )
+    read.intended_gaps = [_map_entry(c, gap) for gap in reach.intended_gaps]
+    read.fine = reach.fine_env()
+    return read
 
 
 def _safe_label(text: str | None) -> str | None:
@@ -435,21 +452,23 @@ def take_inventory(inputs: InventoryInputs) -> InventoryResult:
     _standard_locations(c, env_map)
     _environment(c, entries, env_text, env_file)
     ignored = _project(c, results)
-    map_file, fine = _map(c, ignored)
+    reach = _map(c, ignored)
 
     return _assemble(
-        c, key, set(fine),
+        c, key, reach,
         Inputs(
             home=posix(home), project=posix(project), env_source=env_source,
             env_file=posix(env_file) if env_file is not None else None,
             gitleaks_reports=[posix(absolute(p)) for p in inputs.gitleaks_reports],
             trufflehog_reports=[posix(absolute(p)) for p in inputs.trufflehog_reports],
-            map_file=map_file, location_list_version=LOCATION_LIST_VERSION,
+            map_file=reach.file, map_status=reach.status,
+            location_list_version=LOCATION_LIST_VERSION,
         ),
     )
 
 
-def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> InventoryResult:
+def _assemble(c: _Collector, key: bytes, reach: _MapRead, inputs: Inputs) -> InventoryResult:
+    fine = set(reach.fine)
     rows: list[tuple[Credential, _Found]] = []
     for f in c.found:
         name = _safe_label(f.hit.name) or "?"
@@ -525,6 +544,8 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
             env_withheld=c.env_withheld,
             env_unknown=len(env_unknown),
             env_fine=len(env_fine),
+            intended_gaps=len(reach.intended_gaps),
+            map_dirs=len(reach.dirs),
             git_ignored_files=len(ignored_files),
             not_scanned=len(not_scanned),
             not_fully_read=len(not_fully_read),
@@ -532,6 +553,8 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
         credentials=credentials,
         env_unknown=env_unknown,
         env_fine=env_fine,
+        intended_gaps=sorted(reach.intended_gaps, key=lambda g: (g.display, g.kind.value)),
+        map_dirs=sorted(reach.dirs, key=lambda d: d.display),
         git_ignored=sorted(ignored_files.values(), key=lambda g: g.display),
         not_scanned=not_scanned,
         not_fully_read=not_fully_read,

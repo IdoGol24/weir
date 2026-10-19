@@ -188,6 +188,9 @@ class FakeHome:
     # Names the inventory must list as unknown, and the one the map marks fine.
     unknown_env: tuple[str, ...]
     fine_env: tuple[str, ...]
+    # The approved map's intended gaps and directories, as displayed.
+    intended_gaps: tuple[str, ...]
+    map_dirs: tuple[str, ...]
     # Project files .gitignore covers that hold a planted credential.
     git_ignored: tuple[str, ...]
     # Displayed paths the inventory must list as not scanned, with reasons.
@@ -219,6 +222,71 @@ def _derive_line(plant: Plant, home: Path, project: Path) -> Plant:
             return replace(plant, line=text.count("\n", 0, index) + 1)
     raise AssertionError(f"plant {plant!r} is not in its file")
 
+
+REACH_MAP_APPROVED = """\
+# .weir/reach.yml - from the weir-reach-discovery skill, approved by a person.
+version: 2
+status: approved
+approved_by: fake-reviewer
+extra_locations:
+  - location: src/vault.go
+    kind: file
+    exists: true
+    git: tracked
+    evidence:
+      - src/vault.go:3
+    reason: the unseal key the vault client is built with
+  - location: ~/.config/acme/session.bin
+    kind: file
+    exists: true
+    git: outside
+    evidence:
+      - src/app.py:1
+    reason: the acme client keeps its session here
+  - location: ~/.config/acme
+    kind: dir
+    exists: true
+    git: outside
+    evidence:
+      - src/app.py:1
+    reason: the acme client's config directory
+  - location: docs/gone.txt
+    kind: file
+    exists: false
+    git: untracked
+    routes:
+      grep_tool: reachable
+      read_tool: reachable
+      cat: reachable
+      grep_r: reachable
+    evidence:
+      - src/app.py:1
+    reason: a handoff note the README says to create
+intended_gaps:
+  - location: env:DATABASE_URL
+    kind: env_var
+    exists: unknown
+    evidence:
+      - config/database.yml:2
+    reason: the test suite the agent runs connects to the local database
+unknown_env:
+  - location: env:RELEASE_CHANNEL
+    evidence:
+      - src/app.py:1
+    reason: names the release channel
+    mark: fine
+  - location: env:BUILD_FLAVOR
+    evidence:
+      - src/app.py:1
+    reason: selects the build flavour
+    mark: review
+"""
+# The same map as the skill writes it, before a person approves it.
+REACH_MAP_PROPOSED = (
+    REACH_MAP_APPROVED.replace("status: approved", "status: proposed")
+    .replace("approved_by: fake-reviewer", "approved_by: null")
+    .replace("mark: fine", "mark: review")
+)
 
 STANDARD = "standard_location"
 PROJECT = "project_scan"
@@ -259,6 +327,8 @@ def build(root: Path) -> FakeHome:
         "client_id": "fake-client.apps.googleusercontent.com",
         "client_secret": AWS_SECRET_S03,
         "refresh_token": JWT_S17,
+        # An endpoint whose name says token: not a credential.
+        "token_uri": "https://oauth2.googleapis.com/token",
         "type": "authorized_user",
     }))
     plant(STANDARD, "~/.config/gcloud/application_default_credentials.json", "client_secret",
@@ -282,6 +352,8 @@ def build(root: Path) -> FakeHome:
     _write(home / ".npmrc", (
         "registry=https://registry.npmjs.org/\n"
         f"//registry.npmjs.org/:_authToken={ANTHROPIC_S12}\n"
+        # npm expands this from the environment: the credential is NPM_TOKEN there.
+        "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}\n"
     ))
     plant(STANDARD, "~/.npmrc", "_authToken", ANTHROPIC_S12, 2)
 
@@ -342,6 +414,7 @@ def build(root: Path) -> FakeHome:
         ("GOOGLE_APPLICATION_CREDENTIALS", "~/keys/adc-sa.json"),  # a path, not a secret
         ("HOME", "/home/dev"),
         ("LOG_LEVEL", "info"),  # unknown
+        ("NPM_TOKEN", GITHUB_S06),  # what ~/.npmrc's ${NPM_TOKEN} expands to
         ("PATH", "/usr/local/bin:/usr/bin:/bin"),
         ("PORT", "8080"),
         ("RELEASE_CHANNEL", DECOY_D1),  # unknown, marked fine in the map
@@ -350,7 +423,7 @@ def build(root: Path) -> FakeHome:
     _write(env_file, "".join(f"{k}={v}\n" for k, v in launch))
     line = {k: i + 1 for i, (k, _) in enumerate(launch)}
     for name in ("ACME_DEPLOY_TOKEN", "ACME_UPLINK", "ANTHROPIC_API_KEY",
-                 "AWS_SECRET_ACCESS_KEY", "DATABASE_URL"):
+                 "AWS_SECRET_ACCESS_KEY", "DATABASE_URL", "NPM_TOKEN"):
         plant(ENVIRONMENT, "launch env", name, dict(launch)[name], line[name])
 
     _write(home / ".bashrc", (
@@ -455,16 +528,11 @@ def build(root: Path) -> FakeHome:
 
     # --- source 4: the approved map ------------------------------------------
     _write(home / ".config/acme/session.bin", b"\x00\x01acme-session\x00")
-    _write(project / ".weir/reach.yml", (
-        "version: 1\n"
-        "credentials:\n"
-        "  - path: src/vault.go\n    name: VAULT_UNSEAL_KEY\n    field: unsealKey\n"
-        "  - path: ~/.config/acme/session.bin\n    name: ACME_SESSION\n"
-        "  - path: docs/gone.txt\n"
-        "env:\n  fine: [RELEASE_CHANNEL]\n"
-    ))
-    plant(MAP, "./src/vault.go", "VAULT_UNSEAL_KEY", AWS_SECRET_S03, 3)
-    plant(MAP, "~/.config/acme/session.bin", "ACME_SESSION", None)
+    # The onboarding skill's map shape (weir-reach-discovery, version 2),
+    # approved by a person.
+    _write(project / ".weir/reach.yml", REACH_MAP_APPROVED)
+    plant(MAP, "./src/vault.go", "vault.go", None)
+    plant(MAP, "~/.config/acme/session.bin", "session.bin", None)
 
     key = root / "test.key"
     _write(key, TEST_KEY_HEX + "\n")
@@ -474,6 +542,8 @@ def build(root: Path) -> FakeHome:
         plants=tuple(_derive_line(p, home, project) for p in plants),
         unknown_env=("BUILD_FLAVOR", "EDITOR_THEME", "LOG_LEVEL"),
         fine_env=("RELEASE_CHANNEL",),
+        intended_gaps=("env:DATABASE_URL",),
+        map_dirs=("~/.config/acme",),
         git_ignored=("./.env", "./.mcp.json", "./config/prod/secrets.yaml"),
         not_scanned=(
             ("./assets/blob.bin", "binary"),

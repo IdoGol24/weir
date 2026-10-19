@@ -225,8 +225,13 @@ def test_cli_unknown_list_file_and_strict(fake: fx.FakeHome, tmp_path: Path) -> 
 
 def test_cli_strict_passes_when_every_unknown_is_marked_fine(fake: fx.FakeHome) -> None:
     reach = fake.project / ".weir/reach.yml"
-    text = reach.read_text().replace("fine: [RELEASE_CHANNEL]", "fine: [RELEASE_CHANNEL, "
-                                     + ", ".join(fake.unknown_env) + "]")
+    text = reach.read_text().replace("mark: review", "mark: fine")
+    listed = {line.split("env:", 1)[1] for line in text.splitlines() if "location: env:" in line}
+    text += "".join(
+        f"  - location: env:{name}\n    evidence:\n      - src/app.py:1\n"
+        f"    reason: read by the app\n    mark: fine\n"
+        for name in fake.unknown_env if name not in listed
+    )
     reach.write_text(text)
     code, _ = _cli(fake, "--strict")
     assert code == 0
@@ -421,7 +426,7 @@ def test_mutation_losing_the_map_is_noticed(fake: fx.FakeHome) -> None:
     (fake.project / ".weir/reach.yml").unlink()
     report = _run(fake).report
     missing = missing_plants(report, fake)
-    assert _lacks(missing, "map", "~/.config/acme/session.bin", "ACME_SESSION")
+    assert _lacks(missing, "map", "~/.config/acme/session.bin", "session.bin")
     assert sorted(fake.fine_env) != sorted(e.name for e in report.env_fine)
 
 

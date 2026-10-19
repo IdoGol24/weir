@@ -13,6 +13,7 @@ from weir.inventory._types import (
     EnvSource,
     EnvVarName,
     Inventory,
+    MapStatus,
     Reason,
     Source,
     ValueState,
@@ -72,6 +73,14 @@ def _notes(c: Credential) -> str:
     return f"  ({', '.join(notes)})" if notes else ""
 
 
+def _map_line(map_file: str | None, status: MapStatus | None) -> str:
+    if map_file is None:
+        return "none (.weir/reach.yml not found)"
+    if status is MapStatus.PROPOSED:
+        return f"{map_file} (proposed: changes nothing until a person approves it)"
+    return f"{map_file} (approved)"
+
+
 def unknown_list_lines(names: list[EnvVarName]) -> list[str]:
     """The unknown-variable file: `NAME<TAB>location`, one per line."""
     return [
@@ -92,7 +101,7 @@ def inventory_lines(report: Inventory, *, unknown_list_path: str | None) -> list
         f"  home        {inputs.home}",
         f"  project     {inputs.project}",
         f"  launch env  {env}",
-        f"  map         {inputs.map_file or 'none (.weir/reach.yml not found)'}",
+        f"  map         {_map_line(inputs.map_file, inputs.map_status)}",
         "",
         f"{plural(counts.credentials, 'credential')}"
         f" ({plural(counts.distinct_values, 'distinct value')} read)",
@@ -124,6 +133,21 @@ def inventory_lines(report: Inventory, *, unknown_list_path: str | None) -> list
             " Read, cat and grep -r still reach them",
         ]
         lines += [f"  {g.display}" for g in report.git_ignored]
+
+    if report.intended_gaps:
+        lines += [
+            "",
+            f"intended gaps in the approved map: {counts.intended_gaps}",
+            "  secrets the agent's own work needs, as a person approved them",
+        ]
+        lines += [f"  {g.display}" for g in report.intended_gaps]
+    if report.map_dirs:
+        lines += [
+            "",
+            f"directories in the approved map: {counts.map_dirs}",
+            "  extra locations that are directories: listed, not read",
+        ]
+        lines += [f"  {d.display}" for d in report.map_dirs]
 
     lines.append("")
     unknown = f"unknown environment variables: {counts.env_unknown}"

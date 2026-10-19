@@ -253,23 +253,6 @@ def _standalone_hits(text: str) -> Iterator[Hit]:
             )
 
 
-def assignment_values(text: str, key: str) -> list[Hit]:
-    """Every non-empty value assigned to exactly this key, whatever its
-    name suggests: the map's `field`, which a person approved."""
-    hits: list[Hit] = []
-    for match in _ASSIGNMENT.finditer(text):
-        if match.group("key") != key:
-            continue
-        value, inner, _ = _unquote(match.group("val"))
-        if value:
-            start = match.start("val") + inner
-            hits.append(Hit(
-                name=key, reason=Reason.MAP, detectors={"map"}, value=value,
-                spans=[(start, start + len(value))], line=line_of(text, start),
-            ))
-    return hits
-
-
 def merge_hits(hits: list[Hit]) -> list[Hit]:
     """Hits whose spans overlap are one credential: the value comes from the
     hit with the widest span among the shape detectors, else the first; the
@@ -329,7 +312,6 @@ def scan_text(text: str, *, rel: str, catalog: Catalog = DEFAULT_CATALOG) -> lis
 __all__ = [
     "MAX_PROJECT_FILE_BYTES",
     "VENDORED_DIRS",
-    "assignment_values",
     "ProjectFile",
     "Skipped",
     "merge_hits",

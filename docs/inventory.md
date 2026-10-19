@@ -122,30 +122,68 @@ read from it.
    `same_value_as` (equal keyed fingerprints), and `counts.distinct_values`
    counts each value once.
 4. **Approved map** (`map`): `<project>/.weir/reach.yml`, where a person
-   declares what discovery cannot know. Strict schema: an unknown key is an
-   error (exit 2), so a typo never reads as an approval.
+   declares what discovery cannot know. Its one producer is the
+   weir-reach-discovery onboarding skill, which writes a **proposal** in this
+   shape (version 2) for a person to review, edit and approve:
 
    ```yaml
-   version: 1
-   credentials:
-     - path: config/creds.go      # project-relative, ~/home-relative or absolute
-       name: PAYMENTS_SIGNING_KEY # optional label; defaults to the field or file name
-       field: signing_key         # optional: only the value assigned to this key
-   env:
-     fine: [BUILD_TAG, CI_RUNNER] # unknown variables a person marked fine
+   version: 2
+   status: approved          # proposed | approved
+   approved_by: dev
+   extra_locations:          # places secrets are loaded from that discovery misses
+     - location: ~/.config/examplevendor/creds.toml   # ~/..., repo-relative or absolute
+       kind: file            # file | dir | env_var
+       exists: true          # true | false | unknown
+       git: outside          # tracked | ignored | untracked | outside
+       evidence: [src/vendor_client.py:12]
+       reason: the vendor client loads its API credentials from this file
+   intended_gaps:            # secrets the agent's own work needs
+     - location: env:TEST_DATABASE_URL
+       kind: env_var
+       exists: unknown
+       evidence: [tests/conftest.py:8]
+       reason: the test suite connects to the local test database
+   unknown_env:
+     - location: env:BUILD_TAG
+       evidence: [ci/build.sh:4]
+       reason: stamped into the build
+       mark: fine            # review | fine; only a person sets fine
    ```
 
-   An entry without `field` makes the whole file a credential
-   (`value_state: absent`). A path that does not exist is listed under
-   `not_scanned` as `missing`. `env.fine` moves matching *unknown* variables
-   from `env_unknown` to `env_fine`; it never demotes a secret.
+   - Only `status: approved` changes the inventory. A `proposed` map changes
+     nothing: the report is exactly the report without a map, apart from
+     `inputs.map_file` and `inputs.map_status`, and the screen says
+     "proposed: changes nothing until a person approves it".
+   - Each `extra_locations` entry of kind `file` is a map credential: the
+     whole file, named after the file (`value_state: absent`). One that does
+     not exist is listed under `not_scanned` as `missing`. An entry of kind
+     `dir` is carried in `map_dirs`, not read. An `env_var` entry is an
+     error, as the skill's checker rules.
+   - `unknown_env` entries with `mark: fine` move matching *unknown*
+     variables from `env_unknown` to `env_fine`; it never demotes a secret.
+     `mark: review` entries change nothing: weir finds unknown variables
+     itself.
+   - `intended_gaps` are carried as written in `intended_gaps`, for the
+     guard settings generator: a file or directory with its path, a
+     variable with its name. They are not judged.
+   - The schema is strict: an unknown key, a wrong type or an unknown
+     `kind`, `status` or `mark` is an error (exit 2), so a typo never reads
+     as an approval. `evidence` and `reason` are read and not used.
 
 ## Classification
 
 Environment variables (and the fields of standard files that the location
 entry does not name) are judged by local, deterministic checks, in this
 order. A field the entry names (`aws_secret_access_key`, `_authToken`) is the
-credential whatever its value looks like.
+credential whatever its value looks like, with one exception: a
+standard-file field whose whole value is an environment reference
+(`_authToken=${NPM_TOKEN}`, `password = $PYPI_TOKEN`) is not a credential at
+that file and is not fingerprinted. The tool expands it from the
+environment, so the variable is judged there, in the launch environment.
+An entry may also name **plain** fields, whose names suggest a secret but
+are not one (Google's `token_uri`, `auth_uri`, `token_url`); a plain field
+counts only when its value has a credential shape (step 1). The
+[location list](inventory-locations.md) shows both field lists per entry.
 
 1. **Shape**: the value has a credential shape (a catalog key shape such as
    `ghp_...` or `AKIA...` that clears its eligibility pattern, a JWT, a URL
@@ -255,8 +293,9 @@ What a settings generator reads from `report`:
 | environment secrets to mask or deny | `credentials[]` with `source: environment` and `location.kind: launch_env`: `name` |
 | startup files that re-export a secret | `credentials[]` with `source: environment` and `location.kind: file` |
 | files whose `.gitignore` entry is no protection | `git_ignored[]` |
-| what was not looked at | `not_scanned[]`, `not_fully_read[]`, `inputs.env_source` (`none` = no launch environment given) |
+| what was not looked at | `not_scanned[]`, `not_fully_read[]`, `map_dirs[]`, `inputs.env_source` (`none` = no launch environment given) |
 | unknown variables and the ones marked fine | `env_unknown[]`, `env_fine[]` (names and locations only) |
+| secrets the agent's own work needs (not to be denied) | `intended_gaps[]`: `kind`, `display`, `path` (files and directories) or `name` (variables); empty unless the map is approved (`inputs.map_status`) |
 
 ## The JSON report (`weir-inventory/1`)
 
@@ -266,11 +305,13 @@ fields in schema order, lists sorted. Top level:
 | field | type | meaning |
 | --- | --- | --- |
 | `schema` | string | `"weir-inventory/1"` |
-| `inputs` | object | `home`, `project` (absolute), `env_source` (`file` / `process` / `none`), `env_file`, `gitleaks_reports`, `trufflehog_reports`, `map_file` (or null), `location_list_version` |
-| `counts` | object | `credentials`, `distinct_values` (distinct keyed fingerprints among the records whose value was read), one count per source (`standard_location`, `project_scan`, `environment`, `map`), `env_not_secret`, `env_withheld`, `env_unknown`, `env_fine`, `git_ignored_files`, `not_scanned`, `not_fully_read` |
+| `inputs` | object | `home`, `project` (absolute), `env_source` (`file` / `process` / `none`), `env_file`, `gitleaks_reports`, `trufflehog_reports`, `map_file` (or null), `map_status` (`approved`, `proposed` or null), `location_list_version` |
+| `counts` | object | `credentials`, `distinct_values` (distinct keyed fingerprints among the records whose value was read), one count per source (`standard_location`, `project_scan`, `environment`, `map`), `env_not_secret`, `env_withheld`, `env_unknown`, `env_fine`, `intended_gaps`, `map_dirs`, `git_ignored_files`, `not_scanned`, `not_fully_read` |
 | `credentials` | array | sorted by source, location, line, name, scope |
 | `env_unknown` | array | `{name, location}`, sorted |
 | `env_fine` | array | `{name, location}`, sorted |
+| `intended_gaps` | array | the approved map's intended gaps, `{kind, display, path, name}`, sorted by display; `kind` is `file`, `dir` or `env_var`, `display` is `~/...`, `./...`, absolute or `env:NAME` |
+| `map_dirs` | array | the approved map's `extra_locations` of kind `dir`, same fields: carried, not read |
 | `git_ignored` | array | `{display, path, routes: [{route, status, note}]}` |
 | `not_scanned` | array | `{display, reason, path}`; reason is `binary`, `too_large`, `unreadable`, `undecodable`, `vendored_dir`, `symlinked_dir` or `missing` |
 | `not_fully_read` | array | places in a shell startup file that are present but not fully read, `{display, path, line, reason}`; reason is `heredoc`, `multi_line_quote` or `unclosed_pem`. On screen: "present, not fully read" |
@@ -284,7 +325,7 @@ A credential:
 | `source` | string | `standard_location`, `project_scan`, `environment`, `map` |
 | `reason` | string | `location`, `name`, `shape`, `scanner`, `map` |
 | `location` | object | `kind` (`file` / `launch_env`), `display`, `path` (absolute or null), `line` (1-based or null), `commit` (scanner results from git history) |
-| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_scalar` (a standard-file field the format typed as a number, boolean or date, such as YAML `on` or `2024-05-01`, value not read), `partial` (a startup-file value not fully read, with no credential shape on its first line, judged by its name; listed in `not_fully_read`) |
+| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted: a binary token database, an unreadable or unparsable standard file, an approved map's file entry), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_scalar` (a standard-file field the format typed as a number, boolean or date, such as YAML `on` or `2024-05-01`, value not read), `partial` (a startup-file value not fully read, with no credential shape on its first line, judged by its name; listed in `not_fully_read`) |
 | `detectors` | array | every detector that found it, sorted: `location:<id>`, `catalog:<class>`, `assignment`, `shape:<shape>`, `launch_env`, `startup_file`, `gitleaks:<rule>`, `trufflehog:<detector>`, `map` |
 | `same_value_as` | array | ids of the other credentials whose value has the same keyed fingerprint, sorted: one secret found at several places, linked without merging the records |
 | `scope` | string or null | profile, section, host or JSON path (`default`, `github.com`, `mcpServers.acme-search.env`) |

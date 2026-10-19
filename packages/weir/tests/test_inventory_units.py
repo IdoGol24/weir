@@ -19,6 +19,8 @@ from weir.inventory import (
     InventoryInputError,
     InventoryInputs,
     LocationKind,
+    MapKind,
+    MapStatus,
     PartlyReadReason,
     Source,
     ValueState,
@@ -634,6 +636,79 @@ def test_a_typed_scalar_of_an_unnamed_field_is_not_a_credential() -> None:
     assert parse_location(_location("kube_config"), text) == []
 
 
+@pytest.mark.parametrize(("location_id", "text"), [
+    ("npmrc", "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n"),
+    ("npmrc", "//npm.pkg.github.com/:_authToken=$GH_PACKAGES_TOKEN\n"),
+    ("npmrc", '_auth = "${NPM_AUTH}"\n'),
+    ("yarnrc", 'npmAuthToken: "${YARN_NPM_AUTH_TOKEN}"\n'),
+    ("docker_config", '{"auths": {"r.example": {"identitytoken": "${REGISTRY_TOKEN}"}}}'),
+    ("pypirc", "[pypi]\npassword = $PYPI_TOKEN\n"),
+])
+def test_a_field_that_is_wholly_an_environment_reference_is_not_a_credential(
+    location_id: str, text: str,
+) -> None:
+    assert parse_location(_location(location_id), text) == []
+
+
+def test_an_environment_reference_inside_a_value_is_still_the_value() -> None:
+    """Only a WHOLE-value reference defers to the environment: a literal with
+    a `$` in it is still read and fingerprinted."""
+    value = f"{fx.GITHUB_S04}$x"
+    hits = parse_location(_location("npmrc"), f"//r.example/:_authToken={value}\n")
+    assert [(h.name, h.value == value) for h in hits] == [("_authToken", True)]
+
+
+def test_npmrc_reference_defers_to_the_launch_environment(tmp_path: Path) -> None:
+    """End to end: `${NPM_TOKEN}` in ~/.npmrc is no credential at the file and
+    is not fingerprinted; NPM_TOKEN itself is a launch-environment secret."""
+    fake = fx.build(tmp_path)
+    result = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=fake.env_file,
+    ))
+    npmrc = fake.home / ".npmrc"
+    data = npmrc.read_bytes()
+    start = data.index(b"${NPM_TOKEN}")
+    reference_line = data.count(b"\n", 0, start) + 1
+    at_file = [c for c in result.report.credentials if c.location.display == "~/.npmrc"]
+    assert at_file and reference_line not in {c.location.line for c in at_file}
+    end = data.index(b"\n", start)
+    assert not any(
+        s < end and e > start
+        for r in result.store.records if r.path == npmrc.as_posix() for s, e in r.offsets
+    ), "a stored offset covers the environment reference"
+    launched = [c for c in result.report.credentials
+                if c.name == "NPM_TOKEN" and c.location.kind is LocationKind.LAUNCH_ENV]
+    assert [c.value_state for c in launched] == [ValueState.LITERAL]
+
+
+@pytest.mark.parametrize("location_id", [
+    "google_application_default_credentials", "gcloud_legacy_credentials",
+])
+def test_google_endpoint_fields_are_not_credentials(location_id: str) -> None:
+    text = json.dumps({
+        "type": "service_account",
+        "project_id": "acme-dev",
+        "private_key_id": fx.SA_PRIVATE_KEY_ID,
+        "private_key": fx.SA_PRIVATE_KEY,
+        "client_email": "ci@acme-dev.iam.gserviceaccount.com",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/ci",
+        "universe_domain": "googleapis.com",
+    })
+    names = sorted(h.name for h in parse_location(_location(location_id), text))
+    assert names == ["private_key", "private_key_id"]
+
+
+def test_a_plain_google_field_still_counts_for_a_credential_shape() -> None:
+    """Plain names skip the name rule only: a credential-shaped value in one is
+    still a credential."""
+    text = json.dumps({"token_uri": fx.DATABASE_URL_S13})
+    hits = parse_location(_location("google_application_default_credentials"), text)
+    assert [(h.name, h.reason.value) for h in hits] == [("token_uri", "shape")]
+
+
 def test_undecodable_standard_file_is_still_reported(tmp_path: Path) -> None:
     fake = fx.build(tmp_path)
     (fake.home / ".kube/config").write_text("users: [unclosed\n  - token: x\n")
@@ -724,10 +799,30 @@ def test_scanner_errors_never_quote_the_report(tmp_path: Path) -> None:
 # --- map ------------------------------------------------------------------------
 
 
+_GOOD_MAP_ENTRY = (
+    "    evidence:\n      - src/app.py:1\n    reason: read by the app\n"
+)
+
+
 @pytest.mark.parametrize("body", [
-    "version: 2\n",
-    "version: 1\ncredentials:\n  - path: a\n    feild: x\n",
-    "version: 1\nenv:\n  fine: BUILD\n",
+    "version: 2\n",  # no status
+    "status: approved\n",  # no version
+    "version: 1\ncredentials:\n  - path: a\n",  # the retired v1 shape
+    "version: 3\nstatus: approved\n",
+    "version: 2\nstatus: maybe\n",
+    "version: 2\nstatus: approved\nextra_locations:\n  - location: a\n    kind: file\n"
+    "    feild: x\n" + _GOOD_MAP_ENTRY,
+    "version: 2\nstatus: approved\nextra_locations:\n  - location: a\n    kind: socket\n"
+    + _GOOD_MAP_ENTRY,
+    "version: 2\nstatus: approved\nextra_locations:\n  - location: env:A_TOKEN\n"
+    "    kind: env_var\n" + _GOOD_MAP_ENTRY,
+    "version: 2\nstatus: approved\nintended_gaps:\n  - location: a\n    kind: env_var\n"
+    + _GOOD_MAP_ENTRY,
+    "version: 2\nstatus: approved\nunknown_env:\n  - location: PORT\n    mark: fine\n"
+    + _GOOD_MAP_ENTRY,
+    "version: 2\nstatus: approved\nunknown_env:\n  - location: env:PORT\n    mark: ok\n"
+    + _GOOD_MAP_ENTRY,
+    "",
     "version: [1\n",
 ])
 def test_an_invalid_map_is_an_input_error(tmp_path: Path, body: str) -> None:
@@ -735,6 +830,70 @@ def test_an_invalid_map_is_an_input_error(tmp_path: Path, body: str) -> None:
     (fake.project / ".weir/reach.yml").write_text(body)
     with pytest.raises(InventoryInputError):
         take_inventory(InventoryInputs(home=fake.home, project=fake.project, key_path=fake.key))
+
+
+def _inventory_with_map(fake: fx.FakeHome, body: str | None) -> Inventory:
+    reach = fake.project / ".weir/reach.yml"
+    if body is None:
+        reach.unlink()
+    else:
+        reach.write_text(body, encoding="utf-8", newline="\n")
+    return take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=fake.env_file,
+    )).report
+
+
+def test_a_proposed_map_changes_nothing(tmp_path: Path) -> None:
+    """The skill's proposal, before a person approves it, gives exactly the
+    report of no map at all, apart from naming the map and its status."""
+    fake = fx.build(tmp_path)
+    proposed = _inventory_with_map(fake, fx.REACH_MAP_PROPOSED)
+    none = _inventory_with_map(fake, None)
+    assert proposed.inputs.map_status is MapStatus.PROPOSED
+    assert none.inputs.map_file is None and none.inputs.map_status is None
+    unchanged = msgspec.structs.replace(
+        proposed, inputs=msgspec.structs.replace(proposed.inputs, map_file=None, map_status=None),
+    )
+    assert unchanged == none
+    assert not any(c.source is Source.MAP for c in proposed.credentials)
+    assert proposed.intended_gaps == [] and proposed.map_dirs == []
+    head = inventory_lines(proposed, unknown_list_path=None)[4]
+    assert head.endswith("(proposed: changes nothing until a person approves it)")
+
+
+def test_an_approved_map_applies(tmp_path: Path) -> None:
+    """Approving the same proposal is what makes it count: its file entries
+    become map credentials, its `mark: fine` variables move out of unknown,
+    and its intended gaps and directories are carried."""
+    fake = fx.build(tmp_path)
+    approved = _inventory_with_map(fake, fx.REACH_MAP_APPROVED)
+    assert approved.inputs.map_status is MapStatus.APPROVED
+    planted = sorted((p.display, p.name) for p in fake.plants if p.source == fx.MAP)
+    assert sorted(
+        (c.location.display, c.name) for c in approved.credentials if c.source is Source.MAP
+    ) == planted
+    assert sorted(e.name for e in approved.env_fine) == sorted(fake.fine_env)
+    assert not {e.name for e in approved.env_unknown} & set(fake.fine_env)
+    assert [g.display for g in approved.intended_gaps] == list(fake.intended_gaps)
+    assert [(g.kind, g.name, g.path) for g in approved.intended_gaps] == [
+        (MapKind.ENV_VAR, "DATABASE_URL", None),
+    ]
+    assert [d.display for d in approved.map_dirs] == list(fake.map_dirs)
+    assert [d.path for d in approved.map_dirs] == [(fake.home / ".config/acme").as_posix()]
+    lines = inventory_lines(approved, unknown_list_path=None)
+    assert lines[4].endswith("(approved)")
+    assert f"intended gaps in the approved map: {len(fake.intended_gaps)}" in lines
+    assert all(f"  {g}" in lines for g in fake.intended_gaps)
+    assert f"directories in the approved map: {len(fake.map_dirs)}" in lines
+
+
+def test_an_approved_map_entry_that_is_missing_is_reported(tmp_path: Path) -> None:
+    fake = fx.build(tmp_path)
+    body = fx.REACH_MAP_APPROVED.replace("location: ~/.config/acme\n", "location: ~/.config/gone\n")
+    report = _inventory_with_map(fake, body)
+    missing = {n.display for n in report.not_scanned if n.reason.value == "missing"}
+    assert {"./docs/gone.txt", "~/.config/gone"} <= missing
+    assert [d.display for d in report.map_dirs] == ["~/.config/gone"]
 
 
 # --- key and values -------------------------------------------------------------
