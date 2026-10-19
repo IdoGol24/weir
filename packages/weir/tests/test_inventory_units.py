@@ -452,15 +452,15 @@ def test_an_env_file_inside_the_project_is_a_project_file_and_the_launch_env(
     tmp_path: Path,
 ) -> None:
     fake = fx.build(tmp_path)
-    dotenv = fake.project / ".env"
-    with dotenv.open("a") as handle:
+    env_path = fake.project / ".env"
+    with env_path.open("a") as handle:
         # under the project floor, a secret by name; the comment is not the value
         handle.write("SHORT_TOKEN=abc12x  # rotated\n")
     plain = take_inventory(InventoryInputs(
         home=fake.home, project=fake.project, key_path=fake.key,
     ))
     launched = take_inventory(InventoryInputs(
-        home=fake.home, project=fake.project, key_path=fake.key, env_file=dotenv,
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=env_path,
     ))
 
     def unlinked(creds: list[Credential]) -> list[Credential]:
@@ -471,7 +471,7 @@ def test_an_env_file_inside_the_project_is_a_project_file_and_the_launch_env(
     assert unlinked(rest) == unlinked(plain.report.credentials)
     assert {c.name for c in launch} == {"ACME_API_KEY", "OPENAI_API_KEY", "SHORT_TOKEN"}
     assert all(
-        c.source is Source.ENVIRONMENT and c.location.path == dotenv.as_posix() for c in launch
+        c.source is Source.ENVIRONMENT and c.location.path == env_path.as_posix() for c in launch
     )
     at_env = {c.name: c for c in rest if c.location.display == "./.env"}
     assert at_env and all(c.git_ignored for c in at_env.values())
@@ -482,7 +482,7 @@ def test_an_env_file_inside_the_project_is_a_project_file_and_the_launch_env(
         assert cred.id in at_env[cred.name].same_value_as
     [short] = [c for c in launch if c.name == "SHORT_TOKEN"]
     assert short.same_value_as == []
-    data = dotenv.read_bytes()
+    data = env_path.read_bytes()
     [record] = [r for r in launched.store.records if r.credential_id == short.id]
     assert [data[s:e] for s, e in record.offsets] == [b"abc12x"]
     assert launched.report.counts.distinct_values == plain.report.counts.distinct_values + 1
@@ -501,10 +501,10 @@ def test_a_multi_line_quoted_key_in_a_project_env_file_is_recorded_whole(
 ) -> None:
     key = fx.SA_PRIVATE_KEY.rstrip()
     fake = fx.build(tmp_path)
-    dotenv = fake.project / ".env"
-    dotenv.write_text(f'APP_PRIVATE_KEY="{key}"\nLOG_LEVEL=info\n')
+    env_path = fake.project / ".env"
+    env_path.write_text(f'APP_PRIVATE_KEY="{key}"\nLOG_LEVEL=info\n')
     result = take_inventory(InventoryInputs(
-        home=fake.home, project=fake.project, key_path=fake.key, env_file=dotenv,
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=env_path,
     ))
     [launch] = _launch_env_records(result.report)
     assert (launch.name, launch.location.line) == ("APP_PRIVATE_KEY", 1)
@@ -513,7 +513,7 @@ def test_a_multi_line_quoted_key_in_a_project_env_file_is_recorded_whole(
         if c.location.display == "./.env" and "shape:private_key" in c.detectors
     ]
     assert launch.same_value_as == [pem.id] and pem.same_value_as == [launch.id]
-    data = dotenv.read_bytes()
+    data = env_path.read_bytes()
     for cred in (launch, pem):
         [record] = [r for r in result.store.records if r.credential_id == cred.id]
         whole = [data[s:e] for s, e in record.offsets] == [key.encode()]
@@ -528,12 +528,12 @@ def test_two_variables_holding_one_value_in_a_project_env_file_stay_two_records(
     tmp_path: Path,
 ) -> None:
     fake = fx.build(tmp_path)
-    dotenv = fake.project / ".env"
-    dotenv.write_text(
+    env_path = fake.project / ".env"
+    env_path.write_text(
         f"DATABASE_URL={fx.DATABASE_URL_S14}\nDIRECT_URL={fx.DATABASE_URL_S14}\n"
     )
     result = take_inventory(InventoryInputs(
-        home=fake.home, project=fake.project, key_path=fake.key, env_file=dotenv,
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=env_path,
     ))
     launch = _launch_env_records(result.report)
     assert [(c.name, c.location.line) for c in launch] == [("DATABASE_URL", 1), ("DIRECT_URL", 2)]
@@ -543,7 +543,7 @@ def test_two_variables_holding_one_value_in_a_project_env_file_stay_two_records(
     for cred in linked:
         assert cred.same_value_as == sorted(ids - {cred.id})
 
-    data = dotenv.read_bytes()
+    data = env_path.read_bytes()
     records = {r.credential_id: r for r in result.store.records if r.credential_id in ids}
     assert len({r.fingerprint for r in records.values()}) == 1
     for cred in launch:
