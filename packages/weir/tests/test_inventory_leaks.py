@@ -311,6 +311,35 @@ def test_a_multi_line_quoted_key_in_a_startup_file_is_one_value(tmp_path: Path) 
     })
 
 
+def test_a_heredoc_apostrophe_or_an_open_quote_hides_no_later_export(tmp_path: Path) -> None:
+    fake = fx.build(tmp_path / "fixture")
+    profile = fake.home / ".bash_profile"
+    profile.write_text(
+        "usage() {\ncat <<EOF\nDon't run this as root\nEOF\n}\n"
+        f"export GH_TOKEN={fx.GITHUB_S05}\n"
+        f'export DRAFT_TOKEN="{fx.MARKER_DOTENV}\n'
+        f"export OPENAI_API_KEY={fx.OPENAI_S08}\n"
+    )
+    result = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key,
+    ))
+    report = result.report
+    found = [c for c in report.credentials if c.location.display == "~/.bash_profile"]
+    assert [(c.name, c.location.line) for c in found] == [
+        ("GH_TOKEN", 6), ("DRAFT_TOKEN", 7), ("OPENAI_API_KEY", 8),
+    ]
+    data = profile.read_bytes()
+    for cred, value in zip(found, (fx.GITHUB_S05, fx.MARKER_DOTENV, fx.OPENAI_S08), strict=True):
+        [record] = [r for r in result.store.records if r.credential_id == cred.id]
+        exact = [data[s:e] for s, e in record.offsets] == [value.encode()]
+        assert exact, cred.name
+    _assert_clean({
+        "report": encode_report(report),
+        "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),
+        "unknown-list": "\n".join(unknown_list_lines([*report.env_unknown, *report.env_fine])),
+    })
+
+
 def test_no_test_file_or_cache_restates_a_value() -> None:
     """Only the fixture module may hold values: no snapshot, expectation or
     other inventory test file restates one. Their compiled caches are scanned

@@ -85,8 +85,10 @@ read from it.
    readable; an unexported variable that is not a secret is not part of the
    environment and is neither counted nor listed. An export after `;`, `&&`
    or `||` counts too (`[ -n "$PS1" ] && export GH_TOKEN=...`). A quoted
-   value runs across lines to its closing quote, as the shell reads it, so
-   a multi-line key is one value. An env file
+   value its line leaves open runs on to its closing quote, at most 200
+   lines further (still open there, it is read on its line alone), so a
+   multi-line key is one value; no other quote, such as an apostrophe in a
+   here-document, is followed past its line. An env file
    inside the project (`--env-file ./.env`) is still a project file: its
    values are `project_scan` records at the file, with `git_ignored` as for
    any project file, and its secret variables are also `environment`

@@ -363,6 +363,25 @@ def test_a_quoted_startup_file_value_runs_across_lines() -> None:
     assert judge(entries[1]).verdict is EnvVerdict.SECRET
 
 
+def test_only_an_assignment_value_runs_on_past_its_line() -> None:
+    text = (
+        "cat <<EOF\nDon't run this as root\nEOF\n"
+        f'export A_TOKEN="{fx.MARKER_USERMCP}\nsecond"; export B_TOKEN={fx.MARKER_PROJMCP}\n'
+        f'export C_TOKEN="{fx.MARKER_DOTENV}\n'
+        f"export D_TOKEN={fx.MARKER_PRODYAML}\n"
+    )
+    entries = parse_startup_file(text)
+    assert [(e.name, e.line) for e in entries] == [
+        ("A_TOKEN", 4), ("B_TOKEN", 5), ("C_TOKEN", 6), ("D_TOKEN", 7),
+    ]
+    values = [e.value for e in entries] == [
+        f"{fx.MARKER_USERMCP}\nsecond", fx.MARKER_PROJMCP, fx.MARKER_DOTENV, fx.MARKER_PRODYAML,
+    ]
+    assert values
+    for entry in entries:
+        assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
+
+
 def test_a_mixed_quote_word_never_gets_a_wrong_offset() -> None:
     text = 'export A_TOKEN=abc"defghij"\nexport B_TOKEN="abc"\n'
     first, second = parse_startup_file(text)

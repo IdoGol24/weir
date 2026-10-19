@@ -163,45 +163,14 @@ def process_env_entries(env: Mapping[str, str]) -> list[EnvEntry]:
 _LEAD = r"^\s*(?:(?:then|else|do|\{|!)\s+)*"
 _EXPORT = re.compile(
     _LEAD
-    + r"(?:export|declare\s+-[A-Za-z]*x[A-Za-z]*|typeset\s+-[A-Za-z]*x[A-Za-z]*)\s+(.*)$",
-    re.S,
+    + r"(?:export|declare\s+-[A-Za-z]*x[A-Za-z]*|typeset\s+-[A-Za-z]*x[A-Za-z]*)\s+(.*)$"
 )
-_ASSIGN = re.compile(rf"{_LEAD}({_NAME})=(.*)$", re.S)
-_SETENV = re.compile(rf"{_LEAD}setenv\s+({_NAME})\s+(.*)$", re.S)
-_FISH_SET = re.compile(rf"{_LEAD}set\s+((?:-\S+\s+)+)({_NAME})\s+(.*)$", re.S)
-
-
-def _logical_lines(text: str) -> Iterator[tuple[int, int, str]]:
-    """(offset, 1-based line, text) per line as the shell reads it: a line
-    that opens a quote runs on, across newlines, to the line that closes it,
-    so a quoted multi-line value is one word and its lines are never read
-    as commands of their own."""
-    start = 0
-    number = 1
-    quote: str | None = None
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if quote is not None:
-            if ch == "\\" and quote != "'":
-                i += 1
-            elif ch == quote:
-                quote = None
-        elif ch == "\\" and text[i + 1:i + 2] != "\n":
-            i += 1
-        elif ch in "'\"`":
-            quote = ch
-        elif ch == "#" and (i == start or text[i - 1].isspace() or text[i - 1] in ";&|"):
-            end = text.find("\n", i)
-            i = len(text) if end == -1 else end
-            continue
-        elif ch == "\n":
-            yield start, number, text[start:i].rstrip("\r")
-            number += text.count("\n", start, i + 1)
-            start = i + 1
-        i += 1
-    if start < len(text):
-        yield start, number, text[start:].rstrip("\r")
+_ASSIGN = re.compile(rf"{_LEAD}({_NAME})=(.*)$")
+_SETENV = re.compile(rf"{_LEAD}setenv\s+({_NAME})\s+(.*)$")
+_FISH_SET = re.compile(rf"{_LEAD}set\s+((?:-\S+\s+)+)({_NAME})\s+(.*)$")
+_NAME_EQ = re.compile(rf"({_NAME})(=?)")
+# How far a quoted value its line leaves open may run on to its closing quote.
+_QUOTE_LINES = 200
 
 
 def _commands(line: str) -> Iterator[tuple[int, str]]:
@@ -236,20 +205,23 @@ def _commands(line: str) -> Iterator[tuple[int, str]]:
     yield start, line[start:min(i, len(line))]
 
 
-def _shell_word(text: str, start: int) -> tuple[str | None, int, int, str]:
+def _shell_word(text: str, start: int) -> tuple[str | None, int, int, str, bool]:
     """The shell word at text[start:]: (literal value or None when it
-    expands, value start, end of word, the word's text with quotes removed).
-    Single quotes are literal; double quotes and bare words expand `$` and
+    expands, value start, end of word, the word's text with quotes removed,
+    False when a quote it opens is still open at the end of text). Single
+    quotes are literal; double quotes and bare words expand `$` and
     backticks."""
     i = start
     out: list[str] = []
     dynamic = False
+    closed = True
     value_start = start
     while i < len(text) and not text[i].isspace() and text[i] not in ";&|":
         ch = text[i]
         if ch == "'":
             end = text.find("'", i + 1)
-            end = len(text) if end == -1 else end
+            if end == -1:
+                end, closed = len(text), False
             if i == start:
                 value_start = i + 1
             out.append(text[i + 1:end])
@@ -258,6 +230,7 @@ def _shell_word(text: str, start: int) -> tuple[str | None, int, int, str]:
             j = i + 1
             while j < len(text) and text[j] != '"':
                 j += 2 if text[j] == "\\" else 1
+            closed = closed and j < len(text)
             chunk = text[i + 1:min(j, len(text))]
             if is_dynamic(chunk):
                 dynamic = True
@@ -277,25 +250,47 @@ def _shell_word(text: str, start: int) -> tuple[str | None, int, int, str]:
             out.append(chunk)
             i = j
     value = "".join(out)
-    return (None if dynamic else value), value_start, i, value
+    return (None if dynamic else value), value_start, min(i, len(text)), value, closed
 
 
-def _assignments(rest: str, base: int) -> Iterator[tuple[str, str | None, int, int, str]]:
-    """`A=1 B="2"` after `export`: (name, value, start, end, text) per
-    assignment; a bare name (`export A`) yields value None with start -1."""
-    i = 0
-    while i < len(rest):
-        while i < len(rest) and rest[i].isspace():
+def _word(text: str, line: tuple[int, int], pos: int) -> tuple[str | None, int, int, str]:
+    """The shell word at text[pos:] on the line text[line[0]:line[1]], as
+    (value, value start, end of word, text), positions in the file. A
+    quoted value its line leaves open runs on to its closing quote, at most
+    _QUOTE_LINES lines further, as the shell reads it; still open there, it
+    is read on its line alone."""
+    first, last = line
+    value, vstart, end, raw, closed = _shell_word(text[first:last], pos - first)
+    if not closed:
+        limit = last
+        for _ in range(_QUOTE_LINES):
+            newline = text.find("\n", limit + 1)
+            limit = len(text) if newline == -1 else newline
+            if newline == -1:
+                break
+        wide = _shell_word(text[first:limit], pos - first)
+        if wide[4]:
+            value, vstart, end, raw, _ = wide
+    return value, first + vstart, first + end, raw
+
+
+def _assignments(
+    text: str, line: tuple[int, int], i: int, stop: int
+) -> Iterator[tuple[str, str | None, int, int, str]]:
+    """`A=1 B="2"` after `export`, at text[i:stop] on one line: (name,
+    value, value start, end of word, text) per assignment, positions in the
+    file; a bare name (`export A`) yields value None with start -1."""
+    while i < stop:
+        while i < stop and text[i].isspace():
             i += 1
-        match = re.match(rf"({_NAME})(=?)", rest[i:])
+        match = _NAME_EQ.match(text, i, stop)
         if match is None:
             return
         name = match.group(1)
-        i += match.end()
+        i = match.end()
         if match.group(2):
-            value, vstart, end, raw = _shell_word(rest, i)
-            literal_len = len(value) if value is not None else 0
-            yield name, value, base + vstart, base + vstart + literal_len, raw
+            value, vstart, end, raw = _word(text, line, i)
+            yield name, value, vstart, end, raw
             i = end
         else:
             yield name, None, -1, -1, ""
@@ -322,36 +317,51 @@ def _verify_span(text: str, entry: EnvEntry) -> None:
 
 
 def parse_startup_file(text: str) -> list[EnvEntry]:
-    """Assignments in every simple command (`a && export NAME=v; b`), a
-    quoted value running across lines as the shell reads it:
+    """Assignments in every simple command (`a && export NAME=v; b`):
     `export NAME=v`, `declare -x`, `typeset -x`, csh `setenv NAME v`, fish
     `set -x NAME v`, and plain `NAME=v`, which is `exported` when an
-    `export NAME` anywhere in the file exports it."""
+    `export NAME` anywhere in the file exports it. A quoted value its line
+    leaves open runs on to its closing quote, and what it covers is not read
+    as commands; no other quote is followed past its line."""
     exported: list[EnvEntry] = []
     plain: list[EnvEntry] = []
     exported_names: set[str] = set()
-    for offset, number, line in _logical_lines(text):
-        for start, command in _commands(line):
-            base = offset + start
+    offset = 0
+    consumed = 0
+    for number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
+        first = offset
+        offset += len(raw_line)
+        line = raw_line.rstrip("\r\n")
+        if first + len(line) <= consumed:
+            continue
+        skip = max(consumed - first, 0)
+        span = (first, first + len(line))
+        for start, command in _commands(line[skip:]):
+            base = first + skip + start
             if (m := _EXPORT.match(command)) is not None:
-                for name, value, vstart, _, raw in _assignments(m.group(1), m.start(1)):
+                words = _assignments(text, span, base + m.start(1), base + m.end(1))
+                for name, value, vstart, end, raw in words:
                     if vstart >= 0:
-                        exported.append(_entry(name, value, base + vstart, raw, number))
+                        exported.append(_entry(name, value, vstart, raw, number))
+                        consumed = max(consumed, end)
                     else:
                         exported_names.add(name)
             elif (m := _SETENV.match(command)) is not None:
-                value, vstart, _, raw = _shell_word(command, m.start(2))
-                exported.append(_entry(m.group(1), value, base + vstart, raw, number))
+                value, vstart, end, raw = _word(text, span, base + m.start(2))
+                exported.append(_entry(m.group(1), value, vstart, raw, number))
+                consumed = max(consumed, end)
             elif (m := _FISH_SET.match(command)) is not None:
-                value, vstart, _, raw = _shell_word(command, m.start(3))
-                entry = _entry(m.group(2), value, base + vstart, raw, number)
+                value, vstart, end, raw = _word(text, span, base + m.start(3))
+                entry = _entry(m.group(2), value, vstart, raw, number)
                 if re.search(r"(?:^|\s)(?:-[A-Za-z]*x[A-Za-z]*|--export)(?=\s)", m.group(1)):
                     exported.append(entry)
                 else:
                     plain.append(entry)
+                consumed = max(consumed, end)
             elif (m := _ASSIGN.match(command)) is not None:
-                value, vstart, _, raw = _shell_word(command, m.start(2))
-                plain.append(_entry(m.group(1), value, base + vstart, raw, number))
+                value, vstart, end, raw = _word(text, span, base + m.start(2))
+                plain.append(_entry(m.group(1), value, vstart, raw, number))
+                consumed = max(consumed, end)
     for entry in plain:
         entry.exported = entry.name in exported_names
     for entry in (*exported, *plain):
