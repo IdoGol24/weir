@@ -30,6 +30,9 @@
         "map": {
           "type": "integer"
         },
+        "not_fully_read": {
+          "type": "integer"
+        },
         "not_scanned": {
           "type": "integer"
         },
@@ -52,7 +55,8 @@
         "env_unknown",
         "env_fine",
         "git_ignored_files",
-        "not_scanned"
+        "not_scanned",
+        "not_fully_read"
       ],
       "title": "Counts",
       "type": "object"
@@ -265,6 +269,12 @@
         "inputs": {
           "$ref": "#/$defs/Inputs"
         },
+        "not_fully_read": {
+          "items": {
+            "$ref": "#/$defs/PartlyRead"
+          },
+          "type": "array"
+        },
         "not_scanned": {
           "items": {
             "$ref": "#/$defs/NotScanned"
@@ -283,7 +293,8 @@
         "env_unknown",
         "env_fine",
         "git_ignored",
-        "not_scanned"
+        "not_scanned",
+        "not_fully_read"
       ],
       "title": "Inventory",
       "type": "object"
@@ -386,6 +397,40 @@
       ],
       "title": "NotScannedReason"
     },
+    "PartlyRead": {
+      "additionalProperties": false,
+      "description": "A place in a shell startup file that is present but not fully read.\n    Startup files are read line by line; what that cannot read is stated.",
+      "properties": {
+        "display": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/PartlyReadReason"
+        }
+      },
+      "required": [
+        "display",
+        "path",
+        "line",
+        "reason"
+      ],
+      "title": "PartlyRead",
+      "type": "object"
+    },
+    "PartlyReadReason": {
+      "enum": [
+        "heredoc",
+        "multi_line_quote",
+        "unclosed_pem"
+      ],
+      "title": "PartlyReadReason"
+    },
     "Reason": {
       "description": "Why a record counts as a credential.",
       "enum": [
@@ -442,6 +487,7 @@
         "dynamic",
         "literal",
         "not_in_file",
+        "partial",
         "typed_scalar"
       ],
       "title": "ValueState"

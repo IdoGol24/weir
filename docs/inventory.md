@@ -84,11 +84,15 @@ read from it.
    startup file but never exported is still a credential, since the file is
    readable; an unexported variable that is not a secret is not part of the
    environment and is neither counted nor listed. An export after `;`, `&&`
-   or `||` counts too (`[ -n "$PS1" ] && export GH_TOKEN=...`). A quoted
-   value its line leaves open runs on to its closing quote, at most 200
-   lines further (still open there, it is read on its line alone), so a
-   multi-line key is one value; no other quote, such as an apostrophe in a
-   here-document, is followed past its line. An env file
+   or `||` counts too (`[ -n "$PS1" ] && export GH_TOKEN=...`). Startup
+   files are read line by line, with no imitation of the shell: no quote
+   carries to the next line, so a stray apostrophe cannot hide a later
+   line. A value opening a PEM block (`-----BEGIN <label>-----`) runs to its
+   `-----END <label>-----` line, so a multi-line key is one value. Nothing
+   is skipped silently: a here-document (its body is skipped to its
+   delimiter line), a quoted value its line leaves open and a PEM block
+   with no END line are listed in `not_fully_read` by file and line, and
+   such a value is a record with `value_state: partial`, value not read. An env file
    inside the project (`--env-file ./.env`) is still a project file: its
    values are `project_scan` records at the file, with `git_ignored` as for
    any project file, and its secret variables are also `environment`
@@ -230,7 +234,7 @@ What a settings generator reads from `report`:
 | environment secrets to mask or deny | `credentials[]` with `source: environment` and `location.kind: launch_env`: `name` |
 | startup files that re-export a secret | `credentials[]` with `source: environment` and `location.kind: file` |
 | files whose `.gitignore` entry is no protection | `git_ignored[]` |
-| what was not looked at | `not_scanned[]`, `inputs.env_source` (`none` = no launch environment given) |
+| what was not looked at | `not_scanned[]`, `not_fully_read[]`, `inputs.env_source` (`none` = no launch environment given) |
 | unknown variables and the ones marked fine | `env_unknown[]`, `env_fine[]` (names and locations only) |
 
 ## The JSON report (`weir-inventory/1`)
@@ -242,12 +246,13 @@ fields in schema order, lists sorted. Top level:
 | --- | --- | --- |
 | `schema` | string | `"weir-inventory/1"` |
 | `inputs` | object | `home`, `project` (absolute), `env_source` (`file` / `process` / `none`), `env_file`, `gitleaks_reports`, `trufflehog_reports`, `map_file` (or null), `location_list_version` |
-| `counts` | object | `credentials`, `distinct_values` (distinct keyed fingerprints among the records whose value was read), one count per source (`standard_location`, `project_scan`, `environment`, `map`), `env_not_secret`, `env_withheld`, `env_unknown`, `env_fine`, `git_ignored_files`, `not_scanned` |
+| `counts` | object | `credentials`, `distinct_values` (distinct keyed fingerprints among the records whose value was read), one count per source (`standard_location`, `project_scan`, `environment`, `map`), `env_not_secret`, `env_withheld`, `env_unknown`, `env_fine`, `git_ignored_files`, `not_scanned`, `not_fully_read` |
 | `credentials` | array | sorted by source, location, line, name, scope |
 | `env_unknown` | array | `{name, location}`, sorted |
 | `env_fine` | array | `{name, location}`, sorted |
 | `git_ignored` | array | `{display, path, routes: [{route, status, note}]}` |
 | `not_scanned` | array | `{display, reason, path}`; reason is `binary`, `too_large`, `unreadable`, `undecodable`, `vendored_dir`, `symlinked_dir` or `missing` |
+| `not_fully_read` | array | places in a shell startup file that are present but not fully read, `{display, path, line, reason}`; reason is `heredoc`, `multi_line_quote` or `unclosed_pem`. On screen: "present, not fully read" |
 
 A credential:
 
@@ -258,7 +263,7 @@ A credential:
 | `source` | string | `standard_location`, `project_scan`, `environment`, `map` |
 | `reason` | string | `location`, `name`, `shape`, `scanner`, `map` |
 | `location` | object | `kind` (`file` / `launch_env`), `display`, `path` (absolute or null), `line` (1-based or null), `commit` (scanner results from git history) |
-| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_scalar` (a standard-file field the format typed as a number, boolean or date, such as YAML `on` or `2024-05-01`, value not read) |
+| `value_state` | string | `literal` (value read, fingerprinted), `dynamic` (shell expansion), `absent` (whole-file credential, value not extracted), `not_in_file` (a scanner value the file it names does not hold, or that the report withheld), `typed_scalar` (a standard-file field the format typed as a number, boolean or date, such as YAML `on` or `2024-05-01`, value not read), `partial` (a startup-file value not fully read, listed in `not_fully_read`) |
 | `detectors` | array | every detector that found it, sorted: `location:<id>`, `catalog:<class>`, `assignment`, `shape:<shape>`, `launch_env`, `startup_file`, `gitleaks:<rule>`, `trufflehog:<detector>`, `map` |
 | `same_value_as` | array | ids of the other credentials whose value has the same keyed fingerprint, sorted: one secret found at several places, linked without merging the records |
 | `scope` | string or null | profile, section, host or JSON path (`default`, `github.com`, `mcpServers.acme-search.env`) |

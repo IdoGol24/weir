@@ -27,6 +27,8 @@ from weir.inventory import (
     InventoryInputError,
     InventoryInputs,
     LocationKind,
+    PartlyReadReason,
+    ValueState,
     encode_report,
     encode_store,
     take_inventory,
@@ -311,31 +313,50 @@ def test_a_multi_line_quoted_key_in_a_startup_file_is_one_value(tmp_path: Path) 
     })
 
 
-def test_a_heredoc_apostrophe_or_an_open_quote_hides_no_later_export(tmp_path: Path) -> None:
+def test_a_stray_quote_hides_no_later_line_and_is_reported(tmp_path: Path) -> None:
+    """Startup files are read line by line: an apostrophe in a here-document
+    or a quote its line leaves open cannot hide a later export, and what is
+    not fully read is listed by file and line, never skipped silently."""
     fake = fx.build(tmp_path / "fixture")
     profile = fake.home / ".bash_profile"
     profile.write_text(
-        "usage() {\ncat <<EOF\nDon't run this as root\nEOF\n}\n"
-        f"export GH_TOKEN={fx.GITHUB_S05}\n"
-        f'export DRAFT_TOKEN="{fx.MARKER_DOTENV}\n'
-        f"export OPENAI_API_KEY={fx.OPENAI_S08}\n"
+        "usage() {\ncat <<EOF\nNOTE=Don't run as root\nEOF\n}\n"  # 1-5
+        f"export GH_TOKEN={fx.GITHUB_S05}\n"  # 6
+        "export PS1='\\u \\w'\n"  # 7
+        f'export DRAFT_TOKEN="{fx.MARKER_DOTENV}\n'  # 8
+        'export A_MODE="x y"\n'  # 9
+        f"export OPENAI_API_KEY={fx.OPENAI_S08}\n"  # 10
     )
     result = take_inventory(InventoryInputs(
         home=fake.home, project=fake.project, key_path=fake.key,
     ))
     report = result.report
     found = [c for c in report.credentials if c.location.display == "~/.bash_profile"]
-    assert [(c.name, c.location.line) for c in found] == [
-        ("GH_TOKEN", 6), ("DRAFT_TOKEN", 7), ("OPENAI_API_KEY", 8),
+    assert [(c.name, c.location.line, c.value_state) for c in found] == [
+        ("GH_TOKEN", 6, ValueState.LITERAL), ("DRAFT_TOKEN", 8, ValueState.PARTIAL),
+        ("OPENAI_API_KEY", 10, ValueState.LITERAL),
     ]
+    unknown = [
+        (e.name, e.location.line) for e in report.env_unknown
+        if e.location.display == "~/.bash_profile"
+    ]
+    assert unknown == [("A_MODE", 9)]
+    assert [(p.display, p.line, p.reason) for p in report.not_fully_read] == [
+        ("~/.bash_profile", 2, PartlyReadReason.HEREDOC),
+        ("~/.bash_profile", 8, PartlyReadReason.MULTI_LINE_QUOTE),
+    ]
+    assert report.counts.not_fully_read == 2
     data = profile.read_bytes()
-    for cred, value in zip(found, (fx.GITHUB_S05, fx.MARKER_DOTENV, fx.OPENAI_S08), strict=True):
-        [record] = [r for r in result.store.records if r.credential_id == cred.id]
-        exact = [data[s:e] for s, e in record.offsets] == [value.encode()]
+    records = {r.credential_id: r for r in result.store.records}
+    assert found[1].id not in records
+    for cred, value in ((found[0], fx.GITHUB_S05), (found[2], fx.OPENAI_S08)):
+        exact = [data[s:e] for s, e in records[cred.id].offsets] == [value.encode()]
         assert exact, cred.name
+    screen = inventory_lines(report, unknown_list_path=None)
+    assert "present, not fully read: 2" in screen
     _assert_clean({
         "report": encode_report(report),
-        "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),
+        "screen": "\n".join(screen),
         "unknown-list": "\n".join(unknown_list_lines([*report.env_unknown, *report.env_fine])),
     })
 

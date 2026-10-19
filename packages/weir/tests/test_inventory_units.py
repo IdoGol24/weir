@@ -19,6 +19,7 @@ from weir.inventory import (
     InventoryInputError,
     InventoryInputs,
     LocationKind,
+    PartlyReadReason,
     Source,
     ValueState,
     take_inventory,
@@ -293,7 +294,7 @@ def test_startup_file_forms() -> None:
         "export I_DIR=\"$HOME/x\"\n"
         f"J_TOKEN={fx.MARKER_DOTENVLOCAL}\n"
     )
-    entries = {e.name: e for e in parse_startup_file(text)}
+    entries = {e.name: e for e in parse_startup_file(text).entries}
     assert set(entries) == {
         "A_TOKEN", "B_SECRET", "C_PASSWORD", "D_TOKEN", "E_TOKEN", "G_TOKEN", "H_TOKEN",
         "I_DIR", "J_TOKEN", "F_TOKEN",
@@ -317,7 +318,7 @@ def test_startup_file_commands_after_a_separator() -> None:
         f"true && F_TOKEN={fx.MARKER_AWSCREDS}; true && export F_TOKEN\n"
         f"echo 'x; export G_TOKEN={fx.MARKER_DOTENVLOCAL}' # ; export H_TOKEN=1\n"
     )
-    entries = {e.name: e for e in parse_startup_file(text)}
+    entries = {e.name: e for e in parse_startup_file(text).entries}
     assert set(entries) == {"A_TOKEN", "B_TOKEN", "C_MODE", "D_TOKEN", "E_TOKEN", "F_TOKEN"}
     assert all(e.exported for e in entries.values())
     assert [entries[n].line for n in sorted(entries)] == [1, 2, 3, 3, 4, 5]
@@ -341,50 +342,62 @@ def test_an_export_after_a_separator_is_an_environment_credential(tmp_path: Path
     assert [data[s:e] for s, e in record.offsets] == [fx.MARKER_DOTENV.encode()]
 
 
-def test_a_quoted_startup_file_value_runs_across_lines() -> None:
+def test_a_pem_block_in_a_startup_file_runs_to_its_end_line() -> None:
     cert = "\n".join(
         ["-----BEGIN CERTIFICATE-----", fx.SSH_KEY.splitlines()[1], "-----END CERTIFICATE-----"]
     )
     text = (
         "# don't read this apostrophe as a quote\n"
         f'export CA_CERT="{cert}"\n'
-        f"export SIGNING_KEY='{fx.SSH_KEY}'\n"
+        f"export SIGNING_KEY='{fx.SSH_KEY}'; export B_MODE=1\n"
         "export LOG_LEVEL=info\n"
     )
-    entries = parse_startup_file(text)
-    assert [(e.name, e.line) for e in entries] == [
-        ("CA_CERT", 2), ("SIGNING_KEY", 5), ("LOG_LEVEL", 8),
+    parsed = parse_startup_file(text)
+    entries = parsed.entries
+    assert [(e.name, e.line, e.exported) for e in entries] == [
+        ("CA_CERT", 2, True), ("SIGNING_KEY", 5, True), ("B_MODE", 7, True),
+        ("LOG_LEVEL", 8, True),
     ]
     whole = [e.value for e in entries[:2]] == [cert, fx.SSH_KEY]
-    assert whole
+    assert whole and parsed.not_fully_read == []
     for entry in entries:
         assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
     assert judge(entries[0]).verdict is EnvVerdict.UNKNOWN
     assert judge(entries[1]).verdict is EnvVerdict.SECRET
 
 
-def test_only_an_assignment_value_runs_on_past_its_line() -> None:
+def test_startup_files_are_read_line_by_line() -> None:
     text = (
-        "cat <<EOF\nDon't run this as root\nEOF\n"
-        f'export A_TOKEN="{fx.MARKER_USERMCP}\nsecond"; export B_TOKEN={fx.MARKER_PROJMCP}\n'
-        f'export C_TOKEN="{fx.MARKER_DOTENV}\n'
-        f"export D_TOKEN={fx.MARKER_PRODYAML}\n"
+        "cat <<EOF\nDon't run this as root\nEOF\n"  # 1-3: a here-document
+        "# don't stop here\n"  # 4
+        f'export A_TOKEN="{fx.MARKER_USERMCP}\n'  # 5: a quote its line leaves open
+        'second" export X_MODE=1\n'  # 6
+        f"export B_TOKEN={fx.MARKER_PROJMCP}\n"  # 7
+        "cat <<'END'\n"  # 8: a here-document that never ends
+        f"export C_TOKEN={fx.MARKER_DOTENV}\n"  # 9
+        'export D_PEM="-----BEGIN PRIVATE KEY-----\n'  # 10: a PEM block with no END
+        f"export E_TOKEN={fx.MARKER_PRODYAML}\n"  # 11
     )
-    entries = parse_startup_file(text)
-    assert [(e.name, e.line) for e in entries] == [
-        ("A_TOKEN", 4), ("B_TOKEN", 5), ("C_TOKEN", 6), ("D_TOKEN", 7),
+    parsed = parse_startup_file(text)
+    entries = parsed.entries
+    assert [(e.name, e.line, e.partial) for e in entries] == [
+        ("A_TOKEN", 5, True), ("B_TOKEN", 7, False), ("C_TOKEN", 9, False),
+        ("D_PEM", 10, True), ("E_TOKEN", 11, False),
     ]
-    values = [e.value for e in entries] == [
-        f"{fx.MARKER_USERMCP}\nsecond", fx.MARKER_PROJMCP, fx.MARKER_DOTENV, fx.MARKER_PRODYAML,
+    assert parsed.not_fully_read == [
+        (1, PartlyReadReason.HEREDOC), (5, PartlyReadReason.MULTI_LINE_QUOTE),
+        (8, PartlyReadReason.HEREDOC), (10, PartlyReadReason.UNCLOSED_PEM),
     ]
-    assert values
-    for entry in entries:
+    read = [e for e in entries if not e.partial]
+    values = [e.value for e in read] == [fx.MARKER_PROJMCP, fx.MARKER_DOTENV, fx.MARKER_PRODYAML]
+    assert values and all(e.value is None and e.span is None for e in entries if e.partial)
+    for entry in read:
         assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
 
 
 def test_a_mixed_quote_word_never_gets_a_wrong_offset() -> None:
     text = 'export A_TOKEN=abc"defghij"\nexport B_TOKEN="abc"\n'
-    first, second = parse_startup_file(text)
+    first, second = parse_startup_file(text).entries
     assert (first.value, first.span) == ("abcdefghij", None)
     assert second.span is not None and text[second.span[0]:second.span[1]] == "abc"
 

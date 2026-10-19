@@ -45,6 +45,7 @@ from weir.inventory._types import (
     LocationKind,
     NotScanned,
     NotScannedReason,
+    PartlyRead,
     Reason,
     Source,
     Store,
@@ -146,6 +147,7 @@ class _Collector:
     project: Path
     found: list[_Found] = field(default_factory=list[_Found])
     not_scanned: list[NotScanned] = field(default_factory=list[NotScanned])
+    not_fully_read: list[PartlyRead] = field(default_factory=list[PartlyRead])
     env_unknown: list[EnvVarName] = field(default_factory=list[EnvVarName])
     env_not_secret: int = 0
     env_withheld: int = 0
@@ -278,9 +280,14 @@ def _environment(
         except Unreadable as exc:
             c.skip(path, exc.reason)
             continue
+        parsed = parse_startup_file(text)
         _judge_env(
-            c, parse_startup_file(text), path=path, text=text, detector="startup_file",
+            c, parsed.entries, path=path, text=text, detector="startup_file",
             location=c.file_location(path, None),
+        )
+        c.not_fully_read.extend(
+            PartlyRead(display=c.display(path), path=posix(path), line=line, reason=why)
+            for line, why in parsed.not_fully_read
         )
 
 
@@ -499,6 +506,9 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
         {(n.display, n.reason): n for n in c.not_scanned}.values(),
         key=lambda n: (n.display, n.reason.value),
     )
+    not_fully_read = sorted(
+        c.not_fully_read, key=lambda p: (p.display, p.line, p.reason.value)
+    )
     by_source = {s: sum(1 for cr in credentials if cr.source is s) for s in Source}
     report = Inventory(
         schema=INVENTORY_SCHEMA,
@@ -516,12 +526,14 @@ def _assemble(c: _Collector, key: bytes, fine: set[str], inputs: Inputs) -> Inve
             env_fine=len(env_fine),
             git_ignored_files=len(ignored_files),
             not_scanned=len(not_scanned),
+            not_fully_read=len(not_fully_read),
         ),
         credentials=credentials,
         env_unknown=env_unknown,
         env_fine=env_fine,
         git_ignored=sorted(ignored_files.values(), key=lambda g: g.display),
         not_scanned=not_scanned,
+        not_fully_read=not_fully_read,
     )
     store = Store(
         schema=STORE_SCHEMA, records=sorted(records, key=lambda r: r.credential_id)

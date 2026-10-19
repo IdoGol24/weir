@@ -69,6 +69,9 @@ class ValueState(enum.StrEnum):
     # its source bytes need not be the typed value's text, so the value is
     # not read.
     TYPED_SCALAR = "typed_scalar"
+    # A startup-file value not fully read: a quoted value its line leaves
+    # open, or a PEM block with no END line. Listed in `not_fully_read`.
+    PARTIAL = "partial"
 
 
 class LocationKind(enum.StrEnum):
@@ -166,6 +169,22 @@ class NotScanned(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     path: str | None = None
 
 
+class PartlyReadReason(enum.StrEnum):
+    HEREDOC = "heredoc"  # a here-document: its body is not read
+    MULTI_LINE_QUOTE = "multi_line_quote"  # a quoted value its line leaves open
+    UNCLOSED_PEM = "unclosed_pem"  # a PEM block with no END line
+
+
+class PartlyRead(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """A place in a shell startup file that is present but not fully read.
+    Startup files are read line by line; what that cannot read is stated."""
+
+    display: str
+    path: str
+    line: int
+    reason: PartlyReadReason
+
+
 class EnvSource(enum.StrEnum):
     FILE = "file"  # --env-file
     PROCESS = "process"  # --process-env: the running process's environment
@@ -199,6 +218,7 @@ class Counts(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     env_fine: int
     git_ignored_files: int
     not_scanned: int
+    not_fully_read: int
 
 
 class Inventory(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -217,6 +237,7 @@ class Inventory(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     env_fine: list[EnvVarName]
     git_ignored: list[GitIgnoredFile]
     not_scanned: list[NotScanned]
+    not_fully_read: list[PartlyRead]
 
 
 class StoredRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

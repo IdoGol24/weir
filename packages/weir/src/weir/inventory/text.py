@@ -46,6 +46,7 @@ _STATES = {
     ValueState.ABSENT: "whole file",
     ValueState.NOT_IN_FILE: "value not in the file",
     ValueState.TYPED_SCALAR: "value typed as a non-string",
+    ValueState.PARTIAL: "value not fully read",
 }
 _MAX_COLUMN = 60
 
@@ -142,4 +143,10 @@ def inventory_lines(report: Inventory, *, unknown_list_path: str | None) -> list
             f"  {n.display.ljust(width)}  {n.reason.value.replace('_', ' ')}"
             for n in report.not_scanned
         ]
+    if report.not_fully_read:
+        lines += ["", f"present, not fully read: {counts.not_fully_read}"]
+        spots = [(where(p.display, p.line), p.reason.value.replace("_", " "))
+                 for p in report.not_fully_read]
+        width = min(max(len(w) for w, _ in spots), _MAX_COLUMN)
+        lines += [f"  {w.ljust(width)}  {why}" for w, why in spots]
     return lines

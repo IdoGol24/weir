@@ -13,7 +13,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
 from weir.inventory._scan import Hit
-from weir.inventory._types import Reason, ValueState
+from weir.inventory._types import PartlyReadReason, Reason, ValueState
 from weir.inventory.classify import EnvVerdict, classify_env, is_dynamic, not_secret_kind
 
 _NAME = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -33,6 +33,9 @@ class EnvEntry:
     # False for a startup-file assignment nothing exports: not part of the
     # launch environment, but a value in a file the agent can read.
     exported: bool = True
+    # True for a startup-file value weir did not fully read (a quoted value
+    # its line leaves open, a PEM block with no END line): value None.
+    partial: bool = False
 
 
 @dataclass
@@ -64,7 +67,7 @@ def to_hit(judged: Judged, detector: str) -> Hit:
     return Hit(
         name=entry.name, reason=reason, detectors={detector}, value=entry.value,
         spans=[entry.span] if entry.span is not None and entry.value is not None else [],
-        line=entry.line, missing=ValueState.DYNAMIC,
+        line=entry.line, missing=ValueState.PARTIAL if entry.partial else ValueState.DYNAMIC,
     )
 
 
@@ -169,8 +172,7 @@ _ASSIGN = re.compile(rf"{_LEAD}({_NAME})=(.*)$")
 _SETENV = re.compile(rf"{_LEAD}setenv\s+({_NAME})\s+(.*)$")
 _FISH_SET = re.compile(rf"{_LEAD}set\s+((?:-\S+\s+)+)({_NAME})\s+(.*)$")
 _NAME_EQ = re.compile(rf"({_NAME})(=?)")
-# How far a quoted value its line leaves open may run on to its closing quote.
-_QUOTE_LINES = 200
+_HEREDOC = re.compile(r"<<-?[ \t]*\\?([\"']?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 
 def _commands(line: str) -> Iterator[tuple[int, str]]:
@@ -253,47 +255,81 @@ def _shell_word(text: str, start: int) -> tuple[str | None, int, int, str, bool]
     return (None if dynamic else value), value_start, min(i, len(text)), value, closed
 
 
-def _word(text: str, line: tuple[int, int], pos: int) -> tuple[str | None, int, int, str]:
-    """The shell word at text[pos:] on the line text[line[0]:line[1]], as
-    (value, value start, end of word, text), positions in the file. A
-    quoted value its line leaves open runs on to its closing quote, at most
-    _QUOTE_LINES lines further, as the shell reads it; still open there, it
-    is read on its line alone."""
-    first, last = line
-    value, vstart, end, raw, closed = _shell_word(text[first:last], pos - first)
-    if not closed:
-        limit = last
-        for _ in range(_QUOTE_LINES):
-            newline = text.find("\n", limit + 1)
-            limit = len(text) if newline == -1 else newline
-            if newline == -1:
-                break
-        wide = _shell_word(text[first:limit], pos - first)
-        if wide[4]:
-            value, vstart, end, raw, _ = wide
-    return value, first + vstart, first + end, raw
-
-
-def _assignments(
-    text: str, line: tuple[int, int], i: int, stop: int
-) -> Iterator[tuple[str, str | None, int, int, str]]:
-    """`A=1 B="2"` after `export`, at text[i:stop] on one line: (name,
-    value, value start, end of word, text) per assignment, positions in the
-    file; a bare name (`export A`) yields value None with start -1."""
-    while i < stop:
-        while i < stop and text[i].isspace():
+def _assignments(command: str, i: int) -> Iterator[tuple[str, int]]:
+    """`A=1 B="2"` after `export`: (name, where its value starts in the
+    command) per assignment; a bare name (`export A`) yields -1."""
+    while i < len(command):
+        while i < len(command) and command[i].isspace():
             i += 1
-        match = _NAME_EQ.match(text, i, stop)
+        match = _NAME_EQ.match(command, i)
         if match is None:
             return
-        name = match.group(1)
         i = match.end()
         if match.group(2):
-            value, vstart, end, raw = _word(text, line, i)
-            yield name, value, vstart, end, raw
-            i = end
+            yield match.group(1), i
+            i = _shell_word(command, i)[2]
         else:
-            yield name, None, -1, -1, ""
+            yield match.group(1), -1
+
+
+def _heredocs(line: str) -> list[str]:
+    """The delimiter of every here-document the line opens (`<<EOF`,
+    `<<-'EOF'`), read outside quotes and before a comment. `<<<` is a
+    here-string, not one."""
+    delimiters: list[str] = []
+    quote: str | None = None
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quote is not None:
+            if ch == "\\" and quote != "'":
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch == "\\":
+            i += 1
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1].isspace() or line[i - 1] in ";&|"):
+            break
+        elif line.startswith("<<<", i):
+            i += 3
+            continue
+        elif (m := _HEREDOC.match(line, i)) is not None:
+            delimiters.append(m.group(2))
+            i = m.end()
+            continue
+        i += 1
+    return delimiters
+
+
+def _read_value(
+    text: str, line: tuple[int, int], pos: int, name: str, number: int
+) -> tuple[EnvEntry, int, PartlyReadReason | None]:
+    """The assignment of `name` whose value starts at text[pos:], on the
+    line text[line[0]:line[1]]: (entry, end of what it covers, why it was
+    not fully read). A value opening a PEM block runs to its END line; one
+    with no END line, or a quote its line leaves open, is not read."""
+    first, last = line
+    value, vstart, end, raw, closed = _shell_word(text[first:last], pos - first)
+    vstart += first
+    end += first
+    if vstart < last and (armor := _ARMOR.match(text, vstart)) is not None:
+        marker = f"-----END {armor.group(1)}-----"
+        close = text.find(marker, vstart)
+        if close == -1:
+            return EnvEntry(name, None, None, number, partial=True), end, (
+                PartlyReadReason.UNCLOSED_PEM
+            )
+        stop = close + len(marker)
+        quoted = vstart > pos and text.startswith(text[vstart - 1], stop)
+        value = text[vstart:stop]
+        return EnvEntry(name, value, (vstart, stop), number), stop + quoted, None
+    if not closed:
+        return EnvEntry(name, None, None, number, partial=True), end, (
+            PartlyReadReason.MULTI_LINE_QUOTE
+        )
+    return _entry(name, value, vstart, raw, number), end, None
 
 
 def _entry(name: str, value: str | None, start: int, raw: str, number: int) -> EnvEntry:
@@ -316,54 +352,79 @@ def _verify_span(text: str, entry: EnvEntry) -> None:
     entry.span = (found, found + len(entry.value)) if entry.value and found != -1 else None
 
 
-def parse_startup_file(text: str) -> list[EnvEntry]:
+@dataclass
+class StartupFile:
+    entries: list[EnvEntry]
+    # (1-based line, why) for each place the file was not fully read.
+    not_fully_read: list[tuple[int, PartlyReadReason]]
+
+
+def parse_startup_file(text: str) -> StartupFile:
     """Assignments in every simple command (`a && export NAME=v; b`):
     `export NAME=v`, `declare -x`, `typeset -x`, csh `setenv NAME v`, fish
     `set -x NAME v`, and plain `NAME=v`, which is `exported` when an
-    `export NAME` anywhere in the file exports it. A quoted value its line
-    leaves open runs on to its closing quote, and what it covers is not read
-    as commands; no other quote is followed past its line."""
+    `export NAME` anywhere in the file exports it.
+
+    Each line is read on its own: no quote carries to the next line. A
+    value opening a PEM block runs to its `-----END <label>-----` line.
+    What is not fully read is reported, never skipped silently: a
+    here-document (its body skipped to its delimiter line), a quoted value
+    its line leaves open, a PEM block with no END line."""
     exported: list[EnvEntry] = []
     plain: list[EnvEntry] = []
     exported_names: set[str] = set()
-    offset = 0
+    partly: set[tuple[int, PartlyReadReason]] = set()
+    lines = text.splitlines(keepends=True)
+    starts = [0]
+    for raw_line in lines:
+        starts.append(starts[-1] + len(raw_line))
     consumed = 0
-    for number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
-        first = offset
-        offset += len(raw_line)
+    for index, raw_line in enumerate(lines):
+        number = index + 1
+        first = starts[index]
         line = raw_line.rstrip("\r\n")
-        if first + len(line) <= consumed:
+        if line and first + len(line) <= consumed:
             continue
         skip = max(consumed - first, 0)
-        span = (first, first + len(line))
-        for start, command in _commands(line[skip:]):
+        rest = line[skip:]
+        assigned: list[tuple[str, int, bool]] = []
+        for start, command in _commands(rest):
             base = first + skip + start
             if (m := _EXPORT.match(command)) is not None:
-                words = _assignments(text, span, base + m.start(1), base + m.end(1))
-                for name, value, vstart, end, raw in words:
-                    if vstart >= 0:
-                        exported.append(_entry(name, value, vstart, raw, number))
-                        consumed = max(consumed, end)
-                    else:
+                for name, at in _assignments(command, m.start(1)):
+                    if at < 0:
                         exported_names.add(name)
+                    else:
+                        assigned.append((name, base + at, True))
             elif (m := _SETENV.match(command)) is not None:
-                value, vstart, end, raw = _word(text, span, base + m.start(2))
-                exported.append(_entry(m.group(1), value, vstart, raw, number))
-                consumed = max(consumed, end)
+                assigned.append((m.group(1), base + m.start(2), True))
             elif (m := _FISH_SET.match(command)) is not None:
-                value, vstart, end, raw = _word(text, span, base + m.start(3))
-                entry = _entry(m.group(2), value, vstart, raw, number)
-                if re.search(r"(?:^|\s)(?:-[A-Za-z]*x[A-Za-z]*|--export)(?=\s)", m.group(1)):
-                    exported.append(entry)
-                else:
-                    plain.append(entry)
-                consumed = max(consumed, end)
+                flags = m.group(1)
+                exports = re.search(r"(?:^|\s)(?:-[A-Za-z]*x[A-Za-z]*|--export)(?=\s)", flags)
+                assigned.append((m.group(2), base + m.start(3), exports is not None))
             elif (m := _ASSIGN.match(command)) is not None:
-                value, vstart, end, raw = _word(text, span, base + m.start(2))
-                plain.append(_entry(m.group(1), value, vstart, raw, number))
-                consumed = max(consumed, end)
+                assigned.append((m.group(1), base + m.start(2), False))
+        for name, at, is_export in assigned:
+            entry, end, why = _read_value(text, (first, first + len(line)), at, name, number)
+            (exported if is_export else plain).append(entry)
+            consumed = max(consumed, end)
+            if why is not None:
+                partly.add((number, why))
+        body = index + 1
+        for delimiter in _heredocs(rest):
+            partly.add((number, PartlyReadReason.HEREDOC))
+            close = next(
+                (j for j in range(body, len(lines)) if lines[j].strip() == delimiter), None
+            )
+            if close is None:
+                break
+            consumed = max(consumed, starts[close + 1])
+            body = close + 1
     for entry in plain:
         entry.exported = entry.name in exported_names
     for entry in (*exported, *plain):
         _verify_span(text, entry)
-    return sorted([*exported, *plain], key=lambda e: (e.line or 0, e.name))
+    return StartupFile(
+        entries=sorted([*exported, *plain], key=lambda e: (e.line or 0, e.name)),
+        not_fully_read=sorted(partly),
+    )
