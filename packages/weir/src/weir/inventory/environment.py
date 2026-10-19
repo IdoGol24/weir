@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from weir.inventory._scan import Hit
+from weir.inventory._scan import Hit, line_of
 from weir.inventory._types import PartlyReadReason, Reason, ValueState
 from weir.inventory.classify import EnvVerdict, classify_env, is_dynamic, not_secret_kind
+from weir.inventory.project import scan_shapes
 
 _NAME = r"[A-Za-z_][A-Za-z0-9_]*"
 
@@ -25,7 +26,9 @@ class EnvEntry:
 
     name: str
     value: str | None
-    span: tuple[int, int] | None  # character span of the value in its text
+    # Character span of the value in its text; for a partial value, of the
+    # part its first line holds.
+    span: tuple[int, int] | None
     line: int | None
     # The unexpanded text of a non-literal value (`$HOME/bin:$PATH`), kept
     # only so a PATH-style expansion can still be judged a path.
@@ -36,6 +39,9 @@ class EnvEntry:
     # True for a startup-file value weir did not fully read (a quoted value
     # its line leaves open, a PEM block with no END line): value None.
     partial: bool = False
+    # A credential shape found inside the value's span: the record carries
+    # this shape's value and offsets under the variable's name.
+    shape: Hit | None = None
 
 
 @dataclass
@@ -50,6 +56,8 @@ _ARMOR = re.compile(r"-----BEGIN ([^\r\n-]+)-----")
 
 
 def judge(entry: EnvEntry) -> Judged:
+    if entry.shape is not None:
+        return Judged(entry, EnvVerdict.SECRET, "shape")
     if entry.value is not None and (armor := _ARMOR.match(entry.value)) is not None:
         if f"-----END {armor.group(1)}-----" not in entry.value:
             return Judged(entry, EnvVerdict.SECRET, "pem_block")
@@ -63,6 +71,11 @@ def judge(entry: EnvEntry) -> Judged:
 
 def to_hit(judged: Judged, detector: str) -> Hit:
     entry = judged.entry
+    if entry.shape is not None:
+        return Hit(
+            name=entry.name, reason=Reason.SHAPE, detectors={detector, *entry.shape.detectors},
+            value=entry.shape.value, spans=list(entry.shape.spans), line=entry.line,
+        )
     reason = Reason.NAME if judged.why == "name" else Reason.SHAPE
     return Hit(
         name=entry.name, reason=reason, detectors={detector}, value=entry.value,
@@ -307,10 +320,10 @@ def _heredocs(line: str) -> list[str]:
 
 def _read_value(
     text: str, line: tuple[int, int], pos: int, name: str, number: int
-) -> tuple[EnvEntry, int, tuple[PartlyReadReason, int, int] | None]:
+) -> tuple[EnvEntry, int, PartlyReadReason | None]:
     """The assignment of `name` whose value starts at text[pos:], on the
-    line text[line[0]:line[1]]: (entry, end of what it covers, and when it
-    was not fully read, why and the span left unread). A quoted value its
+    line text[line[0]:line[1]]: (entry, end of what it covers, why it was
+    not fully read). A quoted value its
     line leaves open after a PEM BEGIN line runs to its END line while
     every line between reads as a PEM body line; at any other line it
     stops there, not read. Any other quote its line leaves open is not
@@ -334,13 +347,11 @@ def _read_value(
             if _PEM_BODY.fullmatch(body.strip()) is None:
                 break
             at = len(text) if newline == -1 else newline + 1
-        return EnvEntry(name, None, None, number, partial=True), at, (
-            PartlyReadReason.UNCLOSED_PEM, vstart, at,
-        )
+        partial = EnvEntry(name, None, (vstart, last), number, partial=True)
+        return partial, at, PartlyReadReason.UNCLOSED_PEM
     if not closed:
-        return EnvEntry(name, None, None, number, partial=True), end, (
-            PartlyReadReason.MULTI_LINE_QUOTE, vstart, last,
-        )
+        partial = EnvEntry(name, None, (vstart, last), number, partial=True)
+        return partial, end, PartlyReadReason.MULTI_LINE_QUOTE
     return _entry(name, value, vstart, raw, number), end, None
 
 
@@ -369,9 +380,8 @@ class StartupFile:
     entries: list[EnvEntry]
     # (1-based line, why) for each place the file was not fully read.
     not_fully_read: list[tuple[int, PartlyReadReason]]
-    # [start, end) of each span left unread: a here-document body, a value
-    # not fully read. The caller still searches them for credential shapes.
-    unread: list[tuple[int, int]]
+    # Credential shapes outside every assignment's value, each at its line.
+    shapes: list[Hit]
 
 
 def parse_startup_file(text: str) -> StartupFile:
@@ -385,12 +395,12 @@ def parse_startup_file(text: str) -> StartupFile:
     runs to its `-----END <label>-----` line through PEM body lines.
     What is not fully read is reported, never skipped silently: a
     here-document (its body skipped to its delimiter line), a quoted value
-    its line leaves open, a PEM block with no END line."""
+    its line leaves open, a PEM block with no END line. Credential shapes
+    are searched for over the whole file all the same."""
     exported: list[EnvEntry] = []
     plain: list[EnvEntry] = []
     exported_names: set[str] = set()
     partly: set[tuple[int, PartlyReadReason]] = set()
-    unread: list[tuple[int, int]] = []
     lines = text.splitlines(keepends=True)
     starts = [0]
     for raw_line in lines:
@@ -422,13 +432,11 @@ def parse_startup_file(text: str) -> StartupFile:
             elif (m := _ASSIGN.match(command)) is not None:
                 assigned.append((m.group(1), base + m.start(2), False))
         for name, at, is_export in assigned:
-            entry, end, part = _read_value(text, (first, first + len(line)), at, name, number)
+            entry, end, why = _read_value(text, (first, first + len(line)), at, name, number)
             (exported if is_export else plain).append(entry)
             consumed = max(consumed, end)
-            if part is not None:
-                why, start, stop = part
+            if why is not None:
                 partly.add((number, why))
-                unread.append((start, stop))
         body = index + 1
         for delimiter in _heredocs(rest):
             partly.add((number, PartlyReadReason.HEREDOC))
@@ -438,14 +446,33 @@ def parse_startup_file(text: str) -> StartupFile:
             if close is None:
                 break
             consumed = max(consumed, starts[close + 1])
-            unread.append((starts[body], starts[close]))
             body = close + 1
     for entry in plain:
         entry.exported = entry.name in exported_names
     for entry in (*exported, *plain):
         _verify_span(text, entry)
+    entries = sorted([*exported, *plain], key=lambda e: (e.line or 0, e.name))
     return StartupFile(
-        entries=sorted([*exported, *plain], key=lambda e: (e.line or 0, e.name)),
-        not_fully_read=sorted(partly),
-        unread=unread,
+        entries=entries, not_fully_read=sorted(partly), shapes=_shapes(text, entries),
     )
+
+
+def _shapes(text: str, entries: list[EnvEntry]) -> list[Hit]:
+    """Credential shapes anywhere in the file, read without assignment
+    parsing, one per occurrence. A shape inside an assignment's value is
+    that assignment's (one secret, one record); any other, in a
+    here-document or a continuation line or a comment, is returned."""
+    loose: list[Hit] = []
+    for found in scan_shapes(text):
+        for start, end in found.spans:
+            hit = replace(found, spans=[(start, end)], line=line_of(text, start))
+            owner = next((
+                e for e in entries
+                if e.shape is None and e.span is not None
+                and e.span[0] < end and start < e.span[1]
+            ), None)
+            if owner is None:
+                loose.append(hit)
+            else:
+                owner.shape = hit
+    return loose

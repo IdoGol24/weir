@@ -392,6 +392,40 @@ def test_a_key_in_a_here_document_body_is_still_a_credential(tmp_path: Path) -> 
     })
 
 
+@pytest.mark.parametrize(("body", "expected"), [
+    # A key on a continuation line of a quote its line leaves open: a shape
+    # credential at its own line; the variable itself is judged by name.
+    (f"export ACME_CONFIG='\ntoken: {fx.OPENAI_S09}\n'\n", (2, ValueState.LITERAL, False)),
+    # A key on the open line under a secret name: one record, the name's.
+    (f'export GH_TOKEN="{fx.OPENAI_S09}\nmore"\n', (1, ValueState.LITERAL, True)),
+], ids=["continuation-line", "open-line"])
+def test_a_key_in_a_value_not_fully_read_is_one_credential(
+    tmp_path: Path, body: str, expected: tuple[int, ValueState, bool],
+) -> None:
+    fake = fx.build(tmp_path / "fixture")
+    profile = fake.home / ".bash_profile"
+    profile.write_text(body)
+    result = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key,
+    ))
+    report = result.report
+    [cred] = [c for c in report.credentials if c.location.display == "~/.bash_profile"]
+    line, state, named = expected
+    assert (cred.location.line, cred.value_state, cred.reason) == (line, state, "shape")
+    assert (cred.name == "GH_TOKEN") is named
+    [record] = [r for r in result.store.records if r.credential_id == cred.id]
+    exact = [profile.read_bytes()[s:e] for s, e in record.offsets] == [fx.OPENAI_S09.encode()]
+    assert exact
+    assert [(p.display, p.line, p.reason) for p in report.not_fully_read] == [
+        ("~/.bash_profile", 1, PartlyReadReason.MULTI_LINE_QUOTE),
+    ]
+    _assert_clean({
+        "report": encode_report(report),
+        "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),
+        "unknown-list": "\n".join(unknown_list_lines([*report.env_unknown, *report.env_fine])),
+    })
+
+
 def test_no_test_file_or_cache_restates_a_value() -> None:
     """Only the fixture module may hold values: no snapshot, expectation or
     other inventory test file restates one. Their compiled caches are scanned

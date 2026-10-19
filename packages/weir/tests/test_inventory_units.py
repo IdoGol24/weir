@@ -390,7 +390,7 @@ def test_startup_files_are_read_line_by_line() -> None:
     ]
     read = [e for e in entries if not e.partial]
     values = [e.value for e in read] == [fx.MARKER_PROJMCP, fx.MARKER_DOTENV, fx.MARKER_PRODYAML]
-    assert values and all(e.value is None and e.span is None for e in entries if e.partial)
+    assert values and all(e.value is None for e in entries if e.partial)
     for entry in read:
         assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
 
