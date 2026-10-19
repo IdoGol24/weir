@@ -25,6 +25,7 @@ from weir.cli.main import main
 from weir.inventory import (
     InventoryInputError,
     InventoryInputs,
+    LocationKind,
     encode_report,
     encode_store,
     take_inventory,
@@ -230,16 +231,38 @@ def test_nothing_the_inventory_produces_holds_a_value(tmp_path: Path) -> None:
     _assert_clean(blobs)
 
 
-def test_a_multi_line_key_in_a_plain_env_file_lists_no_line_of_it(tmp_path: Path) -> None:
-    """`env > file` writes a multi-line value as raw lines: a key's body
-    line (`<base64>==`) reads as `NAME=value`. Its name is withheld."""
+def test_multi_line_keys_in_a_plain_env_file_list_no_line_of_them(tmp_path: Path) -> None:
+    """`env > file` writes a multi-line value as raw lines. A key's body
+    line (`<base64>==`) must never read as `NAME=value`, however short it is:
+    a PEM block is one value, from its BEGIN line to its END line."""
+    head, body, tail = fx.SA_PRIVATE_KEY.splitlines()
+    rewrapped = "\n".join([head, body[:40], body[40:], tail])  # last body line under 20
     fake = fx.build(tmp_path / "fixture")
     env_file = tmp_path / "plain.env"
-    env_file.write_text(f"APP_PRIVATE_KEY={fx.SA_PRIVATE_KEY}LOG_LEVEL=info\n")
-    report = take_inventory(InventoryInputs(
+    env_file.write_text(
+        f"APP_PRIVATE_KEY={rewrapped}\nSIGNING_KEY={fx.SSH_KEY}\nLOG_LEVEL=info\n"
+    )
+    result = take_inventory(InventoryInputs(
         home=fake.home, project=fake.project, key_path=fake.key, env_file=env_file,
-    )).report
-    assert report.counts.env_withheld == 1
+    ))
+    report = result.report
+    app, signing = sorted(
+        (c for c in report.credentials if c.location.kind is LocationKind.LAUNCH_ENV),
+        key=lambda c: c.name,
+    )
+    assert (app.name, signing.name) == ("APP_PRIVATE_KEY", "SIGNING_KEY")
+    launch_names = [
+        e.name for e in [*report.env_unknown, *report.env_fine]
+        if e.location.kind is LocationKind.LAUNCH_ENV
+    ]
+    assert launch_names == ["LOG_LEVEL"]
+    assert report.counts.env_withheld == 0
+    data = env_file.read_bytes()
+    for cred, key in ((app, rewrapped), (signing, fx.SSH_KEY)):
+        [record] = [r for r in result.store.records if r.credential_id == cred.id]
+        whole = [data[s:e] for s, e in record.offsets] == [key.encode()]
+        assert whole, cred.name
+    assert app.same_value_as == [] and app.id not in signing.same_value_as
     _assert_clean({
         "report": encode_report(report),
         "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),

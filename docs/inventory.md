@@ -27,7 +27,7 @@ weir inventory --home DIR [--project DIR] [--env-file FILE | --process-env]
 | --- | --- |
 | `--home` | **Required.** The home directory to inventory. There is no default, so nothing ever reads a real home by accident. |
 | `--project` | Project directory (default `.`). Its `.weir/reach.yml` is the approved map. |
-| `--env-file` | The agent's launch environment as `NAME=value` lines (dotenv style: `export ` and one level of quotes are stripped, a quoted value runs to its closing quote across lines, an unquoted value ends before a ` #` comment and trailing blanks, `#` lines skipped), or NUL-separated `env -0` output. |
+| `--env-file` | The agent's launch environment as `NAME=value` lines (dotenv style: `export ` and one level of quotes are stripped, a quoted value runs to its closing quote across lines, an unquoted value opening a PEM block (`-----BEGIN <label>-----`) runs to its `-----END <label>-----` line or, unclosed, to the end of the file and is then a secret, any other unquoted value ends before a ` #` comment and trailing blanks, `#` lines skipped), or NUL-separated `env -0` output. |
 | `--process-env` | Use this process's own environment as the launch environment. Without either option only shell startup files are read, and the report says so. |
 | `--gitleaks` | Import a gitleaks JSON report (`gitleaks detect --report-format json`). Repeatable. Relative `File` paths resolve against the project. |
 | `--trufflehog` | Import a trufflehog JSON report (`trufflehog filesystem|git --json`, one result per line). Repeatable. |
@@ -160,8 +160,8 @@ A name or scope parsed out of a file is untrusted. It is flattened to one
 printable line, and one that itself has a credential shape, or is a long
 run of mixed case and digits that reads as key material, is replaced with
 `[withheld: credential-shaped]`. An environment variable whose name reads
-that way (a line of a multi-line key in a plain `NAME=value` env file) is
-never listed: it only adds one to `env_withheld`.
+that way (a line of a multi-line value other than a PEM block, in a plain
+`NAME=value` env file) is never listed: it only adds one to `env_withheld`.
 
 ## Files ignored by git
 

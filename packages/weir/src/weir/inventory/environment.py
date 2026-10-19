@@ -42,7 +42,14 @@ class Judged:
     why: str | None
 
 
+# A PEM armor line opening a value: `-----BEGIN PRIVATE KEY-----`.
+_ARMOR = re.compile(r"-----BEGIN ([^\r\n-]+)-----")
+
+
 def judge(entry: EnvEntry) -> Judged:
+    if entry.value is not None and (armor := _ARMOR.match(entry.value)) is not None:
+        if f"-----END {armor.group(1)}-----" not in entry.value:
+            return Judged(entry, EnvVerdict.SECRET, "pem_block")
     if entry.value is None and entry.expansion is not None:
         kind = not_secret_kind(entry.expansion)
         if kind is not None:
@@ -81,8 +88,11 @@ def _closing_quote(text: str, start: int, quote: str) -> int:
 def parse_env_file(text: str) -> list[EnvEntry]:
     """`NAME=value` per line (dotenv style: `export ` and one level of
     quotes are stripped, `#` lines skipped; a quoted value runs to its
-    closing quote, across lines; an unquoted value ends before a ` #`
-    comment and trailing blanks), or NUL-separated `env -0` output. The
+    closing quote, across lines; an unquoted value that opens a PEM block,
+    `-----BEGIN <label>-----`, runs to its `-----END <label>-----` line, or
+    to the end of the file when nothing closes it; any other unquoted value
+    ends before a ` #` comment and trailing blanks), or NUL-separated
+    `env -0` output. The
     value is taken literally: an env file holds what the process had,
     after the shell expanded it."""
     if "\0" in text:
@@ -113,6 +123,13 @@ def parse_env_file(text: str) -> list[EnvEntry]:
                         if close > eol:
                             end = text.find("\n", close)
                             after = len(text) if end == -1 else end + 1
+                elif (armor := _ARMOR.match(raw)) is not None:
+                    marker = f"-----END {armor.group(1)}-----"
+                    end = text.find(marker, start)
+                    stop = len(text) if end == -1 else end + len(marker)
+                    value = text[start:stop].rstrip()
+                    end = text.find("\n", stop)
+                    after = len(text) if end == -1 else end + 1
                 entries.append(EnvEntry(name, value, (start, start + len(value)), number))
         number += text.count("\n", pos, after)
         pos = after

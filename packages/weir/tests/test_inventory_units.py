@@ -32,7 +32,7 @@ from weir.inventory.classify import (
     not_secret_kind,
     value_shape,
 )
-from weir.inventory.environment import parse_env_file, parse_startup_file
+from weir.inventory.environment import judge, parse_env_file, parse_startup_file
 from weir.inventory.fingerprint import FingerprintKeyError, fingerprint, load_or_create_key
 from weir.inventory.gitignore import GitIgnore
 from weir.inventory.locations import STANDARD_LOCATIONS, parse_location
@@ -250,6 +250,28 @@ def test_env_file_unquoted_value_ends_before_a_comment() -> None:
     assert [entries[n].value for n in ("PORT", "B_MODE", "D_MODE")] == ["3000", "x#y", "v"]
     for entry in entries.values():
         assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
+
+
+def test_env_file_pem_block_runs_to_its_end_line() -> None:
+    text = f"APP_PRIVATE_KEY={fx.SA_PRIVATE_KEY}SIGNING_KEY={fx.SSH_KEY}\nLOG_LEVEL=info\n"
+    entries = parse_env_file(text)
+    assert [(e.name, e.line) for e in entries] == [
+        ("APP_PRIVATE_KEY", 1), ("SIGNING_KEY", 4), ("LOG_LEVEL", 7),
+    ]
+    whole = [e.value for e in entries[:2]] == [fx.SA_PRIVATE_KEY.rstrip(), fx.SSH_KEY]
+    assert whole
+    for entry in entries:
+        assert entry.span is not None and text[entry.span[0]:entry.span[1]] == entry.value
+
+
+def test_an_unclosed_pem_block_is_the_rest_of_the_file_and_a_secret() -> None:
+    head, body, _ = fx.SA_PRIVATE_KEY.splitlines()
+    text = f"APP_PEM={head}\n{body}\nLOG_LEVEL=info\n"
+    [entry] = parse_env_file(text)
+    assert entry.name == "APP_PEM" and entry.span is not None
+    rest = entry.value == text[entry.span[0]:].rstrip()
+    assert rest
+    assert judge(entry).verdict is EnvVerdict.SECRET
 
 
 def test_env_file_nul_separated() -> None:
