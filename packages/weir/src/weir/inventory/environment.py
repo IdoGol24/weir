@@ -64,38 +64,74 @@ def to_hit(judged: Judged, detector: str) -> Hit:
 # --- launch environment ----------------------------------------------------
 
 
-def _unquote(value: str, start: int) -> tuple[str, int]:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1], start + 1
-    return value, start
+def _closing_quote(text: str, start: int, quote: str) -> int:
+    """Index of the quote that closes a value opened just before `start`,
+    or -1. Inside double quotes a backslash escapes the next character."""
+    i = start
+    while i < len(text):
+        if text[i] == "\\" and quote == '"':
+            i += 2
+        elif text[i] == quote:
+            return i
+        else:
+            i += 1
+    return -1
 
 
 def parse_env_file(text: str) -> list[EnvEntry]:
     """`NAME=value` per line (dotenv style: `export ` and one level of
-    matching quotes are stripped, `#` lines skipped), or NUL-separated
-    `env -0` output. The value is taken literally: an env file holds what
-    the process had, after the shell expanded it."""
+    quotes are stripped, `#` lines skipped; a quoted value runs to its
+    closing quote, across lines), or NUL-separated `env -0` output. The
+    value is taken literally: an env file holds what the process had,
+    after the shell expanded it."""
+    if "\0" in text:
+        return _parse_env_records(text)
     entries: list[EnvEntry] = []
-    nul = "\0" in text
-    offset = 0
-    for number, record in enumerate(
-        text.split("\0") if nul else text.splitlines(keepends=True), start=1
-    ):
-        body = record if nul else record.rstrip("\r\n")
+    pos = 0
+    number = 1
+    while pos < len(text):
+        eol = text.find("\n", pos)
+        eol = len(text) if eol == -1 else eol
+        after = eol + 1
+        body = text[pos:eol].rstrip("\r")
         stripped = body.lstrip()
         lead = len(body) - len(stripped)
-        if stripped.startswith("export ") and not nul:
+        if stripped.startswith("export "):
             lead += len("export ")
             stripped = stripped[len("export "):]
         if stripped and not stripped.startswith("#") and "=" in stripped:
             name, raw = stripped.split("=", 1)
             if re.fullmatch(_NAME, name):
-                vstart = lead + len(name) + 1
-                value, vstart = (raw, vstart) if nul else _unquote(raw, vstart)
-                start = offset + vstart
-                line = None if nul else number
-                entries.append(EnvEntry(name, value, (start, start + len(value)), line))
-        offset += len(record) + (1 if nul else 0)
+                start = pos + lead + len(name) + 1
+                value = raw
+                if raw[:1] in ("'", '"'):
+                    close = _closing_quote(text, start + 1, raw[0])
+                    if close != -1:
+                        start += 1
+                        value = text[start:close]
+                        if close > eol:
+                            end = text.find("\n", close)
+                            after = len(text) if end == -1 else end + 1
+                entries.append(EnvEntry(name, value, (start, start + len(value)), number))
+        number += text.count("\n", pos, after)
+        pos = after
+    return entries
+
+
+def _parse_env_records(text: str) -> list[EnvEntry]:
+    """NUL-separated `env -0` output: each record is `NAME=value`, taken
+    whole, newlines included."""
+    entries: list[EnvEntry] = []
+    offset = 0
+    for record in text.split("\0"):
+        stripped = record.lstrip()
+        lead = len(record) - len(stripped)
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            name, raw = stripped.split("=", 1)
+            if re.fullmatch(_NAME, name):
+                start = offset + lead + len(name) + 1
+                entries.append(EnvEntry(name, raw, (start, start + len(raw)), None))
+        offset += len(record) + 1
     return entries
 
 

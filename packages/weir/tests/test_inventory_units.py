@@ -24,6 +24,7 @@ from weir.inventory import (
     ValueState,
     take_inventory,
 )
+from weir.inventory._scan import Hit
 from weir.inventory.classify import (
     EnvVerdict,
     classify_env,
@@ -37,7 +38,7 @@ from weir.inventory.environment import parse_env_file, parse_startup_file
 from weir.inventory.fingerprint import FingerprintKeyError, fingerprint, load_or_create_key
 from weir.inventory.gitignore import GitIgnore
 from weir.inventory.locations import STANDARD_LOCATIONS, parse_location
-from weir.inventory.project import scan_text
+from weir.inventory.project import fold_into, scan_text
 from weir.inventory.scanners import ScannerReportError, load_gitleaks, load_trufflehog
 from weir.inventory.text import inventory_lines
 
@@ -227,6 +228,15 @@ def test_env_file_forms() -> None:
         assert text[entry.span[0]:entry.span[1]] == entry.value
 
 
+def test_env_file_quoted_value_across_lines() -> None:
+    text = f'APP_PRIVATE_KEY="{fx.SA_PRIVATE_KEY}"\nLOG_LEVEL=info\n'
+    key, level = parse_env_file(text)
+    whole = key.value == fx.SA_PRIVATE_KEY
+    assert (key.name, whole, key.line) == ("APP_PRIVATE_KEY", True, 1)
+    assert key.span is not None and text[key.span[0]:key.span[1]] == key.value
+    assert (level.name, level.line) == ("LOG_LEVEL", fx.SA_PRIVATE_KEY.count("\n") + 2)
+
+
 def test_env_file_nul_separated() -> None:
     text = f"ACME_DEPLOY_TOKEN={fx.MARKER_USERMCP}\0MULTI=a\nb\0"
     entries = parse_env_file(text)
@@ -361,6 +371,45 @@ def test_an_env_file_inside_the_project_is_one_record_per_variable_at_both_locat
     )
     [row] = [r for r in _screen_rows(launched.report, "./.env") if "SHORT_TOKEN" in r]
     assert row.endswith("(also launch env, git-ignored)")
+
+
+def test_fold_into_keeps_a_hit_wider_than_its_owner() -> None:
+    text = "x" * 40
+
+    def hit(name: str, span: tuple[int, int], reason: Reason = Reason.NAME) -> Hit:
+        return Hit(
+            name=name, reason=reason, detectors={name}, value=text[span[0]:span[1]],
+            spans=[span], line=1,
+        )
+
+    owner = hit("OWNER", (10, 20))
+    folded = fold_into([owner], [hit("inner", (12, 18), Reason.SHAPE), hit("wide", (5, 30))], text)
+    assert [(h.name, h.spans) for h in folded] == [("wide", [(5, 30)]), ("OWNER", [(10, 20)])]
+    assert (owner.detectors, owner.reason) == ({"OWNER", "inner"}, Reason.SHAPE)
+
+
+def test_a_multi_line_quoted_key_in_a_project_env_file_is_recorded_whole(
+    tmp_path: Path,
+) -> None:
+    fake = fx.build(tmp_path)
+    dotenv = fake.project / ".env"
+    dotenv.write_text(f'APP_PRIVATE_KEY="{fx.SA_PRIVATE_KEY}"\nLOG_LEVEL=info\n')
+    result = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=dotenv,
+    ))
+    at_env = [c for c in result.report.credentials if c.location.display == "./.env"]
+    assert [(c.name, c.location.line, c.launch_env is not None) for c in at_env] == [
+        ("APP_PRIVATE_KEY", 1, True)
+    ]
+    assert "shape:private_key" in at_env[0].detectors
+    [record] = [r for r in result.store.records if r.credential_id == at_env[0].id]
+    data = dotenv.read_bytes()
+    whole = [data[s:e] for s, e in record.offsets] == [fx.SA_PRIVATE_KEY.encode()]
+    assert whole
+    launch_unknown = [
+        e.name for e in result.report.env_unknown if e.location.kind is LocationKind.LAUNCH_ENV
+    ]
+    assert launch_unknown == ["LOG_LEVEL"]
 
 
 def test_two_variables_holding_one_value_in_a_project_env_file_stay_two_records(

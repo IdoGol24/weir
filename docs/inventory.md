@@ -27,7 +27,7 @@ weir inventory --home DIR [--project DIR] [--env-file FILE | --process-env]
 | --- | --- |
 | `--home` | **Required.** The home directory to inventory. There is no default, so nothing ever reads a real home by accident. |
 | `--project` | Project directory (default `.`). Its `.weir/reach.yml` is the approved map. |
-| `--env-file` | The agent's launch environment as `NAME=value` lines (dotenv style: `export ` and one level of matching quotes are stripped, `#` lines skipped), or NUL-separated `env -0` output. |
+| `--env-file` | The agent's launch environment as `NAME=value` lines (dotenv style: `export ` and one level of quotes are stripped, a quoted value runs to its closing quote across lines, `#` lines skipped), or NUL-separated `env -0` output. |
 | `--process-env` | Use this process's own environment as the launch environment. Without either option only shell startup files are read, and the report says so. |
 | `--gitleaks` | Import a gitleaks JSON report (`gitleaks detect --report-format json`). Repeatable. Relative `File` paths resolve against the project. |
 | `--trufflehog` | Import a trufflehog JSON report (`trufflehog filesystem|git --json`, one result per line). Repeatable. |
@@ -89,8 +89,9 @@ read from it.
    variable it sets is one `project_scan` record at the file, under the
    variable's name, with `git_ignored` as for any project file, and its
    `launch_env` names the launch environment. What the project detectors
-   find in the same bytes folds into that record, so nothing is counted
-   twice; two variables holding one value stay two records.
+   find within the variable's value folds into that record, so nothing is
+   counted twice; a finding wider than the value stays its own record, and
+   two variables holding one value stay two records.
 4. **Approved map** (`map`): `<project>/.weir/reach.yml`, where a person
    declares what discovery cannot know. Strict schema: an unknown key is an
    error (exit 2), so a typo never reads as an approval.

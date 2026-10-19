@@ -310,15 +310,15 @@ def merge_hits(hits: list[Hit]) -> list[Hit]:
 
 def fold_into(owners: list[Hit], hits: list[Hit], text: str) -> list[Hit]:
     """Each owner stays its own record with its own name, value and span;
-    every span of another hit that overlaps an owner's folds into that owner
-    (its detectors, a shape reason). A hit keeps the spans no owner covers,
-    and is dropped when none is left."""
+    every span of another hit that lies within an owner's folds into that
+    owner (its detectors, a shape reason). A hit keeps the spans no owner
+    contains, a wider one included, and is dropped when none is left."""
     rest: list[Hit] = []
     for hit in hits:
         left: list[tuple[int, int]] = []
         for start, end in hit.spans:
             covering = [
-                o for o in owners if any(s < end and start < e for s, e in o.spans)
+                o for o in owners if any(s <= start and end <= e for s, e in o.spans)
             ]
             for owner in covering:
                 owner.detectors |= hit.detectors
