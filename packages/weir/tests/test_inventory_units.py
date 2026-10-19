@@ -315,7 +315,7 @@ def test_unexported_secret_in_a_startup_file_is_a_credential(tmp_path: Path) -> 
     assert "LOCAL_NOTE" not in {e.name for e in report.env_unknown}
 
 
-def test_an_env_file_inside_the_project_is_one_record_per_value_at_both_locations(
+def test_an_env_file_inside_the_project_is_one_record_per_variable_at_both_locations(
     tmp_path: Path,
 ) -> None:
     fake = fx.build(tmp_path)
@@ -361,6 +361,32 @@ def test_an_env_file_inside_the_project_is_one_record_per_value_at_both_location
     )
     [row] = [r for r in _screen_rows(launched.report, "./.env") if "SHORT_TOKEN" in r]
     assert row.endswith("(also launch env, git-ignored)")
+
+
+def test_two_variables_holding_one_value_in_a_project_env_file_stay_two_records(
+    tmp_path: Path,
+) -> None:
+    fake = fx.build(tmp_path)
+    dotenv = fake.project / ".env"
+    dotenv.write_text(
+        f"DATABASE_URL={fx.DATABASE_URL_S14}\nDIRECT_URL={fx.DATABASE_URL_S14}\n"
+    )
+    launched = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key, env_file=dotenv,
+    ))
+    at_env = [c for c in launched.report.credentials if c.location.display == "./.env"]
+    assert [(c.name, c.location.line) for c in at_env] == [("DATABASE_URL", 1), ("DIRECT_URL", 2)]
+    for cred in at_env:
+        assert cred.launch_env is not None and cred.launch_env.line == cred.location.line
+    kinds = {c.location.kind for c in launched.report.credentials}
+    assert LocationKind.LAUNCH_ENV not in kinds
+
+    data = dotenv.read_bytes()
+    ids = {c.id for c in at_env}
+    records = [r for r in launched.store.records if r.credential_id in ids]
+    assert len(records) == 2 and len({r.fingerprint for r in records}) == 1
+    for record in records:
+        assert [data[s:e] for s, e in record.offsets] == [fx.DATABASE_URL_S14.encode()]
 
 
 # --- standard formats -------------------------------------------------------

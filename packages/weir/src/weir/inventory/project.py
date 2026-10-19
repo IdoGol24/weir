@@ -308,6 +308,31 @@ def merge_hits(hits: list[Hit]) -> list[Hit]:
     return list(by_value.values())
 
 
+def fold_into(owners: list[Hit], hits: list[Hit], text: str) -> list[Hit]:
+    """Each owner stays its own record with its own name, value and span;
+    every span of another hit that overlaps an owner's folds into that owner
+    (its detectors, a shape reason). A hit keeps the spans no owner covers,
+    and is dropped when none is left."""
+    rest: list[Hit] = []
+    for hit in hits:
+        left: list[tuple[int, int]] = []
+        for start, end in hit.spans:
+            covering = [
+                o for o in owners if any(s < end and start < e for s, e in o.spans)
+            ]
+            for owner in covering:
+                owner.detectors |= hit.detectors
+                if hit.reason is Reason.SHAPE:
+                    owner.reason = Reason.SHAPE
+            if not covering:
+                left.append((start, end))
+        if left:
+            hit.spans = left
+            hit.line = line_of(text, left[0][0])
+            rest.append(hit)
+    return [*rest, *owners]
+
+
 def scan_text(text: str, *, rel: str, catalog: Catalog = DEFAULT_CATALOG) -> list[Hit]:
     code = Path(rel).suffix.lower() in _CODE_SUFFIXES
     hits = [
@@ -322,6 +347,7 @@ __all__ = [
     "MAX_PROJECT_FILE_BYTES",
     "VENDORED_DIRS",
     "assignment_values",
+    "fold_into",
     "ProjectFile",
     "Skipped",
     "merge_hits",

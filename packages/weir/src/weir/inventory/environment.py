@@ -57,7 +57,7 @@ def to_hit(judged: Judged, detector: str) -> Hit:
     return Hit(
         name=entry.name, reason=reason, detectors={detector}, value=entry.value,
         spans=[entry.span] if entry.span is not None and entry.value is not None else [],
-        line=entry.line, missing=ValueState.DYNAMIC, name_rank=10,
+        line=entry.line, missing=ValueState.DYNAMIC,
     )
 
 

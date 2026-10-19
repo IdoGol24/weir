@@ -86,9 +86,11 @@ read from it.
    environment and is neither counted nor listed. An export after `;`, `&&`
    or `||` counts too (`[ -n "$PS1" ] && export GH_TOKEN=...`). An env file
    inside the project (`--env-file ./.env`) is still a project file: each
-   value it holds is one `project_scan` record at the file, with
-   `git_ignored` as for any project file, and its `launch_env` names the
-   launch environment, so no value is counted twice.
+   variable it sets is one `project_scan` record at the file, under the
+   variable's name, with `git_ignored` as for any project file, and its
+   `launch_env` names the launch environment. What the project detectors
+   find in the same bytes folds into that record, so nothing is counted
+   twice; two variables holding one value stay two records.
 4. **Approved map** (`map`): `<project>/.weir/reach.yml`, where a person
    declares what discovery cannot know. Strict schema: an unknown key is an
    error (exit 2), so a typo never reads as an approval.

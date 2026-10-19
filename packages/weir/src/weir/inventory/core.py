@@ -77,6 +77,7 @@ from weir.inventory.locations import (
 from weir.inventory.project import (
     MAX_PROJECT_FILE_BYTES,
     assignment_values,
+    fold_into,
     merge_hits,
     scan_text,
     walk_project,
@@ -183,7 +184,7 @@ class _Collector:
 
     def take_launch_env(self, path: Path) -> list[Hit]:
         """Remove the launch-env records read from this env file and return
-        their hits, so the project walk records each value once, at the file."""
+        their hits, so the project walk records each variable once, at the file."""
         where = posix(path)
         keep: list[_Found] = []
         taken: list[Hit] = []
@@ -320,8 +321,8 @@ def _project(
     c: _Collector, results: list[ScannerResult], env_file: Path | None
 ) -> dict[Path, bool]:
     """Returns {file: git-ignored} for every project file walked. An env file
-    inside the project is a project file too: each value it holds is one
-    record at the file that also names the launch env."""
+    inside the project is a project file too: each variable it sets is one
+    record at the file, under its own name, that also names the launch env."""
     files, skipped = walk_project(c.home, c.project)
     for s in skipped:
         c.skip(s.path, s.reason)
@@ -343,10 +344,10 @@ def _project(
         hits = [] if path in c.claimed else scan_text(text, rel=file.rel)
         scanner = [_scanner_hit(r, text) for r in by_path.pop(path, [])]
         located = [h for h in scanner if h.spans]
-        if path == env_file and path not in c.claimed:
-            located += c.take_launch_env(path)
         if located:
             hits = merge_hits(hits + located)
+        if path == env_file and path not in c.claimed:
+            hits = fold_into(c.take_launch_env(path), hits, text)
         hits += [h for h in scanner if not h.spans]
         c.add(Source.PROJECT_SCAN, hits, path=path, text=text, git_ignored=file.git_ignored)
 
