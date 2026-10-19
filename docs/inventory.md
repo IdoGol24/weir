@@ -100,12 +100,15 @@ read from it.
    credential shapes, with no assignment parsing: a catalog key shape, a
    JWT, a URL with a password or a PEM private key. A shape inside an
    assignment's value makes that assignment a credential under the
-   variable's name, reason `shape`: one secret, one record. A value read in
-   full keeps its own fingerprint and offsets (the shape only confirms it);
-   a value not fully read takes the fingerprint and offsets of the shape
-   clipped to the part its first line holds, `value_state: literal`. With
-   no shape on its first line, a value not fully read is judged by its name
-   only: a secret-suggesting name gives a credential record with
+   variable's name, reason `shape`: one secret, one record. Its fingerprint
+   and offsets are the shape's bytes within the value, so a token inside a
+   longer value (`Authorization: token ...`) links to the same token
+   elsewhere, and a shape that runs on past the value (`...; next`) is cut
+   at the value's end. A value not fully read takes the shape within the
+   part its first line holds, `value_state: literal`, except that a
+   complete PEM private key (BEGIN through END) is kept whole. With no such
+   shape, a value not fully read is judged by its name only, never
+   fingerprinted: a secret-suggesting name gives a credential record with
    `value_state: partial` (value not read), an exported neutral name goes
    to `env_unknown`, and an unexported one appears only in
    `not_fully_read`. Any other shape, in a here-document body, a

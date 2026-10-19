@@ -460,9 +460,10 @@ def parse_startup_file(text: str) -> StartupFile:
 def _shapes(text: str, entries: list[EnvEntry]) -> list[Hit]:
     """Credential shapes anywhere in the file, read without assignment
     parsing, one per occurrence. A shape inside an assignment's value is
-    that assignment's (one secret, one record): a value read in full keeps
-    its own bytes, the shape only confirming it is a credential; a value not
-    fully read takes the shape clipped to the part its line holds. Any
+    that assignment's (one secret, one record), clipped to the value's span:
+    the value's own bytes of the shape, so the same secret elsewhere links.
+    A value not fully read keeps a complete PEM private key whole, and takes
+    no part of an incomplete one, so it never holds an armor line alone. Any
     other shape, in a here-document or a continuation line or a comment, is
     returned."""
     loose: list[Hit] = []
@@ -476,8 +477,9 @@ def _shapes(text: str, entries: list[EnvEntry]) -> list[Hit]:
             ), None)
             if owner is None or owner.span is None:
                 loose.append(hit)
-            elif owner.value is not None:
-                owner.shape = replace(hit, value=owner.value, spans=[owner.span])
+            elif owner.value is None and (armor := _ARMOR.match(hit.value)) is not None:
+                if f"-----END {armor.group(1)}-----" in hit.value:
+                    owner.shape = hit
             else:
                 first, last = max(start, owner.span[0]), min(end, owner.span[1])
                 owner.shape = replace(hit, value=text[first:last], spans=[(first, last)])

@@ -457,6 +457,52 @@ def test_a_shaped_value_keeps_its_own_bytes_before_the_next_command(tmp_path: Pa
     })
 
 
+def test_a_record_holds_the_shape_within_its_value(tmp_path: Path) -> None:
+    """A token inside a longer value is fingerprinted alone and links to the
+    same token elsewhere; a complete private key in a value not fully read
+    is kept whole; a PEM block with no END is a name-only record."""
+    head, body, tail = fx.SA_PRIVATE_KEY.splitlines()
+    key = f"{head}\\n\n{body}\\n\n{tail}"  # literal \n before each line break
+    fake = fx.build(tmp_path / "fixture")
+    profile = fake.home / ".bash_profile"
+    profile.write_text(
+        f'export GH_AUTH_HEADER="Authorization: token {fx.GITHUB_S05}"\n'  # 1
+        f"export GH_TOKEN={fx.GITHUB_S05}\n"  # 2
+        f'export APP_KEY="{key}"\n'  # 3-5: not fully read, complete key
+        f'export OLD_KEY="{head}\n'  # 6: no END line
+        f'export NEW_KEY="{head}\n'  # 7: no END line
+    )
+    result = take_inventory(InventoryInputs(
+        home=fake.home, project=fake.project, key_path=fake.key,
+    ))
+    report = result.report
+    found = {c.name: c for c in report.credentials if c.location.display == "~/.bash_profile"}
+    assert sorted(found) == ["APP_KEY", "GH_AUTH_HEADER", "GH_TOKEN", "NEW_KEY", "OLD_KEY"]
+    records = {r.credential_id: r for r in result.store.records}
+    data = profile.read_bytes()
+
+    def stored(name: str) -> list[bytes]:
+        return [data[s:e] for s, e in records[found[name].id].offsets]
+
+    token = stored("GH_AUTH_HEADER") == [fx.GITHUB_S05.encode()]
+    assert token and found["GH_TOKEN"].id in found["GH_AUTH_HEADER"].same_value_as
+    whole = stored("APP_KEY") == [key.encode()]
+    assert whole and found["APP_KEY"].value_state is ValueState.LITERAL
+    for name in ("OLD_KEY", "NEW_KEY"):
+        cred = found[name]
+        assert cred.value_state is ValueState.PARTIAL and cred.same_value_as == []
+        assert cred.id not in records
+    assert [(p.line, p.reason) for p in report.not_fully_read] == [
+        (3, PartlyReadReason.UNCLOSED_PEM), (6, PartlyReadReason.UNCLOSED_PEM),
+        (7, PartlyReadReason.UNCLOSED_PEM),
+    ]
+    _assert_clean({
+        "report": encode_report(report),
+        "screen": "\n".join(inventory_lines(report, unknown_list_path=None)),
+        "unknown-list": "\n".join(unknown_list_lines([*report.env_unknown, *report.env_fine])),
+    })
+
+
 def test_no_test_file_or_cache_restates_a_value() -> None:
     """Only the fixture module may hold values: no snapshot, expectation or
     other inventory test file restates one. Their compiled caches are scanned
