@@ -502,7 +502,7 @@ def test_a_multi_line_quoted_key_in_a_project_env_file_is_recorded_whole(
     key = fx.SA_PRIVATE_KEY.rstrip()
     fake = fx.build(tmp_path)
     env_path = fake.project / ".env"
-    env_path.write_text(f'APP_PRIVATE_KEY="{key}"\nLOG_LEVEL=info\n')
+    env_path.write_text(f'APP_PRIVATE_KEY="{key}"\nLOG_LEVEL=info\n', newline="\n")
     result = take_inventory(InventoryInputs(
         home=fake.home, project=fake.project, key_path=fake.key, env_file=env_path,
     ))

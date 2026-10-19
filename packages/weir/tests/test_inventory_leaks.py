@@ -244,7 +244,8 @@ def test_multi_line_keys_in_a_plain_env_file_list_no_line_of_them(tmp_path: Path
     fake = fx.build(tmp_path / "fixture")
     env_file = tmp_path / "plain.env"
     env_file.write_text(
-        f"APP_PRIVATE_KEY={rewrapped}\nSIGNING_KEY={fx.SSH_KEY}\nLOG_LEVEL=info\n"
+        f"APP_PRIVATE_KEY={rewrapped}\nSIGNING_KEY={fx.SSH_KEY}\nLOG_LEVEL=info\n",
+        newline="\n",
     )
     result = take_inventory(InventoryInputs(
         home=fake.home, project=fake.project, key_path=fake.key, env_file=env_file,
@@ -284,7 +285,7 @@ def test_a_multi_line_quoted_key_in_a_startup_file_is_one_value(tmp_path: Path) 
     inputs = InventoryInputs(home=fake.home, project=fake.project, key_path=fake.key)
     before = take_inventory(inputs).report
     bashrc = fake.home / ".bashrc"
-    with bashrc.open("a") as handle:
+    with bashrc.open("a", newline="\n") as handle:
         handle.write(f'export APP_PRIVATE_KEY="{rewrapped}"\n')
     result = take_inventory(inputs)
     report = result.report
@@ -470,7 +471,8 @@ def test_a_record_holds_the_shape_within_its_value(tmp_path: Path) -> None:
         f"export GH_TOKEN={fx.GITHUB_S05}\n"  # 2
         f'export APP_KEY="{key}"\n'  # 3-5: not fully read, complete key
         f'export OLD_KEY="{head}\n'  # 6: no END line
-        f'export NEW_KEY="{head}\n'  # 7: no END line
+        f'export NEW_KEY="{head}\n',  # 7: no END line
+        newline="\n",
     )
     result = take_inventory(InventoryInputs(
         home=fake.home, project=fake.project, key_path=fake.key,
