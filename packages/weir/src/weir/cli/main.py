@@ -395,7 +395,7 @@ def inventory_command(
     as_json: bool,
     strict: bool,
 ) -> None:
-    """List credentials by name, source and location. Never prints a value."""
+    """(experimental) List credentials by name, source and location. Never prints a value."""
     if env_file is not None and process_env:
         raise click.UsageError("--env-file and --process-env are mutually exclusive")
     inputs = InventoryInputs(
