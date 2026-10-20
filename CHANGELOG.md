@@ -3,6 +3,25 @@
 ## [Unreleased]
 
 ### Added
+- **`weir canary judge`: did a planted fake credential reach the
+  telemetry?** `weir canary judge --ledger FILE --otlp PATH [--json]
+  [PATH...]` reads a `canary-ledger/1` ledger (placement ids plus the fake
+  values planted there) and the captured telemetry, and reports every
+  placement whose value, or an encoded form of it, appears anywhere in the
+  capture, naming the placement, file, line, record and location, never a
+  value or a fragment of one. The contract is `docs/canary.md`. This first
+  version ships the placement kinds `env`, `code` and `mock-oauth`; the
+  evidence types `request`, `minted` and `egress`; the forms `raw`, `json`,
+  `json2`, `url`, `base64`, `base64url` (the base64 core at byte offsets 0,
+  1 and 2) and `hex`; and the incomplete reasons `required_not_exercised`,
+  `flow_not_ok`, `unexpected_credential`, `not_scanned`, `unparsed_record`
+  and `empty_capture`. `--otlp` files get a structured walk of every span,
+  log record and metric (every string, `stringValue` and decoded
+  `bytesValue`) plus a raw byte sweep; other paths, such as a flow's stdout
+  and stderr, get the raw sweep only. Exit 0 clean, 1 leak, 2 unusable
+  input, 3 incomplete. `--json` emits the `canary-report/1` report; both
+  schemas are in `packages/weir/schema_artifacts/`. The judge opens no
+  socket, starts no process and reads no clock.
 - **`weir inventory` (experimental): which credentials an agent could reach,
   by name only.** Its output and JSON schema may change without notice. Four
   sources: a versioned list of standard credential locations under the given

@@ -1,0 +1,174 @@
+{
+  "$defs": {
+    "Exercised": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "enum": [
+            "egress",
+            "minted",
+            "request"
+          ]
+        },
+        "placement": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._:#/-]{1,128}$",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "exercised"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "placement",
+        "evidence"
+      ],
+      "title": "Exercised",
+      "type": "object"
+    },
+    "Flow": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._:#/-]{1,128}$",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "failed",
+            "ok",
+            "skipped",
+            "timeout"
+          ]
+        },
+        "type": {
+          "enum": [
+            "flow"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "status"
+      ],
+      "title": "Flow",
+      "type": "object"
+    },
+    "LedgerHeader": {
+      "additionalProperties": false,
+      "description": "The first line of every ledger.",
+      "properties": {
+        "schema": {
+          "enum": [
+            "canary-ledger/1"
+          ]
+        }
+      },
+      "required": [
+        "schema"
+      ],
+      "title": "LedgerHeader",
+      "type": "object"
+    },
+    "Placement": {
+      "additionalProperties": false,
+      "description": "One place a credential can live, holding one fake value.",
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._:#/-]{1,128}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "code",
+            "env",
+            "mock-oauth"
+          ]
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "placement"
+          ]
+        },
+        "value": {
+          "minLength": 16,
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "kind",
+        "value"
+      ],
+      "title": "Placement",
+      "type": "object"
+    },
+    "Unexpected": {
+      "additionalProperties": false,
+      "description": "A credential field the mock received that held no needle. Never a value.",
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._:#/-]{1,128}$",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "unexpected"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "title": "Unexpected",
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/LedgerHeader"
+    },
+    {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Placement"
+        },
+        {
+          "$ref": "#/$defs/Exercised"
+        },
+        {
+          "$ref": "#/$defs/Flow"
+        },
+        {
+          "$ref": "#/$defs/Unexpected"
+        }
+      ],
+      "discriminator": {
+        "mapping": {
+          "exercised": "#/$defs/Exercised",
+          "flow": "#/$defs/Flow",
+          "placement": "#/$defs/Placement",
+          "unexpected": "#/$defs/Unexpected"
+        },
+        "propertyName": "type"
+      }
+    }
+  ]
+}

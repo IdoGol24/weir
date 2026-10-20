@@ -1,9 +1,9 @@
 # weir canary judge: the canary check contract
 
-> **Contract only.** `weir canary judge` is not implemented yet. This
-> document is the contract its implementation, its tests and every canary
-> fixture are judged against. Where code and this text disagree once the
-> judge lands, one of them is a bug.
+> **The contract.** `weir canary judge` (in `packages/weir/src/weir/canary/`)
+> implements this document, and this document is what its implementation,
+> its tests and every canary fixture are judged against. Where code and
+> this text disagree, one of them is a bug.
 
 A canary check plants unique fake credentials where real ones live, runs a
 program's own flows with its telemetry exported to a local receiver, and
@@ -40,7 +40,9 @@ matches, the ledger and report schemas, coverage states and exit codes.
 - The judge stays inside weir-scan's no-network rule: the analysis path
   opens no sockets, and the whole suite runs with socket construction
   blocked (`tests/_harness/g3.py`). The judge is one more command under that
-  block.
+  block, and an import-linter `forbidden` contract in `pyproject.toml` keeps
+  its modules from importing any network, process, clock or randomness
+  module, or the trace pipeline.
 - The mock opens a loopback socket, so it lives in the runner, never in
   weir-scan. weir never imports the runner. That is enforced the same way
   the engine is kept from importing `weir-tracegen`: an import-linter
@@ -455,10 +457,10 @@ form (`prefix...last4`), a hash or a fingerprint of a canary. The report
 may be uploaded as a CI artifact; the ledger and the capture never are, and
 the runner deletes them after judging.
 
-When the judge lands, JSON Schema artifacts for both schemas are generated
-from its structs and drift-tested beside the existing ones in
-`packages/weir/schema_artifacts/` (`canary-ledger.v1.schema.json`,
-`canary-report.v1.schema.json`).
+JSON Schema artifacts for both schemas are generated from the judge's
+structs and drift-tested beside the existing ones in
+`packages/weir/schema_artifacts/` (`canary-ledger.v1.schema.json`, one
+ledger line; `canary-report.v1.schema.json`).
 
 ## What the runner owes the judge
 

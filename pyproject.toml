@@ -99,6 +99,48 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+# docs/canary.md: the judge is a pure function of its input bytes. It reads
+# the files it is given and nothing else: no socket, no process, no clock, no
+# randomness, and none of the trace pipeline. The canary runner owns the
+# loopback mock and the flows; it is a separate package that weir never
+# imports. That row names the runner's package, so it lands with the runner.
+name = "canary judge is pure: no network, process, clock or pipeline"
+type = "forbidden"
+source_modules = ["weir.canary"]
+forbidden_modules = [
+    "socket",
+    "ssl",
+    "http",
+    "urllib",
+    "ftplib",
+    "smtplib",
+    "xmlrpc",
+    "socketserver",
+    "asyncio",
+    "selectors",
+    "subprocess",
+    "multiprocessing",
+    "concurrent",
+    "time",
+    "datetime",
+    "random",
+    "secrets",
+    "weir.cli",
+    "weir.adapters",
+    "weir.inventory",
+    "weir.graph",
+    "weir.gauge",
+    "weir.label",
+    "weir.taint",
+    "weir.evaluate",
+    "weir.exposure",
+    "weir.report",
+    "weir.rules_commons",
+    "weir.catalog",
+    "weir_tracegen",
+]
+
+[[tool.importlinter.contracts]]
 name = "tracegen is dev-side only: the engine never imports it"
 type = "forbidden"
 source_modules = ["weir"]
