@@ -1,0 +1,368 @@
+{
+  "$defs": {
+    "Coverage": {
+      "properties": {
+        "bytes": {
+          "type": "integer"
+        },
+        "exercised": {
+          "type": "integer"
+        },
+        "files": {
+          "type": "integer"
+        },
+        "files_not_scanned": {
+          "type": "integer"
+        },
+        "flows": {
+          "type": "integer"
+        },
+        "flows_ok": {
+          "type": "integer"
+        },
+        "leaked": {
+          "type": "integer"
+        },
+        "log_records": {
+          "type": "integer"
+        },
+        "metric_data_points": {
+          "type": "integer"
+        },
+        "not_exercised": {
+          "type": "integer"
+        },
+        "placements": {
+          "type": "integer"
+        },
+        "required": {
+          "type": "integer"
+        },
+        "spans": {
+          "type": "integer"
+        },
+        "strings": {
+          "type": "integer"
+        },
+        "unparsed_records": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "placements",
+        "leaked",
+        "exercised",
+        "not_exercised",
+        "required",
+        "flows",
+        "flows_ok",
+        "files",
+        "files_not_scanned",
+        "spans",
+        "log_records",
+        "metric_data_points",
+        "unparsed_records",
+        "strings",
+        "bytes"
+      ],
+      "title": "Coverage",
+      "type": "object"
+    },
+    "FlowState": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "title": "FlowState",
+      "type": "object"
+    },
+    "Form": {
+      "description": "The encoded forms, in the contract's table order (docs/canary.md).",
+      "enum": [
+        "base64",
+        "base64url",
+        "hex",
+        "json",
+        "json2",
+        "raw",
+        "url"
+      ],
+      "title": "Form"
+    },
+    "Hit": {
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "form": {
+          "$ref": "#/$defs/Form"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log_record": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "placement": {
+          "type": "string"
+        },
+        "signal": {
+          "$ref": "#/$defs/Signal"
+        },
+        "span": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "placement",
+        "kind",
+        "file",
+        "line",
+        "signal",
+        "span",
+        "span_id",
+        "log_record",
+        "metric",
+        "location",
+        "form"
+      ],
+      "title": "Hit",
+      "type": "object"
+    },
+    "Incomplete": {
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/IncompleteReason"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "reason",
+        "subject"
+      ],
+      "title": "Incomplete",
+      "type": "object"
+    },
+    "IncompleteReason": {
+      "enum": [
+        "empty_capture",
+        "flow_not_ok",
+        "not_scanned",
+        "required_not_exercised",
+        "unexpected_credential",
+        "unparsed_record"
+      ],
+      "title": "IncompleteReason"
+    },
+    "NotScanned": {
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/NotScannedReason"
+        }
+      },
+      "required": [
+        "file",
+        "reason"
+      ],
+      "title": "NotScanned",
+      "type": "object"
+    },
+    "NotScannedReason": {
+      "enum": [
+        "compressed",
+        "symlink"
+      ],
+      "title": "NotScannedReason"
+    },
+    "PlacementState": {
+      "properties": {
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "hits": {
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "required",
+        "state",
+        "evidence",
+        "hits"
+      ],
+      "title": "PlacementState",
+      "type": "object"
+    },
+    "Report": {
+      "description": "canary-report/1: what `weir canary judge --json` prints.",
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "flows": {
+          "items": {
+            "$ref": "#/$defs/FlowState"
+          },
+          "type": "array"
+        },
+        "hits": {
+          "items": {
+            "$ref": "#/$defs/Hit"
+          },
+          "type": "array"
+        },
+        "incomplete": {
+          "items": {
+            "$ref": "#/$defs/Incomplete"
+          },
+          "type": "array"
+        },
+        "not_scanned": {
+          "items": {
+            "$ref": "#/$defs/NotScanned"
+          },
+          "type": "array"
+        },
+        "placements": {
+          "items": {
+            "$ref": "#/$defs/PlacementState"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/$defs/Result"
+        },
+        "schema": {
+          "enum": [
+            "canary-report/1"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "result",
+        "exit_code",
+        "hits",
+        "placements",
+        "flows",
+        "not_scanned",
+        "incomplete",
+        "coverage"
+      ],
+      "title": "Report",
+      "type": "object"
+    },
+    "Result": {
+      "enum": [
+        "clean",
+        "incomplete",
+        "leak"
+      ],
+      "title": "Result"
+    },
+    "Signal": {
+      "enum": [
+        "logs",
+        "metrics",
+        "raw",
+        "traces"
+      ],
+      "title": "Signal"
+    },
+    "State": {
+      "enum": [
+        "exercised",
+        "leaked",
+        "not_exercised"
+      ],
+      "title": "State"
+    }
+  },
+  "$ref": "#/$defs/Report"
+}

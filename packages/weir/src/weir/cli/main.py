@@ -1,4 +1,5 @@
-"""Minimal CLI surface (L18): `weir gauge`, `weir scan` and `weir inventory`.
+"""Minimal CLI surface (L18): `weir gauge`, `weir scan`, `weir inventory` and
+`weir canary judge`.
 
 Thin argument parsing over the pure pipeline functions - no logic of its
 own. `weir test`/`validate`/`verify`/`feedback`/`rules list`/`events import`
@@ -24,6 +25,13 @@ import msgspec
 
 from weir.adapters.otel import REMEDIATION, OtlpRejectError, decode_input, map_wire
 from weir.adapters.otel.exposure import scan_surface
+from weir.canary import (
+    CaptureError,
+    LedgerError,
+    judge_paths,
+    report_lines,
+)
+from weir.canary import encode_report as encode_canary_report
 from weir.catalog import DEFAULT_CATALOG
 from weir.evaluate import evaluate
 from weir.evaluate.exposure import evaluate_exposure
@@ -424,6 +432,51 @@ def inventory_command(
         for line in inventory_lines(report, unknown_list_path=unknown_path.as_posix()):
             click.echo(line)
     raise SystemExit(1 if strict and report.counts.env_unknown else 0)
+
+
+@main.group("canary")
+def canary_group() -> None:
+    """Canary checks: did a planted fake credential reach the telemetry?"""
+
+
+@canary_group.command("judge")
+@click.option(
+    "--ledger",
+    "ledger_path",
+    metavar="FILE",
+    required=True,
+    help="The canary ledger (canary-ledger/1, docs/canary.md).",
+)
+@click.option(
+    "--otlp",
+    "otlp_paths",
+    metavar="PATH",
+    multiple=True,
+    required=True,
+    help="A telemetry file or directory of OTLP/JSON export requests, one per line"
+    " (repeatable). Only these count toward completeness.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the canary-report/1 JSON report.")
+@click.argument("paths", metavar="[PATH]...", nargs=-1)
+def canary_judge_command(
+    ledger_path: str, otlp_paths: tuple[str, ...], as_json: bool, paths: tuple[str, ...]
+) -> None:
+    """Report every placement whose value, or an encoded form of it, appears
+    in the capture. PATHS are further files or directories swept for
+    canaries. Prints placement ids and locations, never a value.
+
+    Exit 0 clean, 1 leak, 2 unusable input, 3 incomplete."""
+    try:
+        report = judge_paths(ledger_path, otlp_paths, paths)
+    except (LedgerError, CaptureError) as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(2) from exc
+    if as_json:
+        click.echo(encode_canary_report(report).decode(), nl=False)
+    else:
+        for line in report_lines(report):
+            click.echo(line)
+    raise SystemExit(report.exit_code)
 
 
 if __name__ == "__main__":

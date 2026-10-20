@@ -127,6 +127,13 @@ never prints, logs or stores a value; what it can store is a keyed
 fingerprint plus offsets ([contract](docs/inventory.md)). It is experimental:
 its output and JSON schema may change without notice.
 
+`weir canary judge --ledger FILE --otlp PATH` checks a canary run: given a
+ledger of planted fake credentials and the captured telemetry, it reports
+every placement whose value, or an encoded form of it (JSON-escaped,
+URL-encoded, base64, hex), appears anywhere in the capture. It prints
+placement ids and locations, never a value, and exits 0 clean, 1 leak, 2
+unusable input, 3 incomplete ([contract](docs/canary.md)).
+
 Next: the `weir diff` baseline gate, more rules, more dialects.
 
 Apache-2.0, all of it, permanently. Nothing held back, nothing gated,
