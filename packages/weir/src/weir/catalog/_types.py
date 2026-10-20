@@ -29,9 +29,8 @@ class VerbatimEligibility(msgspec.Struct, frozen=True):
     # `class_prefix`, see eligibility.py), so it kills sk-proj-0000... and
     # AKIAAAAAAAAAAAAAAAAA alike; counted over the whole value, `sk-proj-`
     # would supply 7 of the 8 by itself. This means the same thing for every
-    # class ONLY when the class's literal prefix carries a separator within
-    # `class_prefix`'s window - true of every bundled class, not guaranteed
-    # for one a contributor adds.
+    # class ONLY when `class_prefix` knows the class's literal head - true of
+    # every bundled class, not guaranteed for one a contributor adds.
     # `reject_patterns` (fullmatch, `(?i)` inline where wanted) then covers the
     # named placeholders that clear the floor - each provider's documented
     # example key. Both are catalog data, so a team adds its own placeholder

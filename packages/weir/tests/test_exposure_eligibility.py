@@ -40,7 +40,7 @@ def test_the_distinct_char_floor_counts_the_value_without_its_class_prefix() -> 
     # Killed ONLY by the stripping: 'sk-proj-' is 7 distinct characters plus
     # 'A' is 8, so it clears a whole-value floor, and no reject pattern covers it.
     assert not is_verbatim_eligible("sk-proj-" + "A" * 40, _source("openai_api_key"))
-    # Killed only by a prefix window wide enough to reach past 'admin01-'.
+    # Killed only by a class head that reaches past 'admin01-'.
     assert not is_verbatim_eligible(
         "sk-ant-admin01-" + "A" * 60, _source("anthropic_api_key")
     )
@@ -154,3 +154,17 @@ def test_github_token_narrowing_rejects_low_entropy_and_placeholder_values() -> 
     assert is_verbatim_eligible(
         "ghp_0123456789abcdefghijABCDEFGHIJ012345", _source("github_token")
     )
+
+
+def test_class_prefix_stops_at_the_literal_prefix_when_the_body_has_separators() -> None:
+    # Real OpenAI and Google key bodies use '-' and '_'. A cut at the last
+    # separator in a fixed window would carry body characters into the
+    # display prefix shown before '...last4'. Fake values only.
+    assert class_prefix("sk-proj-Ab_cD-eFgH1234567890abcdefghij") == "sk-proj-"
+    assert class_prefix("sk-svcacct-A_bC-dEfGh1234567890abcdef") == "sk-svcacct-"
+    assert class_prefix("sk-Ab_cD-eFgHiJkL1234567890abcdefghij") == "sk-"
+    assert class_prefix("sk-ant-api03-A_bC-dEfGh1234567890abcdef") == "sk-ant-api03-"
+    assert class_prefix("sk-ant-admin01-A_bC-dEf1234567890abcdef") == "sk-ant-admin01-"
+    assert class_prefix("AIzaSy-Ab_cDeFgHiJkL1234567890abcdefgh") == "AIza"
+    assert class_prefix("AIza_bCdEfGhIjKl-mN1234567890abcdefgh") == "AIza"
+    assert class_prefix("ASIAQH7RK2LS9VN4XB6Z") == "ASIA"

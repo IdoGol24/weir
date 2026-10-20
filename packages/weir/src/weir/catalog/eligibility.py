@@ -16,25 +16,30 @@ import re
 from weir.catalog._types import SourceSpec
 from weir.catalog.structure_classes import STRUCTURE_CLASSES
 
-_SEPARATORS = "-_"
-_PREFIX_WINDOW = 16
+# Every bundled class's literal head, most specific first. The display shows
+# this head before `...last4`, so it must never reach into the secret body,
+# which for OpenAI, Anthropic and Google keys itself contains '-' and '_'.
+_CLASS_HEAD = re.compile(
+    r"sk-ant-(?:api|admin)[0-9]{2}-|sk-ant-|sk-(?:proj|svcacct)-|sk-|ghp_|AKIA|ASIA|AIza"
+)
+_FALLBACK_HEAD_LEN = 4
 
 
 def class_prefix(value: str) -> str:
-    """The class-identifying head of a value: everything through the last
-    separator in the first 16 characters, or the first 4 when there is none.
+    """The class-identifying head of a value: the bundled class's literal
+    prefix ("sk-proj-", "sk-ant-api03-", "ghp_", "AKIA", "AIza", ...), never
+    any character of the body after it. A value with no known head yields its
+    first 4 characters.
 
-    ponytail: a heuristic, not catalog data. It yields "sk-proj-", "sk-ant-
-    api03-" and "ghp_" for the separator-bearing shapes and a 4-character stub
-    for AKIA/AIza, which is every bundled class - PROVIDED the class's literal
-    prefix carries a separator within the window; a class with a longer
-    separator-free prefix would need a wider window or its own
-    `exposure_prefix` catalog field. Also assumes `value` has already cleared
-    a length floor: on a very short string this returns the whole thing.
+    ponytail: a list of heads, not catalog data. A contributor class with a
+    longer literal prefix gets the 4-character fallback (safe for display,
+    but `min_distinct_chars` then counts part of that prefix) until it is
+    added here or the catalog grows an `exposure_prefix` field. Also assumes
+    `value` has already cleared a length floor: on a very short string the
+    fallback returns the whole thing.
     """
-    head = value[:_PREFIX_WINDOW]
-    cut = max((i for i, ch in enumerate(head) if ch in _SEPARATORS), default=-1)
-    return value[: cut + 1] if cut >= 0 else value[:4]
+    head = _CLASS_HEAD.match(value)
+    return head.group(0) if head is not None else value[:_FALLBACK_HEAD_LEN]
 
 
 def is_verbatim_eligible(value: str, source: SourceSpec) -> bool:
