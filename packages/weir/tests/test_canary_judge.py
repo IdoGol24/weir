@@ -429,7 +429,10 @@ def test_deep_nesting_is_walked_or_left_to_the_raw_sweep_never_a_crash(tmp_path:
     limit the walk still finds the value; past it the line is unparsed and
     the raw sweep finds it."""
     ledger, otlp = _clean_setup(tmp_path, fx.placement("env.B", _B))
-    walked = 3_000
+    # Past Python's default recursion limit (1000), so a recursive walk would
+    # crash, yet under the decoder's C recursion limit on every platform:
+    # CPython 3.12 caps it at 3000 on Windows.
+    walked = 2_000
     unparsable = 200_000
     fx.write(
         otlp,
