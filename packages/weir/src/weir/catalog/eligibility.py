@@ -23,6 +23,8 @@ _CLASS_HEAD = re.compile(
     r"sk-ant-(?:api|admin)[0-9]{2}-|sk-ant-|sk-(?:proj|svcacct)-|sk-|ghp_|AKIA|ASIA|AIza"
 )
 _FALLBACK_HEAD_LEN = 4
+_SEPARATORS = "-_"
+_PREFIX_WINDOW = 16
 
 
 def class_prefix(value: str) -> str:
@@ -32,14 +34,33 @@ def class_prefix(value: str) -> str:
     first 4 characters.
 
     ponytail: a list of heads, not catalog data. A contributor class with a
-    longer literal prefix gets the 4-character fallback (safe for display,
-    but `min_distinct_chars` then counts part of that prefix) until it is
-    added here or the catalog grows an `exposure_prefix` field. Also assumes
-    `value` has already cleared a length floor: on a very short string the
-    fallback returns the whole thing.
+    longer literal prefix gets the 4-character fallback (safe for display)
+    until it is added here or the catalog grows an `exposure_prefix` field.
+    Also assumes `value` has already cleared a length floor: on a very short
+    string the fallback returns the whole thing.
     """
     head = _CLASS_HEAD.match(value)
     return head.group(0) if head is not None else value[:_FALLBACK_HEAD_LEN]
+
+
+def _floor_prefix(value: str) -> str:
+    """The head `min_distinct_chars` strips before counting: everything
+    through the last separator in the first 16 characters, or the first 4
+    when there is none.
+
+    ponytail: a heuristic, not catalog data, and deliberately not
+    `class_prefix`: it may reach into the body, which is harmless for a count
+    but not for a display. It yields "sk-proj-", "sk-ant-api03-" and "ghp_"
+    for the separator-bearing shapes and a 4-character stub for AKIA/AIza,
+    which is every bundled class - PROVIDED the class's literal prefix carries
+    a separator within the window; a class with a longer separator-free
+    prefix would need a wider window. Also assumes `value` has already
+    cleared a length floor: on a very short string this returns the whole
+    thing.
+    """
+    head = value[:_PREFIX_WINDOW]
+    cut = max((i for i, ch in enumerate(head) if ch in _SEPARATORS), default=-1)
+    return value[: cut + 1] if cut >= 0 else value[:4]
 
 
 def is_verbatim_eligible(value: str, source: SourceSpec) -> bool:
@@ -65,7 +86,7 @@ def is_verbatim_eligible(value: str, source: SourceSpec) -> bool:
         # the prefix's length rather than the secret's entropy - `sk-proj-`
         # alone supplies 7 distinct characters and would carry a zeroed key
         # over a floor of 8.
-        suffix = value[len(class_prefix(value)) :]
+        suffix = value[len(_floor_prefix(value)) :]
         if len(set(suffix)) < eligibility.min_distinct_chars:
             return False
     return not any(re.fullmatch(p, value) is not None for p in eligibility.reject_patterns)

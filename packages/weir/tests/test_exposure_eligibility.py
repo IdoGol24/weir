@@ -40,7 +40,7 @@ def test_the_distinct_char_floor_counts_the_value_without_its_class_prefix() -> 
     # Killed ONLY by the stripping: 'sk-proj-' is 7 distinct characters plus
     # 'A' is 8, so it clears a whole-value floor, and no reject pattern covers it.
     assert not is_verbatim_eligible("sk-proj-" + "A" * 40, _source("openai_api_key"))
-    # Killed only by a class head that reaches past 'admin01-'.
+    # Killed only by a prefix window wide enough to reach past 'admin01-'.
     assert not is_verbatim_eligible(
         "sk-ant-admin01-" + "A" * 60, _source("anthropic_api_key")
     )
@@ -168,3 +168,13 @@ def test_class_prefix_stops_at_the_literal_prefix_when_the_body_has_separators()
     assert class_prefix("AIzaSy-Ab_cDeFgHiJkL1234567890abcdefgh") == "AIza"
     assert class_prefix("AIza_bCdEfGhIjKl-mN1234567890abcdefgh") == "AIza"
     assert class_prefix("ASIAQH7RK2LS9VN4XB6Z") == "ASIA"
+
+
+def test_the_display_head_does_not_loosen_the_distinct_char_floor() -> None:
+    # The openai pattern also takes 'sk-admin-' keys, whose display head is
+    # only 'sk-'. Counted after that head, 'admin-' would carry this
+    # two-character placeholder over the floor; the floor keeps stripping
+    # 'sk-admin-', so it stays ineligible. Fake values only.
+    value = "sk-admin-" + "AB" * 20
+    assert class_prefix(value) == "sk-"
+    assert not is_verbatim_eligible(value, _source("openai_api_key"))
