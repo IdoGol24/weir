@@ -1,5 +1,8 @@
 # weir inventory: the credential inventory contract
 
+> **Experimental.** `weir inventory` is experimental: its output and JSON
+> schema may change without notice, and it is not yet covered by a release.
+
 `weir inventory` finds the credentials an agent could reach and lists them by
 **name, source, location and classification only**. It never prints, logs,
 caches or stores a value, a fragment of one, a masked form (`prefix...last4`)
