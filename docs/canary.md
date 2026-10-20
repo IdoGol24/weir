@@ -105,10 +105,10 @@ a reader what the hit means.
 | `code` | passed explicitly by the flow to a constructor or call; in subprocess mode the flow reads it from a variable the runner names | `request` |
 | `tool-field` | a tool's own credential field, set through `env` or `code` | `request` or `egress` |
 | `client-kwargs` | a client's keyword arguments or default headers | `request` |
-| `mock-oauth` | an access or refresh token the mock's OAuth token endpoint minted during the run; ids `runtime.oauth.<token>#<n>` | `minted` |
+| `mock-oauth` | a value one of the mock's OAuth endpoints issued during the run: an authorization code, device code, access token, refresh token or ID token; ids `runtime.oauth.<token>#<n>`, `<token>` one of `code`, `device_code`, `access_token`, `refresh_token`, `id_token` | `minted` |
 | `oauth-client-secret` | the client secret in the flow's OAuth client configuration | `request` |
-| `observed` | a credential-bearing header or form field the mock received that was not already in the ledger and that the mock attributes to a placement, such as a token or signed assertion the software derived in process from a canary; ids `observed.<endpoint>.<field>#<n>` | `request` |
-| `registered` | a token the flow minted in process from a canary with no server involved, added through the runner's test-only registration API under the same attribution rule | `assertion` |
+| `observed` | a credential field the mock received that holds no needle of any ledger value but verifies against one, such as a signed assertion the software derived in process from a planted key; ids `observed.<endpoint>.<field>#<n>` | `request` |
+| `registered` | a token the flow minted in process from a canary with no server involved, handed to the runner's test-only registration API and attributed by the same rule | `assertion` |
 | `mcp` | an MCP server's environment or HTTP header | `request` |
 | `exporter-auth` | the telemetry exporter's own authentication header; it belongs on the export request's header and must never appear in exported content | `request` |
 | `url-userinfo` | the password in a URL's userinfo (a database DSN, for example) | `request` |
@@ -119,22 +119,49 @@ a reader what the hit means.
 Three kinds come into being during the run, and each enters the ledger as
 it appears:
 
-- A `mock-oauth` token is minted by the mock, which adds it to the ledger
-  **before** the reply that hands it to the program.
+- Every value the mock's OAuth endpoints issue is a `mock-oauth`
+  placement, added to the ledger **before** the reply that hands it to the
+  program.
 - An `observed` or `registered` value is created by the program, so it is
   added when it appears: when the mock receives it, or when the flow
-  registers it. Either way it is only ever a value derived from a fake. The
-  mock and the registration API add one only when they can **attribute** it
-  to a placement already in the ledger: it contains a needle of that
-  placement's value, or it verifies against that value, as a signature made
-  with a planted key or an HMAC under a planted secret does. The record
-  names that placement in `derived_from`.
-- A credential the mock receives and cannot attribute is **never stored**,
-  in the ledger, the capture, a log or anywhere else. The mock writes an
-  `unexpected` record naming only its endpoint and field, and the run is
-  incomplete (`unexpected_credential`). A flow that sends a credential no
-  canary accounts for has left the check's premise, so it fails visibly
-  instead of passing.
+  registers it. Either way it is only ever a value derived from a fake.
+
+The mock inspects a fixed set of **credential fields** in every request it
+receives: the `Authorization` and `Proxy-Authorization` headers (the
+credential after the scheme name), the API-key header each mocked endpoint
+declares in the runner's configuration, and the OAuth form fields
+`client_secret`, `client_assertion`, `assertion`, `code`, `device_code`,
+`refresh_token`, `subject_token`, `actor_token` and `password`. No other
+header or field is a credential field; a PKCE `code_verifier`, for example,
+is not. Each credential field value is handled by the first rule that
+applies:
+
+1. **It holds a needle** of one or more ledger values. The mock records
+   `request` evidence for each of those placements and stores nothing else:
+   a received value is never added as a placement, so a composite such as a
+   cookie or a Basic value never enters the ledger.
+2. **It verifies against** a ledger value, as a signature made with a
+   planted key or an HMAC under a planted secret does. This is the only way
+   a new value is **attributed**: the mock adds it as an `observed`
+   placement whose `derived_from` names that placement, with `request`
+   evidence for both.
+3. **Anything else** is never written by the mock, to the ledger or to any
+   record of its own. The mock writes an `unexpected` record naming only
+   its endpoint and field, and the run is incomplete
+   (`unexpected_credential`). A flow that sends a credential no canary
+   accounts for has left the check's premise, so it fails visibly instead
+   of passing.
+
+The registration API applies the same rules to the value it is handed:
+`assertion` evidence for a value holding a needle, a `registered` placement
+for a value that verifies against a ledger value, and otherwise a refused
+call, so the flow sees the failure, and an `unexpected` record with id
+`unexpected.registered#<n>`.
+
+The mock and the registration API control only their own records. Request
+headers never enter the capture, but if the program itself logs or exports
+a credential, it is in the program's own capture files and output like
+anything else the program emits.
 
 ### Canary values
 
@@ -194,8 +221,8 @@ were planted and the forms above. The judge does not match:
 
 JSON Lines, UTF-8, one object per line, every line ending in `\n`. The
 runner creates it with mode 0600 in the job's temporary directory, and
-appends to it during the run (the mock adds minted and observed tokens and
-unexpected records; the registration API adds registered tokens). Writers
+appends to it during the run (the mock and the registration API add
+runtime placements, `exercised` evidence and `unexpected` records). Writers
 append whole lines.
 
 The first line is the header; every other line is a record with a `type`:
@@ -223,12 +250,12 @@ one line each.
 | | `kind` | string | one of the kinds above |
 | | `value` | string | the fake value, at least 16 characters, unique in the ledger |
 | | `required` | boolean | optional, default `false`: the run is incomplete unless this placement is exercised or leaked |
-| | `derived_from` | string | required on `observed` and `registered` placements and absent on every other kind: the id of the other placement, defined in this ledger, that the value is attributed to |
+| | `derived_from` | string | required on `observed` and `registered` placements and absent on every other kind: the id of the other placement, defined in this ledger, that the value verifies against |
 | `exercised` | `placement` | string | a placement id defined in this ledger, on any line |
-| | `evidence` | string | `request` (the mock received the value in a request: raw, as a Bearer token, or inside a decoded Basic value), `minted` (the mock issued it), `egress` (the flow tried to reach the placement's provider host and was refused), `assertion` (an in-process check saw the value used) |
+| | `evidence` | string | `request` (a credential field the mock received holds a needle of the value, or verifies against it), `minted` (the mock issued it), `egress` (the flow tried to reach the placement's provider host and was refused), `assertion` (an in-process check saw the value used) |
 | `flow` | `id` | string | the flow's id, an id |
 | | `status` | string | `ok`, `failed` (crashed or exited non-zero), `timeout` or `skipped` |
-| `unexpected` | `id` | string | an id, `unexpected.<endpoint>.<field>#<n>`: where the mock received a credential it could not attribute. The record never carries the value |
+| `unexpected` | `id` | string | an id, `unexpected.<endpoint>.<field>#<n>` for a credential field the mock could not attribute, or `unexpected.registered#<n>` for a refused registration. The record never carries the value |
 
 The ledger is strict. The judge exits 2, naming the ledger and the line
 number, never content, when: the file cannot be read; it is readable by
@@ -268,10 +295,14 @@ Each file is read this way:
   where the structured walk found nothing for the same placement on the
   same line, so a hit is not reported twice.
 
-A line of a telemetry file that is not an OTLP export request (it does not
-parse as JSON, is not an object, or holds none of the three fields in the
-OTLP/JSON mapping), an empty line included, is covered by the raw sweep
-alone, counted under `unparsed_records`, and makes the run incomplete.
+A line of a telemetry file is the bytes up to and including a `\n`;
+nothing after the final `\n` forms a line, so a file ending in `\n` has
+no trailing empty line. Bytes after the final `\n` with no `\n` of their
+own are a truncated last line. A line that is not an OTLP export request
+(it is truncated, does not parse as JSON, is not an object, or holds none
+of the three fields in the OTLP/JSON mapping), an empty line included, is
+covered by the raw sweep alone, counted under `unparsed_records`, and makes
+the run incomplete.
 
 The runner writes OTLP request bodies decompressed, one export request per
 line, and does not put request headers in the capture: a credential's
@@ -329,7 +360,7 @@ one reason:
 | --- | --- | --- |
 | `required_not_exercised` | the placement id | a `required` placement is `not_exercised` |
 | `flow_not_ok` | `<flow id>=<status>`, such as `quickstart=failed` | a `flow` record's status is not `ok` |
-| `unexpected_credential` | the `unexpected` record's id | the mock received a credential it could not attribute to any placement |
+| `unexpected_credential` | the `unexpected` record's id | the mock received a credential field, or the registration API was handed a value, that it could not attribute to any placement |
 | `not_scanned` | the file | a capture file was not scanned (`compressed`, or a `symlink` inside a capture directory) |
 | `unparsed_record` | `<file>:<line>` | a line of a telemetry file is not an OTLP export request |
 | `empty_capture` | none | the telemetry files hold no span, log record or metric data point. Swept files never count, whatever they hold |
@@ -440,11 +471,12 @@ contract:
 
 1. plants one fresh unique value per placement and writes the ledger
    before any flow starts;
-2. adds each minted token to the ledger before handing it to the program,
-   adds an `observed` or `registered` value only when it is attributed to a
-   placement, records an unattributed credential as an `unexpected` record
-   and nowhere else, and records `exercised` evidence and one `flow` record
-   per flow;
+2. adds every value the mock's OAuth endpoints issue to the ledger before
+   handing it to the program, applies the credential-field rules to every
+   received credential field and registered value (evidence for a held
+   needle, a new placement only for a verified value, an `unexpected`
+   record and no stored value otherwise), and records all other
+   `exercised` evidence and one `flow` record per flow;
 3. writes OTLP export requests as decompressed OTLP/JSON, one request per
    line, in files it passes with `--otlp`, and every other telemetry body
    and each flow's stdout and stderr as its own capture file, passed as a
