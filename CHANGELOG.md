@@ -42,6 +42,8 @@
   schema and Python API are documented in `docs/inventory.md`. `--home` is
   required: there is no default home.
 
+## [0.4.2] - 2026-10-20
+
 ### Fixed
 - **The exposure display no longer shows characters of a key's body.** A
   hit is shown as the class prefix, `...` and the last four characters. The
@@ -50,6 +52,11 @@
   8 body characters of an OpenAI project key or 12 of a Google API key. The
   prefix now stops at the class's literal head (`sk-proj-`, `sk-ant-api03-`,
   `ghp_`, `AKIA`, `AIza` and the like).
+
+### Corpus
+- The release commit regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.4.1 to
+  0.4.2. That diff is version-only; no flow fact, node count or finding moved.
 
 ## [0.4.1] - 2026-10-14
 
