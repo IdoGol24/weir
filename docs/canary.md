@@ -127,8 +127,9 @@ receives:
 
 - on every mocked endpoint, the whole value of the `Authorization` and
   `Proxy-Authorization` headers, scheme name included;
-- on every mocked endpoint, the credential field that endpoint declares in
-  the runner's configuration: a header, a query parameter or a body field;
+- on every mocked endpoint, the credential fields that endpoint declares
+  in the runner's configuration: one or more headers, query parameters or
+  body fields;
 - on the endpoints the runner's configuration declares as the mock's OAuth
   endpoints only, the form fields `client_secret`, `client_assertion`,
   `assertion`, `code`, `device_code`, `refresh_token`, `subject_token`,
@@ -385,8 +386,8 @@ Every output that reaches a verdict carries the coverage line, the clean
 one included.
 
 ```text
-LEAK env.SEARCH_API_KEY file=capture/otlp.jsonl:3 signal=traces span="invoke_agent planner" at=attributes.app.agent.tools form=raw
 LEAK code.search_client.api_key file=capture/otlp.jsonl:4 signal=traces span="execute_tool fetch" at=events[0].attributes.http.request.header.authorization form=base64
+LEAK env.SEARCH_API_KEY file=capture/otlp.jsonl:3 signal=traces span="invoke_agent planner" at=attributes.app.agent.tools form=raw
 LEAK mock.token.access_token#1 file=capture/flow-quickstart.stderr:41 signal=raw form=raw
 not exercised: env.BACKUP_API_KEY
 coverage: 4 placements (3 leaked, 0 exercised, 1 not exercised, 1 required), 1 flows (1 ok), 3 files, 12 spans, 0 log records, 6 metric data points, 214 strings, 48210 bytes swept
@@ -464,10 +465,10 @@ contract:
    before any flow starts;
 2. adds every credential a scripted mock reply issues to the ledger before
    the reply that hands it to the program, applies the credential-field
-   rules to every credential field the mock receives (`request` evidence
-   for a held needle, an `unexpected` record and no stored value
-   otherwise), and records all other `exercised` evidence and one `flow`
-   record per flow;
+   rules to every credential field the mock receives, each declared field
+   of every endpoint included (`request` evidence for a held needle, an
+   `unexpected` record and no stored value otherwise), and records all
+   other `exercised` evidence and one `flow` record per flow;
 3. writes OTLP export requests as decompressed OTLP/JSON, one request per
    line, in files it passes with `--otlp`, and every other telemetry body
    and each flow's stdout and stderr as its own capture file, passed as a
