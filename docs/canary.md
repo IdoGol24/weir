@@ -49,8 +49,10 @@ matches, the ledger and report schemas, coverage states and exit codes.
   test-time dependency, never imported by production code, and its mock and
   telemetry receiver exist only for the length of one check run. weir ships
   no capture SDK or collector into production systems.
-- **Fake data only.** A ledger holds runner-generated fake values, never a
-  real credential, and no canary is ever sent to a real provider: the mock
+- **Fake data only.** A ledger holds only fake values: canaries the runner
+  generated, tokens the mock minted, and values attributed to one of those
+  (see [Runtime values](#runtime-values)). It never holds a real
+  credential, and no canary is ever sent to a real provider: the mock
   answers every API the flow is pointed at and refuses every other host.
   The judge cannot tell a fake value from a real one, so this is the
   runner's obligation and the user's.
@@ -62,14 +64,24 @@ matches, the ledger and report schemas, coverage states and exit codes.
 ## Running it
 
 ```sh
-weir canary judge --ledger FILE [--json] CAPTURE...
+weir canary judge --ledger FILE --otlp PATH [--otlp PATH]... [--json] [PATH...]
 ```
 
 | option | meaning |
 | --- | --- |
 | `--ledger` | **Required.** The canary ledger (`canary-ledger/1`, below). |
-| `CAPTURE` | One or more capture files or directories, at least one. A directory is read recursively in sorted path order; a symbolic link inside it is not followed. |
+| `--otlp` | **Required, repeatable.** A telemetry file, or a directory of them: OTLP/JSON export requests, one per line. Only these count toward completeness. |
+| `PATH` | Zero or more further capture files or directories, such as non-OTLP telemetry bodies and each flow's stdout and stderr. They are swept for canaries and never count toward completeness. |
 | `--json` | Print the `canary-report/1` JSON report instead of the text report. |
+
+A directory, under either role, is read recursively in sorted path order. A
+symbolic link inside it is not followed, and is reported as not scanned.
+Every other entry must be a readable regular file or directory: an entry
+that cannot be opened or read in full, vanishes during the read, or is a
+FIFO, socket or device is exit 2 naming the path, exactly like an
+unreadable path given on the command line. A file reached through more than
+one given path is exit 2. A capture the judge cannot read in full would
+leave a value unsearched, so no part of it is ever skipped silently.
 
 There are no tuning flags: which forms are matched, and what counts as
 complete, is fixed by this document so that every run of every user means
@@ -95,16 +107,34 @@ a reader what the hit means.
 | `client-kwargs` | a client's keyword arguments or default headers | `request` |
 | `mock-oauth` | an access or refresh token the mock's OAuth token endpoint minted during the run; ids `runtime.oauth.<token>#<n>` | `minted` |
 | `oauth-client-secret` | the client secret in the flow's OAuth client configuration | `request` |
-| `observed` | a credential-bearing header or form field the mock received that was not already in the ledger, such as a token or signed assertion the software derived in process; ids `observed.<endpoint>.<field>#<n>` | `request` |
-| `registered` | a token minted in process with no server involved, added through the runner's test-only registration API | `assertion` |
+| `observed` | a credential-bearing header or form field the mock received that was not already in the ledger and that the mock attributes to a placement, such as a token or signed assertion the software derived in process from a canary; ids `observed.<endpoint>.<field>#<n>` | `request` |
+| `registered` | a token the flow minted in process from a canary with no server involved, added through the runner's test-only registration API under the same attribution rule | `assertion` |
 | `mcp` | an MCP server's environment or HTTP header | `request` |
 | `exporter-auth` | the telemetry exporter's own authentication header; it belongs on the export request's header and must never appear in exported content | `request` |
 | `url-userinfo` | the password in a URL's userinfo (a database DSN, for example) | `request` |
 | `settings-file` | a settings file the software reads directly (a dotenv file, for example), not the process environment | `request` |
 
-Runtime tokens (`mock-oauth`, `observed`, `registered`) are added to the
-ledger **before** the reply or call that hands them to the program, so no
-value ever travels from the program under test to the judge.
+### Runtime values
+
+Three kinds come into being during the run, and each enters the ledger as
+it appears:
+
+- A `mock-oauth` token is minted by the mock, which adds it to the ledger
+  **before** the reply that hands it to the program.
+- An `observed` or `registered` value is created by the program, so it is
+  added when it appears: when the mock receives it, or when the flow
+  registers it. Either way it is only ever a value derived from a fake. The
+  mock and the registration API add one only when they can **attribute** it
+  to a placement already in the ledger: it contains a needle of that
+  placement's value, or it verifies against that value, as a signature made
+  with a planted key or an HMAC under a planted secret does. The record
+  names that placement in `derived_from`.
+- A credential the mock receives and cannot attribute is **never stored**,
+  in the ledger, the capture, a log or anywhere else. The mock writes an
+  `unexpected` record naming only its endpoint and field, and the run is
+  incomplete (`unexpected_credential`). A flow that sends a credential no
+  canary accounts for has left the check's premise, so it fails visibly
+  instead of passing.
 
 ### Canary values
 
@@ -164,8 +194,9 @@ were planted and the forms above. The judge does not match:
 
 JSON Lines, UTF-8, one object per line, every line ending in `\n`. The
 runner creates it with mode 0600 in the job's temporary directory, and
-appends to it during the run (the mock adds minted and observed tokens).
-Writers append whole lines.
+appends to it during the run (the mock adds minted and observed tokens and
+unexpected records; the registration API adds registered tokens). Writers
+append whole lines.
 
 The first line is the header; every other line is a record with a `type`:
 
@@ -174,66 +205,81 @@ The first line is the header; every other line is a record with a `type`:
 {"type": "placement", "id": "env.SEARCH_API_KEY", "kind": "tool-field", "value": "<fake value>", "required": true}
 {"type": "placement", "id": "runtime.oauth.access_token#1", "kind": "mock-oauth", "value": "<fake value>"}
 {"type": "exercised", "placement": "runtime.oauth.access_token#1", "evidence": "minted"}
+{"type": "placement", "id": "observed.search.x-signature#1", "kind": "observed", "value": "<fake value>", "derived_from": "env.SEARCH_API_KEY"}
+{"type": "unexpected", "id": "unexpected.search.authorization#1"}
 {"type": "flow", "id": "quickstart", "status": "ok"}
 ```
+
+Every **id** (a placement, flow or unexpected id) is 1 to 128 characters
+from `[A-Za-z0-9._:#/-]`, unique among the records of its type, and holds
+no run of 8 or more consecutive characters of any value in the ledger. Ids
+are printed in both reports, so this rule is what keeps them value-free and
+one line each.
 
 | record | field | type | meaning |
 | --- | --- | --- | --- |
 | header | `schema` | string | `"canary-ledger/1"` |
-| `placement` | `id` | string | 1 to 128 characters from `[A-Za-z0-9._:#/-]`, unique in the ledger |
+| `placement` | `id` | string | an id |
 | | `kind` | string | one of the kinds above |
 | | `value` | string | the fake value, at least 16 characters, unique in the ledger |
 | | `required` | boolean | optional, default `false`: the run is incomplete unless this placement is exercised or leaked |
+| | `derived_from` | string | required on `observed` and `registered` placements and absent on every other kind: the id of the other placement, defined in this ledger, that the value is attributed to |
 | `exercised` | `placement` | string | a placement id defined in this ledger, on any line |
 | | `evidence` | string | `request` (the mock received the value in a request: raw, as a Bearer token, or inside a decoded Basic value), `minted` (the mock issued it), `egress` (the flow tried to reach the placement's provider host and was refused), `assertion` (an in-process check saw the value used) |
-| `flow` | `id` | string | the flow's id, unique in the ledger |
+| `flow` | `id` | string | the flow's id, an id |
 | | `status` | string | `ok`, `failed` (crashed or exited non-zero), `timeout` or `skipped` |
+| `unexpected` | `id` | string | an id, `unexpected.<endpoint>.<field>#<n>`: where the mock received a credential it could not attribute. The record never carries the value |
 
 The ledger is strict. The judge exits 2, naming the ledger and the line
 number, never content, when: the file cannot be read; it is readable by
 group or others on a POSIX system; the header is missing or names another
 schema; a line is not a JSON object or does not end in a newline; a record
 has an unknown `type`, an unknown field, a wrong type or an unknown
-`kind`, `evidence` or `status`; an id or value repeats; a value is shorter
-than 16 characters; an `exercised` record names no defined placement; a
-placement id contains 8 or more consecutive characters of any value in the
-ledger; or the ledger defines no placement. A ledger the judge cannot read
-in full would leave a value unsearched, so it is never read in part.
+`kind`, `evidence` or `status`; an id breaks the id rule; a value repeats
+or is shorter than 16 characters; an `exercised` record names no defined
+placement; a `derived_from` is missing where required, present where it is
+not allowed, or names no other defined placement; or the ledger defines no
+placement. A ledger the judge cannot read in full would leave a value
+unsearched, so it is never read in part.
 
 ## The capture
 
-The capture is every file the runner hands the judge. The judge recognizes
-three kinds of file by content:
+The capture is every file the runner hands the judge. Each file has one
+of two roles, fixed by the command line and never guessed from content:
 
-1. **OTLP/JSON**: a JSON document, or JSON Lines with one document per line,
-   whose documents are OTLP export requests in the protobuf JSON mapping
-   (`resourceSpans`, `resourceLogs` or `resourceMetrics`). All three signals
-   are read.
-2. **Other JSON**: a JSON document or JSON Lines that is not OTLP-shaped,
-   such as the body of a request to a non-OTLP telemetry endpoint.
-3. **Anything else**: text, such as a flow's captured stdout and stderr,
-   or any other bytes.
+1. **Telemetry files** (`--otlp`): JSON Lines, every line one OTLP export
+   request in the protobuf JSON mapping, a JSON object holding
+   `resourceSpans`, `resourceLogs` or `resourceMetrics`. All three signals
+   are read. Spans, log records and metric data points read from these
+   files are the only telemetry that counts toward completeness.
+2. **Swept files** (every other `PATH`): any bytes, such as the body of a
+   request to a non-OTLP telemetry endpoint or a flow's captured stdout and
+   stderr. A swept file is never parsed, whatever it holds, and nothing in
+   it counts toward completeness.
 
-Each file is read two ways:
+Each file is read this way:
 
-- **The structured walk** (kinds 1 and 2). Every string at any depth is
-  visited after JSON decoding: in OTLP, every string field and every
-  `stringValue`, plus every `bytesValue` after base64 decoding; in other
-  JSON, every string value and every object key. Each visited string is
-  matched against every needle, and a hit gets a precise location.
+- **The structured walk** (telemetry files). Each line is decoded, and
+  every string field and every `stringValue`, plus every `bytesValue` after
+  base64 decoding, is matched against every needle. A hit gets a precise
+  location.
 - **The raw sweep** (every file). The file's bytes, undecoded, are matched
-  against every needle. A raw hit is reported only where the structured
-  walk found nothing for the same placement in the same record (a JSON
-  Lines line, or the single JSON document), so a hit is not reported twice.
-  A line that does not parse as JSON is covered by the raw sweep alone and
-  counted under `unparsed_records`.
+  against every needle. In a telemetry file a raw hit is reported only
+  where the structured walk found nothing for the same placement on the
+  same line, so a hit is not reported twice.
+
+A line of a telemetry file that is not an OTLP export request (it does not
+parse as JSON, is not an object, or holds none of the three fields in the
+OTLP/JSON mapping), an empty line included, is covered by the raw sweep
+alone, counted under `unparsed_records`, and makes the run incomplete.
 
 The runner writes OTLP request bodies decompressed, one export request per
 line, and does not put request headers in the capture: a credential's
 legitimate use as a request header is evidence that it was exercised, not
-a leak. A capture file that starts with the gzip magic bytes is not
-scanned and makes the run incomplete. A capture path given on the command
-line that cannot be read is exit 2.
+a leak. A capture file of either role that starts with the gzip magic bytes
+is not scanned and makes the run incomplete. A capture path, or any entry
+under a capture directory, that cannot be read in full or is not a regular
+file or directory is exit 2 (see [Running it](#running-it)).
 
 ### Locations
 
@@ -245,7 +291,6 @@ A hit's location is value-free and reads like weir's exposure scan:
 | `traces` | the span: its name and span id | `name`, `traceState`, `attributes.<key>`, `events[<i>].name`, `events[<i>].attributes.<key>`, `links[<i>].traceState`, `links[<i>].attributes.<key>`, `status.message` |
 | `logs` | the log record, by its 0-based index in the export request | `body`, `eventName`, `severityText`, `attributes.<key>` |
 | `metrics` | the metric, by name | `name`, `description`, `unit`, `metadata.<key>`, `dataPoints[<i>].attributes.<key>`, `dataPoints[<i>].exemplars[<j>].filteredAttributes.<key>` |
-| `json` | the document | a JSON path from `$`, keys needing quotes as `["..."]` |
 | `raw` | none | none: the hit is placed by file and line only |
 
 Any other string field is located by its OTLP/JSON field name. Strings
@@ -282,13 +327,16 @@ one reason:
 
 | reason | subject | when |
 | --- | --- | --- |
-| `required_not_exercised` | placement id | a `required` placement is `not_exercised` |
-| `flow_not_ok` | flow id and status | a `flow` record's status is not `ok` |
-| `not_scanned` | file | a capture file was not scanned (`compressed`, or a `symlink` inside a capture directory) |
-| `empty_capture` | none | the capture holds no telemetry: no span, log record, metric data point or other JSON document. Text files alone do not count |
+| `required_not_exercised` | the placement id | a `required` placement is `not_exercised` |
+| `flow_not_ok` | `<flow id>=<status>`, such as `quickstart=failed` | a `flow` record's status is not `ok` |
+| `unexpected_credential` | the `unexpected` record's id | the mock received a credential it could not attribute to any placement |
+| `not_scanned` | the file | a capture file was not scanned (`compressed`, or a `symlink` inside a capture directory) |
+| `unparsed_record` | `<file>:<line>` | a line of a telemetry file is not an OTLP export request |
+| `empty_capture` | none | the telemetry files hold no span, log record or metric data point. Swept files never count, whatever they hold |
 
-Silence is never a clean result: an empty capture, a crashed flow or an
-untouched required placement fails visibly instead of passing quietly.
+Silence is never a clean result: an empty capture, a crashed flow, an
+unaccounted credential or an untouched required placement fails visibly
+instead of passing quietly.
 
 The **result** is `leak` when there is any hit, otherwise `incomplete`
 when any reason above holds, otherwise `clean`. A found leak outranks
@@ -300,7 +348,7 @@ incompleteness, and the incomplete reasons are still listed.
 | --- | --- | --- |
 | `0` | `clean` | complete, and no canary in the capture |
 | `1` | `leak` | at least one canary, in some form, in the capture |
-| `2` | none | usage or input error: bad arguments, an unusable ledger, an unreadable capture path. No report is printed; the error on stderr names the input and line, never content read from it |
+| `2` | none | usage or input error: bad arguments, an unusable ledger, a capture path or directory entry that cannot be read in full or is not a regular file or directory, a file reached through two given paths. No report is printed; the error on stderr names the input and line, never content read from it |
 | `3` | `incomplete` | no canary found, but the run is incomplete |
 
 `0`, `1` and `2` follow `weir scan`'s convention (nothing to fail on,
@@ -319,7 +367,7 @@ LEAK env.SEARCH_API_KEY file=capture/otlp.jsonl:3 signal=traces span="invoke_age
 LEAK oauth.client_secret file=capture/otlp.jsonl:4 signal=traces span="execute_tool fetch" at=events[0].attributes.http.request.header.authorization form=base64
 LEAK runtime.oauth.access_token#1 file=capture/flow-quickstart.stderr:41 signal=raw form=raw
 not exercised: env.BACKUP_API_KEY
-coverage: 4 placements (3 leaked, 0 exercised, 1 not exercised, 1 required), 1 flows (1 ok), 3 files, 12 spans, 0 log records, 6 metric data points, 0 JSON documents, 214 strings, 48210 bytes swept
+coverage: 4 placements (3 leaked, 0 exercised, 1 not exercised, 1 required), 1 flows (1 ok), 3 files, 12 spans, 0 log records, 6 metric data points, 214 strings, 48210 bytes swept
 result: leak
 ```
 
@@ -333,7 +381,7 @@ Precisely:
 - `not exercised: <placement>` for each `not_exercised` placement.
 - `not scanned: <path> (<reason>)` for each file not scanned.
 - `incomplete: <reason> <subject>` for each incomplete reason.
-- `coverage: <P> placements (<L> leaked, <E> exercised, <N> not exercised, <R> required), <F> flows (<K> ok), <files> files, <S> spans, <G> log records, <M> metric data points, <J> JSON documents, <T> strings, <B> bytes swept`
+- `coverage: <P> placements (<L> leaked, <E> exercised, <N> not exercised, <R> required), <F> flows (<K> ok), <files> files, <S> spans, <G> log records, <M> metric data points, <T> strings, <B> bytes swept`
 - `result: clean|leak|incomplete`
 
 Lines are sorted (hits by placement, file, line, signal, record, location,
@@ -357,7 +405,7 @@ the text report:
 | `flows` | array | `{id, status}` |
 | `not_scanned` | array | `{file, reason}`; reason `compressed` or `symlink` |
 | `incomplete` | array | `{reason, subject}`; `subject` is null for `empty_capture` |
-| `coverage` | object | `placements`, `leaked`, `exercised`, `not_exercised`, `required`, `flows`, `flows_ok`, `files`, `files_not_scanned`, `spans`, `log_records`, `metric_data_points`, `json_documents`, `unparsed_records`, `strings`, `bytes` |
+| `coverage` | object | `placements`, `leaked`, `exercised`, `not_exercised`, `required`, `flows`, `flows_ok`, `files`, `files_not_scanned`, `spans`, `log_records`, `metric_data_points`, `unparsed_records`, `strings`, `bytes` |
 
 A hit:
 
@@ -367,7 +415,7 @@ A hit:
 | `kind` | string | the placement's kind |
 | `file` | string | the capture path, as given or found under a given directory |
 | `line` | integer | 1-based line where the record starts, or where a raw match starts |
-| `signal` | string | `traces`, `logs`, `metrics`, `json` or `raw` |
+| `signal` | string | `traces`, `logs`, `metrics` or `raw` |
 | `span` | string or null | the span name, printed under the rule above |
 | `span_id` | string or null | the span id as lowercase hex |
 | `log_record` | integer or null | the log record's 0-based index in its export request |
@@ -392,11 +440,15 @@ contract:
 
 1. plants one fresh unique value per placement and writes the ledger
    before any flow starts;
-2. adds runtime tokens to the ledger before handing them to the program,
-   and records `exercised` evidence and one `flow` record per flow;
+2. adds each minted token to the ledger before handing it to the program,
+   adds an `observed` or `registered` value only when it is attributed to a
+   placement, records an unattributed credential as an `unexpected` record
+   and nowhere else, and records `exercised` evidence and one `flow` record
+   per flow;
 3. writes OTLP export requests as decompressed OTLP/JSON, one request per
-   line, and every other telemetry body and each flow's stdout and stderr
-   as its own capture file;
+   line, in files it passes with `--otlp`, and every other telemetry body
+   and each flow's stdout and stderr as its own capture file, passed as a
+   swept `PATH`;
 4. relays a flow's own output only after replacing every needle with
    `<canary:PLACEMENT-ID>`;
 5. exits with the judge's code, and deletes the ledger and the capture when
