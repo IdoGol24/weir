@@ -124,7 +124,8 @@ standard credential files, project files (with imported gitleaks or
 trufflehog results), the launch environment and shell startup files, and
 the approved map `.weir/reach.yml` - by name, source and location only. It
 never prints, logs or stores a value; what it can store is a keyed
-fingerprint plus offsets ([contract](docs/inventory.md)).
+fingerprint plus offsets ([contract](docs/inventory.md)). It is experimental:
+its output and JSON schema may change without notice.
 
 Next: the `weir diff` baseline gate, more rules, more dialects.
 
