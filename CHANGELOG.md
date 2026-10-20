@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+- **The exposure display no longer shows characters of a key's body.** A
+  hit is shown as the class prefix, `...` and the last four characters. The
+  prefix was cut at the last `-` or `_` in the first 16 characters, and real
+  OpenAI and Google key bodies contain both, so the display could show up to
+  8 body characters of an OpenAI project key or 12 of a Google API key. The
+  prefix now stops at the class's literal head (`sk-proj-`, `sk-ant-api03-`,
+  `ghp_`, `AKIA`, `AIza` and the like).
+
 ## [0.4.1] - 2026-10-14
 
 ### Fixed
