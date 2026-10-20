@@ -50,12 +50,12 @@ matches, the ledger and report schemas, coverage states and exit codes.
   telemetry receiver exist only for the length of one check run. weir ships
   no capture SDK or collector into production systems.
 - **Fake data only.** A ledger holds only runner-generated fake values: the
-  canaries the runner plants and the tokens its mock's OAuth endpoints issue
-  (see [Runtime values](#runtime-values)). It never holds a real credential,
-  and no canary is ever sent to a real provider: the mock answers every API
-  the flow is pointed at and refuses every other host. The judge cannot tell
-  a fake value from a real one, so this is the runner's obligation and the
-  user's.
+  canaries the runner plants and the credentials its mock's OAuth endpoints
+  issue (see [Runtime values](#runtime-values)). It never holds a real
+  credential, and no canary is ever sent to a real provider: the mock
+  answers every API the flow is pointed at and refuses every other host. The
+  judge cannot tell a fake value from a real one, so this is the runner's
+  obligation and the user's.
 - Ledgers and captures that hold provider-shaped canaries are never
   committed to a public repository. Public secret scanning would report a
   realistic canary to the provider as a leaked key. Fixtures committed to
@@ -103,7 +103,7 @@ a reader what the hit means.
 | --- | --- | --- |
 | `env` | the flow's launch environment, under the variable the software reads | `request` or `egress` |
 | `code` | passed explicitly by the flow to a constructor or call; in subprocess mode the flow reads it from a variable the runner names | `request` or `egress` |
-| `mock-oauth` | a value one of the mock's OAuth endpoints issued during the run: an authorization code, device code, access token, refresh token or ID token; ids `runtime.oauth.<token>#<n>`, `<token>` one of `code`, `device_code`, `access_token`, `refresh_token`, `id_token` | `minted` |
+| `mock-oauth` | a credential one of the mock's OAuth endpoints issued during the run: an authorization code, device code, access token, refresh token or ID token; ids `runtime.oauth.<token>#<n>`, `<token>` one of `code`, `device_code`, `access_token`, `refresh_token`, `id_token` | `minted` |
 
 **Reserved for a later release.** These kinds have no rules in this version,
 and a ledger that names one is rejected as an unknown `kind`: `tool-field`,
@@ -117,11 +117,14 @@ with a planted key, is reserved with them.
 
 ### Runtime values
 
-One kind comes into being during the run. Every value the mock's OAuth
-endpoints issue is a fresh runner-generated fake value, added to the ledger
-as a `mock-oauth` placement, with `minted` evidence, **before** the reply
-that hands it to the program. No value the program creates ever enters the
-ledger.
+One kind comes into being during the run. Every credential the mock's OAuth
+endpoints issue (an authorization code, device code, access, refresh or ID
+token) is a fresh runner-generated fake value, added to the ledger as a
+`mock-oauth` placement, with `minted` evidence, **before** the reply that
+hands it to the program. The other fields of an OAuth reply, such as
+`token_type`, `expires_in`, `scope`, `user_code` and `verification_uri`, are
+not credentials and are never ledgered. No value the program creates ever
+enters the ledger.
 
 The mock inspects a fixed set of **credential fields** in the requests it
 receives:
@@ -464,12 +467,13 @@ contract:
 
 1. plants one fresh unique value per placement and writes the ledger
    before any flow starts;
-2. adds every value the mock's OAuth endpoints issue to the ledger before
-   the reply that hands it to the program, applies the credential-field
-   rules to every credential field the mock receives, each declared field
-   of every endpoint included (`request` evidence for a held needle, an
-   `unexpected` record and no stored value otherwise), and records all
-   other `exercised` evidence and one `flow` record per flow;
+2. adds every credential the mock's OAuth endpoints issue (an authorization
+   code, device code, access, refresh or ID token) to the ledger before the
+   reply that hands it to the program, applies the credential-field rules to
+   every credential field the mock receives, each declared field of every
+   endpoint included (`request` evidence for a held needle, an `unexpected`
+   record and no stored value otherwise), and records all other `exercised`
+   evidence and one `flow` record per flow;
 3. writes OTLP export requests as decompressed OTLP/JSON, one request per
    line, in files it passes with `--otlp`, and every other telemetry body
    and each flow's stdout and stderr as its own capture file, passed as a
