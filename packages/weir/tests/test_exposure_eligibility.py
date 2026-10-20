@@ -154,3 +154,27 @@ def test_github_token_narrowing_rejects_low_entropy_and_placeholder_values() -> 
     assert is_verbatim_eligible(
         "ghp_0123456789abcdefghijABCDEFGHIJ012345", _source("github_token")
     )
+
+
+def test_class_prefix_stops_at_the_literal_prefix_when_the_body_has_separators() -> None:
+    # Real OpenAI and Google key bodies use '-' and '_'. A cut at the last
+    # separator in a fixed window would carry body characters into the
+    # display prefix shown before '...last4'. Fake values only.
+    assert class_prefix("sk-proj-Ab_cD-eFgH1234567890abcdefghij") == "sk-proj-"
+    assert class_prefix("sk-svcacct-A_bC-dEfGh1234567890abcdef") == "sk-svcacct-"
+    assert class_prefix("sk-Ab_cD-eFgHiJkL1234567890abcdefghij") == "sk-"
+    assert class_prefix("sk-ant-api03-A_bC-dEfGh1234567890abcdef") == "sk-ant-api03-"
+    assert class_prefix("sk-ant-admin01-A_bC-dEf1234567890abcdef") == "sk-ant-admin01-"
+    assert class_prefix("AIzaSy-Ab_cDeFgHiJkL1234567890abcdefgh") == "AIza"
+    assert class_prefix("AIza_bCdEfGhIjKl-mN1234567890abcdefgh") == "AIza"
+    assert class_prefix("ASIAQH7RK2LS9VN4XB6Z") == "ASIA"
+
+
+def test_the_display_head_does_not_loosen_the_distinct_char_floor() -> None:
+    # The openai pattern also takes 'sk-admin-' keys, whose display head is
+    # only 'sk-'. Counted after that head, 'admin-' would carry this
+    # two-character placeholder over the floor; the floor keeps stripping
+    # 'sk-admin-', so it stays ineligible. Fake values only.
+    value = "sk-admin-" + "AB" * 20
+    assert class_prefix(value) == "sk-"
+    assert not is_verbatim_eligible(value, _source("openai_api_key"))
