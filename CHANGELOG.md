@@ -13,6 +13,11 @@
   prefix now stops at the class's literal head (`sk-proj-`, `sk-ant-api03-`,
   `ghp_`, `AKIA`, `AIza` and the like).
 
+### Corpus
+- The release commit regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.4.1 to
+  0.4.2. That diff is version-only; no flow fact, node count or finding moved.
+
 ## [0.4.1] - 2026-10-14
 
 ### Fixed
