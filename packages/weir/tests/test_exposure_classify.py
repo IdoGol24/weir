@@ -305,3 +305,22 @@ def test_last4_is_withheld_below_the_reconstruction_floor() -> None:
     assert hit.eligible
     assert hit.last4 is None
     assert "tok-abc12" not in msgspec.json.encode(scan).decode()
+
+
+def test_the_display_prefix_carries_no_body_character() -> None:
+    # Real OpenAI and Google key bodies use '-' and '_' early. The display is
+    # prefix + '...' + last4, so a prefix cut past the class head would show
+    # body characters. Each body below starts with a separator-bearing run;
+    # the expected head is the class's own literal, not a restated constant
+    # of the cutting rule. Fake values only.
+    keys = {
+        "openai_api_key": ("sk-proj-", "Ab_cD-eFgH1a2b3c4d5e6f7g8h9i0jKLMNOPQRSTUV"),
+        "google_api_key": ("AIza", "Sy-Ab_cDeFgHiJkL1234567890abcdefghi"),
+        "anthropic_api_key": ("sk-ant-api03-", "A_bC-dEfGh" + "1a2b3c4d5e" * 6),
+    }
+    for name, (head, body) in keys.items():
+        value = head + body
+        scan = _scan([{"spanId": "aa" * 8, "attributes": [_attr("k", value)]}])
+        (hit,) = scan.hits
+        assert hit.source_class == name and hit.eligible, name
+        assert hit.prefix == head, (name, hit.prefix)
