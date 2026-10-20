@@ -4,10 +4,9 @@
 
 ### Added
 - **`weir inventory` (experimental): which credentials an agent could reach,
-  by name only.** Experimental: its output and JSON schema may change without
-  notice, and it is not yet covered by a release. Four sources: a versioned
-  list of standard credential locations under the given home (`~/.aws`,
-  Google application default credentials,
+  by name only.** Its output and JSON schema may change without notice. Four
+  sources: a versioned list of standard credential locations under the given
+  home (`~/.aws`, Google application default credentials,
   `~/.npmrc`, `~/.kube/config`, `~/.docker/config.json`, `~/.netrc`, git
   credentials, gh and more, including the variables that move them); the
   project tree, through Weir's catalog plus imported gitleaks or trufflehog
