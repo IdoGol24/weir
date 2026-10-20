@@ -222,8 +222,8 @@ were planted and the forms above. The judge does not match:
 JSON Lines, UTF-8, one object per line, every line ending in `\n`. The
 runner creates it with mode 0600 in the job's temporary directory, and
 appends to it during the run (the mock adds `mock-oauth` placements,
-`exercised` evidence and `unexpected` records). Writers
-append whole lines.
+`exercised` evidence and `unexpected` records). Writers append whole
+lines.
 
 The first line is the header; every other line is a record with a `type`:
 
@@ -262,8 +262,8 @@ schema; a line is not a JSON object or does not end in a newline; a record
 has an unknown `type`, an unknown field, a wrong type or an unknown
 `kind`, `evidence` or `status`; an id breaks the id rule; a value repeats
 or is shorter than 16 characters; an `exercised` record names no defined
-placement; or the ledger defines no placement. A ledger the judge cannot read in full would leave a value
-unsearched, so it is never read in part.
+placement; or the ledger defines no placement. A ledger the judge cannot
+read in full would leave a value unsearched, so it is never read in part.
 
 ## The capture
 
@@ -330,8 +330,8 @@ version, schema URLs) are reported with no record and a location starting
 path segment or capture file name comes from the program under test and may
 itself hold a canary. Before any such string is printed it is flattened to
 one line (control characters shown as `\xNN`), cut to 200 characters with
-`...`, and replaced entirely by `[withheld]` if it contains any needle or any run
-of 8 or more consecutive characters of any ledger value. A canary in a
+`...`, and replaced entirely by `[withheld]` if it contains any needle or
+any run of 8 or more consecutive characters of any ledger value. A canary in a
 span name is therefore reported as a hit at location `name` of a span
 shown as `[withheld]`.
 
@@ -379,8 +379,8 @@ incompleteness, and the incomplete reasons are still listed.
 | `3` | `incomplete` | no canary found, but the run is incomplete |
 
 `0`, `1` and `2` follow `weir scan`'s convention (nothing to fail on,
-findings, unusable input). The runner exits with
-the judge's code, and uses `2` for its own usage and configuration errors.
+findings, unusable input). The runner exits with the judge's code, and
+uses `2` for its own usage and configuration errors.
 
 ## The text report
 
