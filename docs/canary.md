@@ -49,12 +49,13 @@ matches, the ledger and report schemas, coverage states and exit codes.
   test-time dependency, never imported by production code, and its mock and
   telemetry receiver exist only for the length of one check run. weir ships
   no capture SDK or collector into production systems.
-- **Fake data only.** A ledger holds only runner-generated fake values:
-  the canaries the runner plants and the credentials its mock issues (see
-  [Runtime values](#runtime-values)). It never holds a real credential, and no canary is ever sent to a real provider: the mock
-  answers every API the flow is pointed at and refuses every other host.
-  The judge cannot tell a fake value from a real one, so this is the
-  runner's obligation and the user's.
+- **Fake data only.** A ledger holds only runner-generated fake values: the
+  canaries the runner plants and the tokens its mock's OAuth endpoints issue
+  (see [Runtime values](#runtime-values)). It never holds a real credential,
+  and no canary is ever sent to a real provider: the mock answers every API
+  the flow is pointed at and refuses every other host. The judge cannot tell
+  a fake value from a real one, so this is the runner's obligation and the
+  user's.
 - Ledgers and captures that hold provider-shaped canaries are never
   committed to a public repository. Public secret scanning would report a
   realistic canary to the provider as a leaked key. Fixtures committed to
@@ -90,7 +91,7 @@ the same thing.
 
 A **placement** is one place a credential can live in the program under
 test, holding one canary. Each placement has a unique id (for example
-`env.SEARCH_API_KEY` or `mock.token.access_token#1`), so a hit names its
+`env.SEARCH_API_KEY` or `runtime.oauth.access_token#1`), so a hit names its
 source. A run plants **one unique value per placement**: two placements
 never share a value, or a hit could not say which one leaked.
 
@@ -102,23 +103,23 @@ a reader what the hit means.
 | --- | --- | --- |
 | `env` | the flow's launch environment, under the variable the software reads | `request` or `egress` |
 | `code` | passed explicitly by the flow to a constructor or call; in subprocess mode the flow reads it from a variable the runner names | `request` or `egress` |
-| `mock-issued` | a credential a scripted mock reply issued during the run, such as an authorization code, an access or refresh token, or a session key; ids `mock.<endpoint>.<field>#<n>` | `minted` |
+| `mock-oauth` | a value one of the mock's OAuth endpoints issued during the run: an authorization code, device code, access token, refresh token or ID token; ids `runtime.oauth.<token>#<n>`, `<token>` one of `code`, `device_code`, `access_token`, `refresh_token`, `id_token` | `minted` |
 
-**Reserved for a later release.** These kinds have no rules in this
-version, and a ledger that names one is rejected as an unknown `kind`:
-`tool-field`, `client-kwargs`, `oauth-client-secret`, `mcp`,
-`exporter-auth`, `url-userinfo`, `settings-file`, `observed` (a value the
-program derives from a canary and sends to the mock), `registered` (a
-token the program mints in process from a canary) and signing-key
-placements. Attribution of a derived value by verification, such as a
-signature made with a planted key, is reserved with them.
+**Reserved for a later release.** These kinds have no rules in this version,
+and a ledger that names one is rejected as an unknown `kind`: `tool-field`,
+`client-kwargs`, `oauth-client-secret`, `mcp`, `exporter-auth`,
+`url-userinfo`, `settings-file`, `observed` (a value the program derives
+from a canary and sends to the mock), `registered` (a token the program
+mints in process from a canary), signing-key placements, and credentials
+issued by a mocked endpoint other than the mock's OAuth endpoints.
+Attribution of a derived value by verification, such as a signature made
+with a planted key, is reserved with them.
 
 ### Runtime values
 
-One kind comes into being during the run. Each scripted mock reply marks
-the fields that issue a credential, whatever the endpoint. The mock fills
-each with a fresh runner-generated fake value and adds it to the ledger as
-a `mock-issued` placement, with `minted` evidence, **before** the reply
+One kind comes into being during the run. Every value the mock's OAuth
+endpoints issue is a fresh runner-generated fake value, added to the ledger
+as a `mock-oauth` placement, with `minted` evidence, **before** the reply
 that hands it to the program. No value the program creates ever enters the
 ledger.
 
@@ -160,7 +161,7 @@ emits.
 - Planted values follow a shapes registry so that software checking a key's
   prefix or length accepts them: a provider's documented prefix followed by
   random characters from `[A-Za-z0-9]` only. JSON and URL escaping leave
-  such a value unchanged. A `mock-issued` value may hold other characters
+  such a value unchanged. A `mock-oauth` value may hold other characters
   where its reply's format calls for them, which is why the judge matches
   escaped forms at all.
 - Signing keys are not planted in the first release: a private key or
@@ -217,7 +218,7 @@ were planted and the forms above. The judge does not match:
 
 JSON Lines, UTF-8, one object per line, every line ending in `\n`. The
 runner creates it with mode 0600 in the job's temporary directory, and
-appends to it during the run (the mock adds `mock-issued` placements,
+appends to it during the run (the mock adds `mock-oauth` placements,
 `exercised` evidence and `unexpected` records). Writers
 append whole lines.
 
@@ -226,8 +227,8 @@ The first line is the header; every other line is a record with a `type`:
 ```json
 {"schema": "canary-ledger/1"}
 {"type": "placement", "id": "env.SEARCH_API_KEY", "kind": "env", "value": "<fake value>", "required": true}
-{"type": "placement", "id": "mock.token.access_token#1", "kind": "mock-issued", "value": "<fake value>"}
-{"type": "exercised", "placement": "mock.token.access_token#1", "evidence": "minted"}
+{"type": "placement", "id": "runtime.oauth.access_token#1", "kind": "mock-oauth", "value": "<fake value>"}
+{"type": "exercised", "placement": "runtime.oauth.access_token#1", "evidence": "minted"}
 {"type": "unexpected", "id": "unexpected.search.authorization#1"}
 {"type": "flow", "id": "quickstart", "status": "ok"}
 ```
@@ -388,7 +389,7 @@ one included.
 ```text
 LEAK code.search_client.api_key file=capture/otlp.jsonl:4 signal=traces span="execute_tool fetch" at=events[0].attributes.http.request.header.authorization form=base64
 LEAK env.SEARCH_API_KEY file=capture/otlp.jsonl:3 signal=traces span="invoke_agent planner" at=attributes.app.agent.tools form=raw
-LEAK mock.token.access_token#1 file=capture/flow-quickstart.stderr:41 signal=raw form=raw
+LEAK runtime.oauth.access_token#1 file=capture/flow-quickstart.stderr:41 signal=raw form=raw
 not exercised: env.BACKUP_API_KEY
 coverage: 4 placements (3 leaked, 0 exercised, 1 not exercised, 1 required), 1 flows (1 ok), 3 files, 12 spans, 0 log records, 6 metric data points, 214 strings, 48210 bytes swept
 result: leak
@@ -463,7 +464,7 @@ contract:
 
 1. plants one fresh unique value per placement and writes the ledger
    before any flow starts;
-2. adds every credential a scripted mock reply issues to the ledger before
+2. adds every value the mock's OAuth endpoints issue to the ledger before
    the reply that hands it to the program, applies the credential-field
    rules to every credential field the mock receives, each declared field
    of every endpoint included (`request` evidence for a held needle, an
