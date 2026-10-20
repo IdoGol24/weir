@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-20
+
 ### Fixed
 - **The exposure display no longer shows characters of a key's body.** A
   hit is shown as the class prefix, `...` and the last four characters. The
