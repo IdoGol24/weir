@@ -1,154 +1,117 @@
-# Weir - unit tests for your agents
+# Weir
 
-Weir is a CI gate for AI agents.
+**Leak tests for AI agents.**
 
 [![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+Plant fake credentials where your real ones live, run your agent, and find out exactly where they ended up, before a real key does.
+
+```sh
+pip install weir-scan
+weir canary judge --sample
+```
+
+The sample is a bundled fake ledger and capture with one planted value in a span attribute, so the check exits 1 and prints its leak report. It names the placement and the span, never the value:
+
+<!-- verify: canary judge --sample -->
+```text
+LEAK env.SAMPLE_SERVICE_KEY file=canary-sample/otlp.jsonl:1 signal=traces span="call_service" at=attributes.app.client.config form=raw
+coverage: 2 placements (1 leaked, 1 exercised, 0 not exercised, 1 required), 1 flows (1 ok), 1 files, 3 spans, 0 log records, 0 metric data points, 29 strings, 1347 bytes swept
+result: leak
+```
+
+## How it works
+
+Weir is two packages that work together, in CI or on your laptop:
+
+- **weir-run is the test rig.** It plants a unique fake credential wherever a real one would live, runs your agent's own flows against a fake model on 127.0.0.1, and captures everything the agent exports.
+- **weir-scan is the inspector.** It reads that capture and gives the verdict: leak, clean or incomplete. It also works on its own, on traces you already have.
+
+```sh
+pip install weir-scan weir-run
+weir-run run --config canary.toml
+```
+
+The config names where your credentials live and which flows to run. The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](docs/canary.md).
+
+## Who it's for
+
+- **Teams building agents:** run it in CI on every dependency update. A framework or tracing upgrade that starts writing keys into telemetry fails the build, like a regression test for leaks.
+- **Framework and tracing maintainers:** run it before each release, so the next advisory isn't about you.
+
+## Why it's different
+
+- **It doesn't guess.** It looks for the exact values it planted, so a hit is a real leak, and a key is found even when it doesn't look like a key, raw or encoded (JSON-escaped, URL-encoded, base64, hex).
+- **Offline and deterministic.** No AI model decides anything, and Weir sends nothing anywhere. The scanner opens no sockets, the judge starts no processes, and CI enforces that.
+- **No false all-clear.** If a run captured nothing, a flow failed, or a credential you marked required was never exercised, Weir says "incomplete", not "clean", and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
+
+## Proof
+
+Found with Weir: [GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security/advisories/GHSA-j7qq-vr8c-xvw3), an MLflow advisory, fixed in MLflow 3.17.0.
+
+## Also included: the flow scan and `weir inventory` (experimental)
+
+### The flow scan
+
 <p align="center">
-  <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/demo.svg" alt="Terminal recording: weir scan reports a verdict-grade finding with a witness path, then exits 1" width="620">
+  <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/demo.svg" alt="Terminal recording: weir scan finds sensitive data that travelled from a tool result to an outbound email step, prints the steps it passed through, then exits 1" width="620">
 </p>
 
-It reads the OpenTelemetry traces your agent already emits and fails the build when sensitive data reaches a sink it should not reach.
+`weir scan` reads the OpenTelemetry traces your agent already emits and fails the build when sensitive data travels to a place it should never reach, for example a bank account number from untrusted tool output that ends up in an outgoing email. It rebuilds the session step by step from the trace, follows the data, and prints the source, the destination and every step in between.
 
-Weir asks a structural question:
-
-### Did sensitive data flow through the agent to a sink it should never have reached?
-
-Your agent already answers that question in the traces it emits. Weir reconstructs the session graph, tracks taint through it, and shows the evidence node by node.
-
-
-```mermaid
-flowchart LR
-  A["traces your agent<br/>already emits"] --> B{"weir gauge"}
-  B -->|"coverage too low"| C["names the exact<br/>instrumentation switch"]
-  C -.->|"flip it, re-run"| B
-  B -->|"coverage sufficient"| D{"weir scan"}
-  D -->|"no forbidden flow"| E["exit 0"]
-  D -->|"forbidden flow"| F["exit 1 + witness path<br/>n2 → n3 → n4 → n5 → n6"]
-```
-
-## Try it in two minutes
-
-```
-pip install weir-scan
+```sh
 weir gauge your-export.jsonl   # or: weir gauge --sample
+weir scan your-export.jsonl
 ```
 
-`gauge` asks the question every other tool skips: can your telemetry even
-support the assertion you want to make?
+Most exports cannot support this yet, because content capture ships off by default almost everywhere. `weir gauge` measures how much of your trace the scan can actually see, and names the exact setting to switch on, read from the instrumentation in your own trace. The scan also reports any provider key pattern it finds sitting in a span, with no flow needed.
 
-<!-- verify: gauge --sample -->
-```
-evidentiary coverage: 0%
-argument capture: 0%
-degraded: 100%
-tool arguments not captured - this scope is emitted by Traceloop/OpenLLMetry's LangChain instrumentation, which captures content to span attributes by default; check TRACELOOP_TRACE_CONTENT (false disables capture) in the traced service's environment
-  linkage: explicit (gen_ai.tool.call.id present)
-  payloads: absent - content capture is off
-at your current telemetry: coverage reporting YES - taint/scan NO
-content capture is off; for OTel GenAI instrumentations built on the util-genai layer, set OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental and OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY to capture gen_ai.input.messages / gen_ai.output.messages / gen_ai.tool.call.arguments and unlock cross-step analysis
-exposure scan: 8 spans, 29 strings - no credential-shaped values
-```
+Each check is a rule, and a rule is a short JSON file naming a source, a destination and a match mode ([bundled rules](packages/weir/src/weir/rules_commons/bundled/)). Rewording prompts or adding a step does not change the result. When the trace evidence is too weak to prove a flow, the finding stays in the report, marked as not proven and saying why, instead of quietly disappearing.
 
-Most exports fail this first step, because content capture ships off by
-default almost everywhere. So weir names the exact switch to flip, read
-from the instrumentation in your own trace.
+`weir scan` exits 0 when nothing fails, 1 on a finding and 2 on unusable input.
 
-Flip it, re-run, and `weir scan` is the actual test:
+### `weir inventory` (experimental)
 
-<!-- verify: scan fixtures/injection-exfil.json -->
-```
-1 verdict-grade finding(s)
-finding: injection-exfil-to-outbound-sink
-  source: financial_account_identifier at node 2 (tool_result)
-  sink: send_email at node 6
-  witness path: n2 -> n3 -> n4 -> n5 -> n6
-  join tiers crossed: explicit
-  verdict grade: yes
-  matched value: 22 chars
-```
-
-Exit `1`, build fails, secret redacted. That finding came from one rule,
-and a rule is just a file. This is the whole thing:
-
-<!-- verify-file: packages/weir/src/weir/rules_commons/bundled/injection-exfil-to-outbound-sink.json -->
-```json
-{
-  "id": "injection-exfil-to-outbound-sink",
-  "version": "1.0.0",
-  "stage": "active",
-  "description": "Untrusted content reaches an outbound sink verbatim, carrying a source-class-eligible sensitive value (R5.9).",
-  "source_class": "financial_account_identifier",
-  "sink_tool_name": "send_email",
-  "mode": "verbatim"
-}
-```
-
-No code, no DSL. You name a source, a sink, and a mode. The engine builds
-the graph, tracks the taint, and shows its work.
-
-Rewording your prompts will not move a finding. Adding a step will not
-move it. If the evidence genuinely weakens, the finding is demoted and
-says why, instead of quietly flipping to green.
-
-weir asks a simpler question of the same bytes too: is a credential *present*
-in this export at all? An instrumentor that serializes an agent object into a
-span attribute writes the provider key straight into your traces - a finding
-with one location and no flow at all.
+`weir inventory --home DIR` lists the credentials an agent could reach: standard credential files, project files (with imported gitleaks or trufflehog results), the launch environment and shell startup files, and the approved map `.weir/reach.yml`. It reports them by name, source and location only. It never prints, logs or stores a value; what it can store is a keyed fingerprint plus offsets ([contract](docs/inventory.md)). Its output and JSON schema may change without notice.
 
 ## Why you can trust it
 
-- **It reads real traces, not ones we wrote.** The suite pins a frozen
-  capture that no weir code ever touched
-  ([provenance](fixtures/foreign/PROVENANCE.md)). Broken input degrades
-  under one of 18 named rows; it never guesses
-  ([contract](docs/contract.md)).
-- **Attacker content cannot rewire it.** Joins follow evidence tiers, and
-  a finding that crosses a weak one is never verdict-grade. Get past that
-  and it is a security bug ([SECURITY.md](SECURITY.md)).
-- **The gauge is calibrated.** One plan emits both native and OTLP
-  traces; the adapter is accepted only on byte-for-byte equivalence.
-- **Claims about other people's software are sourced and dated**
-  ([REMEDIATION_SOURCES.md](REMEDIATION_SOURCES.md)).
-- **Nothing weir prints is a credential.** No rendered weir output - text,
-  gauge, HTML, ledger - contains a credential-shaped value; that is a test over
-  every fixture in the corpus, not a promise.
+- **It searches for what it planted.** A hit is a planted value found in the capture, never a pattern guess, and the judge's output depends only on where values appear, never on what they are.
+- **Nothing phoning home: a test, not a promise.** The analysis path opens no sockets. The whole test suite runs with socket creation blocked ([tests/_harness/g3.py](tests/_harness/g3.py)), and [packages/weir/tests/test_canary_judge.py](packages/weir/tests/test_canary_judge.py) fails if the judge opens a socket or starts a process.
+- **Nothing Weir prints is a credential.** The judge names placements and locations, never a value or a fragment of one. No rendered weir output (text, gauge, HTML, ledger) contains a credential-shaped value; that is a test over every fixture in the corpus.
+- **It reads real traces, not only ones we wrote.** The suite pins a frozen capture that no weir code ever touched ([provenance](fixtures/foreign/PROVENANCE.md)). Malformed input is reported under one of a fixed list of named cases; it never guesses ([contract](docs/contract.md)).
+- **Attacker text cannot fake a flow.** The flow scan fails the build only on links between steps that the instrumentation itself records. A flow that rests on a link inferred from matching text is reported, but never fails the build. Getting past that is a security bug ([SECURITY.md](SECURITY.md)).
+- **Claims about other people's software are sourced and dated** ([REMEDIATION_SOURCES.md](REMEDIATION_SOURCES.md)).
 
-## What ships today
+## FAQ
 
-The OTel GenAI adapter, session graph, taint and evaluation, the gauge,
-HTML reports, and the trace generator behind the test corpus.
+**Why not just use SecretStr or redact in the collector?**
+Redaction is worth doing. Weir checks whether it worked: it searches the exported output for the exact planted values, whatever path they took to get there.
 
-`weir inventory --home DIR` lists the credentials an agent could reach -
-standard credential files, project files (with imported gitleaks or
-trufflehog results), the launch environment and shell startup files, and
-the approved map `.weir/reach.yml` - by name, source and location only. It
-never prints, logs or stores a value; what it can store is a keyed
-fingerprint plus offsets ([contract](docs/inventory.md)). It is experimental:
-its output and JSON schema may change without notice.
+**How is this different from gitleaks or trufflehog?**
+They find strings that look like secrets in code and files. Weir proves whether a value you planted reached your telemetry, in any of the encodings above. It does not replace them.
 
-`weir canary judge --ledger FILE --otlp PATH` checks a canary run: given a
-ledger of planted fake credentials and the captured telemetry, it reports
-every placement whose value, or an encoded form of it (JSON-escaped,
-URL-encoded, base64, hex), appears anywhere in the capture. It prints
-placement ids and locations, never a value, and exits 0 clean, 1 leak, 2
-unusable input, 3 incomplete ([contract](docs/canary.md)).
+**Does it need my real keys?**
+No. It uses fake values by design, and a real key should never be in a run.
 
-Next: the `weir diff` baseline gate, more rules, more dialects.
+**Does it send anything anywhere?**
+No. The analysis opens no sockets, and a test enforces it. The rig's fake model listens on `127.0.0.1` only and refuses every proxied request to another host.
 
-Apache-2.0, all of it, permanently. Nothing held back, nothing gated,
-nothing phoning home - the analysis path opens no sockets, and that is a
-test, not a promise.
+**Which frameworks?**
+Any that can export OpenTelemetry spans to a file.
+
+## Honest limits
+
+A clean result is evidence about the flows that ran and the credentials planted, not a statement that the program is safe.
+
+- It finds whole values only. A truncated, split or partly masked value, a hashed, encrypted or compressed one, and encodings beyond those listed (URL-encoded base64, UTF-16, line-wrapped base64) are not matched.
+- It sees only telemetry that reached the capture.
+- This release plants environment variables, values passed in code, and OAuth tokens. Model APIs must be OpenAI-compatible.
+- The rig does not sandbox the network. A client that ignores the proxy settings and has a hard-coded host can reach that host directly; run such flows in a container or network namespace with no route out.
+- The flow scan needs content capture switched on in your instrumentation; `weir gauge` tells you whether it is.
+
+## License
+
+Apache-2.0, all of it, permanently. Nothing held back, nothing gated, nothing phoning home.
 
 Install `weir-scan`; the import and the command are both `weir`.
-
-## Why "weir"
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/weir.jpg" alt="A weir: a low dam across a river, with water flowing evenly over its crest" width="560">
-  <br>
-  <em>A weir is a low dam built across a river to regulate and measure its
-  flow - the water keeps moving; the measurement happens anyway.</em>
-  <br>
-  <sub>Damhead Weir, Water of Leith. Photo by 501ghost, Wikimedia Commons, CC0.</sub>
-</p>

@@ -30,8 +30,8 @@ def _find_pairs() -> list[tuple[str, str]]:
 
 def test_every_verified_block_matches_real_cli_output() -> None:
     pairs = _find_pairs()
-    assert len(pairs) >= 2, (
-        "expected >= 2 '<!-- verify: ... -->' blocks in README.md, found "
+    assert len(pairs) >= 1, (
+        "expected >= 1 '<!-- verify: ... -->' block in README.md, found "
         f"{len(pairs)} - the marker convention may have silently died"
     )
 
