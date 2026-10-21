@@ -2,6 +2,8 @@
 
 **Leak tests for AI agents.**
 
+![Weir plants fake keys in your agent, lets its telemetry flow, and checks every span, log and metric for those exact values: leak, clean or incomplete.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/weir-flow.svg)
+
 Plant fake credentials where your real ones live, run your agent, and find out exactly where they ended up, before a real key does.
 
 ```sh
@@ -118,3 +120,14 @@ A clean result is evidence about the flows that ran and the credentials planted,
 Apache-2.0, all of it, permanently. Nothing held back, nothing gated, nothing phoning home.
 
 Install `weir-scan`; the import and the command are both `weir`.
+
+## Why "weir"
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/weir.jpg" alt="A weir: a low dam across a river, with water flowing evenly over its crest" width="560">
+  <br>
+  <em>A weir is a low dam built across a river to regulate and measure its
+  flow - the water keeps moving; the measurement happens anyway.</em>
+  <br>
+  <sub>Damhead Weir, Water of Leith. Photo by 501ghost, Wikimedia Commons, CC0.</sub>
+</p>
