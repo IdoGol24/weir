@@ -167,9 +167,10 @@ def test_sample_runs_from_the_built_wheel(tmp_path: Path) -> None:
         cwd=tmp_path,
         env=env,
         capture_output=True,
+        encoding="utf-8",  # text mode: Windows' "\r\n" reads back as "\n"
         check=False,
     )
-    stdout, stderr = result.stdout.decode(), result.stderr.decode()
+    stdout, stderr = result.stdout, result.stderr
     assert result.returncode == 1, stderr
     assert stdout == CliRunner().invoke(main, ["canary", "judge", "--sample"]).stdout
     (want,) = _expected_leaks()
