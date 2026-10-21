@@ -1,7 +1,7 @@
 [project]
 name = "weir-run"
 version = "0.1.0"
-description = "Canary runner for weir canary judge: plants fake canaries, runs a program's flows against a loopback mock, judges the captured telemetry"
+description = "Leak tests for AI agents: plant fake credentials, run your agent against a local fake model, and capture what it exports."
 license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.12"
