@@ -79,11 +79,57 @@ def test_the_hero_actually_shows_the_leak() -> None:
     assert fills[next(t for t in texts if t.startswith("coverage: "))] != leak_fill
 
 
+def _top_level_rules(css: str) -> list[tuple[str, str]]:
+    """The stylesheet's top-level rules in source order, as (prelude, block)."""
+    rules: list[tuple[str, str]] = []
+    depth = start = 0
+    open_at = -1
+    for i, ch in enumerate(css):
+        if ch == "{":
+            if depth == 0:
+                open_at = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                rules.append((css[start:open_at].strip(), css[open_at + 1 : i]))
+                start = i + 1
+    return rules
+
+
+def _declarations(block: str) -> dict[str, dict[str, str]]:
+    """Each selector's declarations inside an at-rule's block."""
+    out: dict[str, dict[str, str]] = {}
+    for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", block):
+        decls = out.setdefault(selector.strip(), {})
+        for decl in filter(str.strip, body.split(";")):
+            prop, value = decl.split(":", 1)
+            decls[prop.strip()] = value.strip()
+    return out
+
+
 def test_the_hero_is_animated_and_respects_reduced_motion() -> None:
     svg = _ASSET.read_text(encoding="utf-8")
     assert "@keyframes" in svg, "the hero silently became a still image"
-    assert "prefers-reduced-motion" in svg, (
-        "an animation that loops forever needs a reduced-motion opt-out"
+
+    # An animation that loops forever needs a reduced-motion opt-out, and the
+    # opt-out has to win the cascade: its .r and .t tie on specificity with
+    # every row's .rN and .tN, so it only takes effect if it comes after them.
+    (style,) = re.findall(r"<style>(.*?)</style>", svg, flags=re.S)
+    rules = _top_level_rules(style)
+    reduced = [i for i, (prelude, _) in enumerate(rules) if "prefers-reduced-motion" in prelude]
+    assert len(reduced) == 1, "an animation that loops forever needs a reduced-motion opt-out"
+    opt_out = _declarations(rules[reduced[0]][1])
+    assert opt_out[".r"]["animation"] == opt_out[".t"]["animation"] == "none"
+    assert opt_out[".r"]["opacity"] == "1"
+    animated = [
+        i
+        for i, (prelude, block) in enumerate(rules)
+        if re.fullmatch(r"\.[rt]\d+", prelude) and "animation:" in block
+    ]
+    assert animated, "no row carries an animation"
+    assert reduced[0] > max(animated), (
+        "the reduced-motion rule is overridden by a later per-row animation rule"
     )
     # Every row must land before the frame starts fading out, or the loop
     # restarts before the exit code is ever on screen.

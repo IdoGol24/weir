@@ -104,15 +104,7 @@ def render_demo_svg() -> str:
         appears.append(clock)
         clock += len(text) * _TYPE_RATE + _AFTER_CMD if typed else _LINE_GAP
 
-    css: list[str] = [
-        ".r{opacity:0}",
-        f".c{{fill:{_PROMPT}}}",
-        # Stopping the animations is enough to show the finished frame: every
-        # line's base state is the visible one, and an unanimated clip rect
-        # sits at full width rather than scaled to zero.
-        "@media (prefers-reduced-motion:reduce){"
-        ".r{opacity:1;animation:none}.t{animation:none}}",
-    ]
+    css: list[str] = [".r{opacity:0}", f".c{{fill:{_PROMPT}}}"]
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" role="img" '
@@ -168,6 +160,15 @@ def render_demo_svg() -> str:
                 f'<text class="r r{idx}" x="{x:.0f}" y="{y:.0f}" fill="{fill}" '
                 f'xml:space="preserve">{escape(text)}</text>'
             )
+
+    # Stopping the animations is enough to show the finished frame: every
+    # line's base state is the visible one, and an unanimated clip rect sits
+    # at full width rather than scaled to zero. This must come last: .r and
+    # .t tie on specificity with each row's .rN and .tN, so the later rule
+    # wins, and placed first it would be silently overridden by every row.
+    css.append(
+        "@media (prefers-reduced-motion:reduce){.r{opacity:1;animation:none}.t{animation:none}}"
+    )
 
     parts.append("<defs>" + "".join(clips) + "</defs>")
     parts.append("<style>" + "".join(css) + "</style>")
