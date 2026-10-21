@@ -11,7 +11,7 @@ pip install weir-scan
 weir canary judge --sample
 ```
 
-[![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/IdoGol24/weir/blob/main/LICENSE)
 
 ## How it works
 
@@ -56,7 +56,7 @@ On your own agent:
 weir-run run --config canary.toml
 ```
 
-The config names where your credentials live and which flows to run. The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](docs/canary.md).
+The config names where your credentials live and which flows to run. The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
 
 ## Also included: the flow scan and `weir inventory` (experimental)
 
@@ -71,22 +71,22 @@ weir scan your-export.jsonl
 
 Most exports cannot support this yet, because content capture ships off by default almost everywhere. `weir gauge` measures how much of your trace the scan can actually see, and names the exact setting to switch on, read from the instrumentation in your own trace. The scan also reports any provider key pattern it finds sitting in a span, with no flow needed.
 
-Each check is a rule, and a rule is a short JSON file naming a source, a destination and a match mode ([bundled rules](packages/weir/src/weir/rules_commons/bundled/)). Rewording prompts or adding a step does not change the result. When the trace evidence is too weak to prove a flow, the finding stays in the report, marked as not proven and saying why, instead of quietly disappearing.
+Each check is a rule, and a rule is a short JSON file naming a source, a destination and a match mode ([bundled rules](https://github.com/IdoGol24/weir/tree/main/packages/weir/src/weir/rules_commons/bundled)). Rewording prompts or adding a step does not change the result. When the trace evidence is too weak to prove a flow, the finding stays in the report, marked as not proven and saying why, instead of quietly disappearing.
 
 `weir scan` exits 0 when nothing fails, 1 on a finding and 2 on unusable input.
 
 ### `weir inventory` (experimental)
 
-`weir inventory --home DIR` lists the credentials an agent could reach: standard credential files, project files (with imported gitleaks or trufflehog results), the launch environment and shell startup files, and the approved map `.weir/reach.yml`. It reports them by name, source and location only. It never prints, logs or stores a value; what it can store is a keyed fingerprint plus offsets ([contract](docs/inventory.md)). Its output and JSON schema may change without notice.
+`weir inventory --home DIR` lists the credentials an agent could reach: standard credential files, project files (with imported gitleaks or trufflehog results), the launch environment and shell startup files, and the approved map `.weir/reach.yml`. It reports them by name, source and location only. It never prints, logs or stores a value; what it can store is a keyed fingerprint plus offsets ([contract](https://github.com/IdoGol24/weir/blob/main/docs/inventory.md)). Its output and JSON schema may change without notice.
 
 ## Why you can trust it
 
 - **It searches for what it planted.** A hit is a planted value found in the capture, never a pattern guess, and the judge's output depends only on where values appear, never on what they are.
-- **Nothing phoning home: a test, not a promise.** The analysis path opens no sockets. The whole test suite runs with socket creation blocked ([tests/_harness/g3.py](tests/_harness/g3.py)), and [packages/weir/tests/test_canary_judge.py](packages/weir/tests/test_canary_judge.py) fails if the judge opens a socket or starts a process.
+- **Nothing phoning home: a test, not a promise.** The analysis path opens no sockets. The whole test suite runs with socket creation blocked ([tests/_harness/g3.py](https://github.com/IdoGol24/weir/blob/main/tests/_harness/g3.py)), and [packages/weir/tests/test_canary_judge.py](https://github.com/IdoGol24/weir/blob/main/packages/weir/tests/test_canary_judge.py) fails if the judge opens a socket or starts a process.
 - **Nothing Weir prints is a credential.** The judge names placements and locations, never a value or a fragment of one. No rendered weir output (text, gauge, HTML, ledger) contains a credential-shaped value; that is a test over every fixture in the corpus.
-- **It reads real traces, not only ones we wrote.** The suite pins a frozen capture that no weir code ever touched ([provenance](fixtures/foreign/PROVENANCE.md)). Malformed input is reported under one of a fixed list of named cases; it never guesses ([contract](docs/contract.md)).
-- **Attacker text cannot fake a flow.** The flow scan fails the build only on links between steps that the instrumentation itself records. A flow that rests on a link inferred from matching text is reported, but never fails the build. Getting past that is a security bug ([SECURITY.md](SECURITY.md)).
-- **Claims about other people's software are sourced and dated** ([REMEDIATION_SOURCES.md](REMEDIATION_SOURCES.md)).
+- **It reads real traces, not only ones we wrote.** The suite pins a frozen capture that no weir code ever touched ([provenance](https://github.com/IdoGol24/weir/blob/main/fixtures/foreign/PROVENANCE.md)). Malformed input is reported under one of a fixed list of named cases; it never guesses ([contract](https://github.com/IdoGol24/weir/blob/main/docs/contract.md)).
+- **Attacker text cannot fake a flow.** The flow scan fails the build only on links between steps that the instrumentation itself records. A flow that rests on a link inferred from matching text is reported, but never fails the build. Getting past that is a security bug ([SECURITY.md](https://github.com/IdoGol24/weir/blob/main/SECURITY.md)).
+- **Claims about other people's software are sourced and dated** ([REMEDIATION_SOURCES.md](https://github.com/IdoGol24/weir/blob/main/REMEDIATION_SOURCES.md)).
 
 ## FAQ
 
