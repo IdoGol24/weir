@@ -31,7 +31,7 @@ matches, the ledger and report schemas, coverage states and exit codes.
 | | the judge (`weir canary judge`, in weir-scan) | the canary runner (`weir-run`, a separate package) |
 | --- | --- | --- |
 | does | reads a ledger and capture files, prints a report | plants canaries, runs the mock and the flows, writes ledger and capture, calls the judge |
-| network | **none**: opens no socket, binds nothing, resolves nothing | a mock bound to `127.0.0.1` only; every other destination is refused |
+| network | **none**: opens no socket, binds nothing, resolves nothing | a mock bound to `127.0.0.1` only, which flows reach through their proxy settings; every proxied request to another host is refused. It does not sandbox the network |
 | processes | starts none | runs each flow under `env -i` with an allowlisted environment |
 | writes | nothing but its report on stdout and errors on stderr | the ledger (mode 0600, in the job's temporary directory, deleted after judging), the capture, its own reports |
 | reads | only the ledger and the capture paths it is given, or with `--sample` the bundled sample; no environment variable changes its output | the maintainer's config and the flows' output |
@@ -54,10 +54,13 @@ matches, the ledger and report schemas, coverage states and exit codes.
 - **Fake data only.** A ledger holds only runner-generated fake values: the
   canaries the runner plants and the credentials its mock's OAuth endpoints
   issue (see [Runtime values](#runtime-values)). It never holds a real
-  credential, and no canary is ever sent to a real provider: the mock
-  answers every API the flow is pointed at and refuses every other host. The
-  judge cannot tell a fake value from a real one, so this is the runner's
-  obligation and the user's.
+  credential. Flows reach the mock through their proxy settings: the mock
+  answers every API the flow is pointed at and refuses every proxied request
+  to another host. The runner does not sandbox the network, so a client that
+  ignores proxy settings can connect to a real provider directly; run such
+  flows in a container or network namespace with no route out. The judge
+  cannot tell a fake value from a real one, so keeping canaries away from
+  real providers is the runner's obligation and the user's.
 - Ledgers and captures that hold provider-shaped canaries are never
   committed to a public repository. Public secret scanning would report a
   realistic canary to the provider as a leaked key. Fixtures committed to

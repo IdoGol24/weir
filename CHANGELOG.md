@@ -32,7 +32,9 @@
   OpenAI-compatible model API with scripted tool calls, OAuth endpoints
   whose issued tokens become `mock-oauth` placements, an OTLP/HTTP receiver
   writing OTLP/JSON lines, the program's own declared APIs, and refusal of
-  every other host), relays flow output with every canary form redacted,
+  every proxied request to another host; the runner does not sandbox the
+  network, so a client that ignores proxy settings can connect directly),
+  relays flow output with every canary form redacted,
   and exits with the code of `weir canary judge` (docs/canary.md). Ships a
   subprocess-mode pytest plugin and a synthetic demo that is red with a
   leak and green without. weir-scan's commands stay network-free, and weir

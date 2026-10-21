@@ -18,7 +18,8 @@ This page is for the maintainer who adds the check to a project's CI.
 weir-run run --config canary.toml
   1. plant   one fresh fake value per placement -> ledger (mode 0600, private temp dir)
   2. mock    127.0.0.1 only: OpenAI-compatible model API, OAuth endpoints,
-             OTLP/HTTP receiver, your project's own APIs; refuses every other host
+             OTLP/HTTP receiver, your project's own APIs; refuses every proxied
+             request to another host
   3. flows   each under an empty environment plus an allowlist, URLs pointed at the mock
   4. capture OTLP/JSON lines + other telemetry bodies + each flow's stdout and stderr
   5. judge   weir canary judge (weir-scan: opens no socket, starts no process)
@@ -35,7 +36,9 @@ exit 0 clean and complete | 1 a canary reached the capture | 2 usage or input er
   there is no option to bind anything else. Every flow gets the mock as its
   HTTP and HTTPS proxy, and the mock refuses every proxied request: a
   `CONNECT` or an absolute-URL request for any other host gets a 403, and
-  nothing is forwarded, opened or resolved.
+  nothing is forwarded, opened or resolved. The runner does not sandbox the
+  network: a client that ignores proxy settings can connect directly (see
+  [Limits of this release](#limits-of-this-release)).
 - **Test-time only.** The runner is a dependency of your CI job, never of
   your program. The mock and the receiver exist only for one run.
 
@@ -250,9 +253,8 @@ result yourself, call `result = canary_check.judge()` (`result.code`,
 - Placements: `env`, `code` and `mock-oauth` only. The other kinds in the
   contract (`tool-field`, `mcp`, `settings-file` and the rest) are reserved.
 - Model APIs: OpenAI-compatible only.
-- The runner does not sandbox the network. A client that ignores the
-  proxy variables and has a hard-coded host is not stopped by the runner:
-  on a machine with network access it would reach that host. Run flows in
-  a network namespace or a container without network access if a client
-  might do that.
+- The runner does not sandbox the network. A client that ignores proxy
+  settings and has a hard-coded host is not stopped by the runner: on a
+  machine with network access it connects to that host directly. Run such
+  flows in a container or network namespace with no route out.
 - No GitHub Action and no in-process pytest mode yet.
