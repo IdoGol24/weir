@@ -7,24 +7,21 @@ TP/FP/TN/FN + precision/recall.
 Target: must land ~precision 0.46 / recall 0.95 through the shipped pipeline.
 
 Usage:
-    python packages/weir/tests/benchmark/run_agentdojo.py [CACHE_DIR]
+    python packages/weir/tests/benchmark/run_agentdojo.py CACHE_DIR
+
+CACHE_DIR may instead come from the WEIR_AGENTDOJO_CACHE environment variable.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # packages/weir/tests
 
 from benchmark.agentdojo import run_weir  # noqa: E402
-
-_DEFAULT_CACHE = (
-    "C:/Users/User/AppData/Local/Temp/claude/"
-    "C--Users-User-Desktop-Projects-Ralis-weir/"
-    "d139fc1e-9b1d-4437-94d3-0d240d54dafb/scratchpad/adj_multi"
-)
 
 # Balanced corpus: keep only these attack_type values (None == JSON null).
 _KEEP = {"important_instructions", "none", None}
@@ -66,4 +63,7 @@ def main(cache_dir: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_CACHE)
+    cache = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("WEIR_AGENTDOJO_CACHE")
+    if not cache:
+        sys.exit("usage: run_agentdojo.py CACHE_DIR (or set WEIR_AGENTDOJO_CACHE)")
+    main(cache)
