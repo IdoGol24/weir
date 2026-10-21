@@ -11,15 +11,6 @@ pip install weir-scan
 weir canary judge --sample
 ```
 
-The sample is a bundled fake ledger and capture with one planted value in a span attribute, so the check exits 1 and prints its leak report. It names the placement and the span, never the value:
-
-<!-- verify: canary judge --sample -->
-```text
-LEAK env.SAMPLE_SERVICE_KEY file=canary-sample/otlp.jsonl:1 signal=traces span="call_service" at=attributes.app.client.config form=raw
-coverage: 2 placements (1 leaked, 1 exercised, 0 not exercised, 1 required), 1 flows (1 ok), 1 files, 3 spans, 0 log records, 0 metric data points, 29 strings, 1347 bytes swept
-result: leak
-```
-
 ## How it works
 
 Weir is two packages that work together, in CI or on your laptop:
@@ -29,10 +20,7 @@ Weir is two packages that work together, in CI or on your laptop:
 
 ```sh
 pip install weir-scan weir-run
-weir-run run --config canary.toml
 ```
-
-The config names where your credentials live and which flows to run. The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](docs/canary.md).
 
 ## Who it's for
 
@@ -41,21 +29,36 @@ The config names where your credentials live and which flows to run. The [weir-r
 
 ## Why it's different
 
-- **It doesn't guess.** It looks for the exact values it planted, so a hit is a real leak, and a key is found even when it doesn't look like a key, raw or encoded (JSON-escaped, URL-encoded, base64, hex).
-- **Offline and deterministic.** No AI model decides anything, and Weir sends nothing anywhere. The scanner opens no sockets, the judge starts no processes, and CI enforces that.
-- **No false all-clear.** If a run captured nothing, a flow failed, or a credential you marked required was never exercised, Weir says "incomplete", not "clean", and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
+- **It doesn't guess.** It looks for the exact values it planted, so a hit is a real leak, and a key is found even when it doesn't look like a key, raw or encoded.
+- **Offline and deterministic.** No AI model decides anything, and Weir sends nothing anywhere. The scanner opens no sockets and starts no processes, and CI enforces that.
+- **No false all-clear.** If a run didn't exercise something you marked required, Weir says "incomplete", not "clean", and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
 
 ## Proof
 
 Found with Weir: [GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security/advisories/GHSA-j7qq-vr8c-xvw3), an MLflow advisory, fixed in MLflow 3.17.0.
 
+## Try it on your own agent
+
+The sample is a bundled fake ledger and capture with one planted value in a span attribute, so the check exits 1 and prints its leak report. It names the placement and the span, never the value:
+
+<!-- verify: canary judge --sample -->
+```text
+LEAK env.SAMPLE_SERVICE_KEY file=canary-sample/otlp.jsonl:1 signal=traces span="call_service" at=attributes.app.client.config form=raw
+coverage: 2 placements (1 leaked, 1 exercised, 0 not exercised, 1 required), 1 flows (1 ok), 1 files, 3 spans, 0 log records, 0 metric data points, 29 strings, 1347 bytes swept
+result: leak
+```
+
+On your own agent:
+
+```sh
+weir-run run --config canary.toml
+```
+
+The config names where your credentials live and which flows to run. The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](docs/canary.md).
+
 ## Also included: the flow scan and `weir inventory` (experimental)
 
 ### The flow scan
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/demo.svg" alt="Terminal recording: weir scan finds sensitive data that travelled from a tool result to an outbound email step, prints the steps it passed through, then exits 1" width="620">
-</p>
 
 `weir scan` reads the OpenTelemetry traces your agent already emits and fails the build when sensitive data travels to a place it should never reach, for example a bank account number from untrusted tool output that ends up in an outgoing email. It rebuilds the session step by step from the trace, follows the data, and prints the source, the destination and every step in between.
 
