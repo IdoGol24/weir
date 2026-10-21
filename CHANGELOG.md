@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-21
+
 ### Added
 - **`weir canary judge`: did a planted fake credential reach the
   telemetry?** `weir canary judge --ledger FILE --otlp PATH [--json]
@@ -26,19 +28,6 @@
   a bundled sample (a ledger of fake values and an OTLP/JSON capture with
   one planted value in a span attribute) with no other input, offline, and
   exits 1 naming the placement, span and attribute, never the value.
-- **`weir-run` 0.1.0, the canary runner, a separate package.** It plants
-  unique fake canaries (`env` and `code` placements), runs a program's flows under an empty
-  environment plus an allowlist against a mock bound to `127.0.0.1` (an
-  OpenAI-compatible model API with scripted tool calls, OAuth endpoints
-  whose issued tokens become `mock-oauth` placements, an OTLP/HTTP receiver
-  writing OTLP/JSON lines, the program's own declared APIs, and refusal of
-  every proxied request to another host; the runner does not sandbox the
-  network, so a client that ignores proxy settings can connect directly),
-  relays flow output with every canary form redacted,
-  and exits with the code of `weir canary judge` (docs/canary.md). Ships a
-  subprocess-mode pytest plugin and a synthetic demo that is red with a
-  leak and green without. weir-scan's commands stay network-free, and weir
-  never imports the runner.
 - **`weir inventory` (experimental): which credentials an agent could reach,
   by name only.** Its output and JSON schema may change without notice. Four
   sources: a versioned list of standard credential locations under the given
@@ -58,6 +47,32 @@
   key plus byte offsets. `--json` emits the `weir-inventory/1` report, whose
   schema and Python API are documented in `docs/inventory.md`. `--home` is
   required: there is no default home.
+
+### Corpus
+- The release commit regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.4.1 to
+  0.5.0 (main never carried 0.4.2, which shipped from `release/0.4.x`). That
+  diff is version-only; no flow fact, node count or finding moved.
+
+## [weir-run 0.1.0] - 2026-10-21
+
+The canary runner is its own package, `weir-run`, released beside weir-scan
+0.5.0 and requiring `weir-scan>=0.5.0`. Its versions are recorded here,
+under `weir-run` headings.
+
+### Added
+- **The canary runner, a separate package.** It plants unique fake canaries
+  (`env` and `code` placements), runs a program's flows under an empty
+  environment plus an allowlist against a mock bound to `127.0.0.1` (an
+  OpenAI-compatible model API with scripted tool calls, OAuth endpoints
+  whose issued tokens become `mock-oauth` placements, an OTLP/HTTP receiver
+  writing OTLP/JSON lines, the program's own declared APIs, and refusal of
+  every proxied request to another host; the runner does not sandbox the
+  network, so a client that ignores proxy settings can connect directly),
+  relays flow output with every canary form redacted, and exits with the code of `weir canary judge` (docs/canary.md). Ships a
+  subprocess-mode pytest plugin and a synthetic demo that is red with a
+  leak and green without. weir-scan's commands stay network-free, and weir
+  never imports the runner.
 
 ## [0.4.2] - 2026-10-20
 

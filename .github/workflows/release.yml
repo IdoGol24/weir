@@ -3,7 +3,6 @@ name: release
 on:
   release:
     types: [published]
-  workflow_dispatch: {}
 
 jobs:
   build:
@@ -17,8 +16,12 @@ jobs:
         run: uv run pytest -q
       - name: Import contracts
         run: uv run lint-imports
-      - name: Build distributions
-        run: uv build packages/weir
+      # Each package builds into its own directory so each publish step
+      # uploads exactly one project's files.
+      - name: Build weir-scan
+        run: uv build packages/weir --out-dir dist/weir-scan
+      - name: Build weir-run
+        run: uv build packages/weir-run --out-dir dist/weir-run
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -29,7 +32,9 @@ jobs:
     runs-on: ubuntu-latest
     # Trusted publishing (OIDC): the 'pypi' environment must exist in the
     # repository settings and be registered as the trusted publisher on PyPI
-    # for the 'weir-scan' project. No API token is stored anywhere.
+    # for both the 'weir-scan' and the 'weir-run' projects (this repository,
+    # workflow release.yml, environment pypi). No API token is stored
+    # anywhere.
     environment: pypi
     permissions:
       id-token: write
@@ -38,4 +43,14 @@ jobs:
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # weir-scan first: weir-run requires weir-scan>=0.5.0, so it must not
+      # appear on PyPI before the version it depends on. A failed weir-scan
+      # upload stops the job before weir-run is touched.
+      - name: Publish weir-scan
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/weir-scan/
+      - name: Publish weir-run
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/weir-run/

@@ -30,8 +30,8 @@ exit 0 clean and complete | 1 a canary reached the capture | 2 usage, input or r
 - **The judge is weir-scan's**, called only through its command line. The
   runner never imports weir, and weir never imports the runner (both are
   import-linter contracts in the repository's `pyproject.toml`). The runner
-  needs a weir-scan release that ships `weir canary judge`; without one it
-  exits 2 before running anything.
+  requires weir-scan 0.5.0 or later, the first release that ships
+  `weir canary judge`; without a judge it exits 2 before running anything.
 - **Local and offline.** The mock binds `127.0.0.1` on a port the OS picks;
   there is no option to bind anything else. Every flow gets the mock as its
   HTTP and HTTPS proxy, and the mock refuses every proxied request: a
