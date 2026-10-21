@@ -43,6 +43,8 @@ Found with Weir: [GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security
 
 The sample is a bundled fake ledger and capture with one planted value in a span attribute, so the check exits 1 and prints its leak report. It names the placement and the span, never the value:
 
+![Terminal recording: weir canary judge --sample is typed, prints a LEAK line naming the planted fake key and the trace span it reached, then the coverage line and "result: leak", and echo $? shows exit code 1.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/demo.svg)
+
 <!-- verify: canary judge --sample -->
 ```text
 LEAK env.SAMPLE_SERVICE_KEY file=canary-sample/otlp.jsonl:1 signal=traces span="call_service" at=attributes.app.client.config form=raw
