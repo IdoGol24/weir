@@ -157,6 +157,11 @@ def test_two_runs_print_the_same_report(
         ("[[placement]]\nid = 'env.A'\nkind = 'env'\n", "no flow is defined"),
         ("[[flow]]\nid = 'a'\ncommand = ['x']\nenv = { PATH = '/x' }\n", "set by the runner"),
         ("not toml [", "not valid TOML"),
+        (
+            "[[flow]]\nid = 'a'\ncommand = ['x']\n"
+            "[mock.credential_fields]\notlp = ['body:token']\n",
+            "has no body: fields",
+        ),
     ],
 )
 def test_configuration_errors_exit_2(
@@ -198,3 +203,69 @@ def test_a_judge_input_error_is_exit_2(
     result = _run(monkeypatch, [sys.executable, str(script)], config)
     assert result.exit_code == 2
     assert "ledger.jsonl:3: bad record" in result.stderr
+
+
+def _sleeping_judge(tmp_path: Path, *, on_help: bool) -> list[str]:
+    script = tmp_path / "judge.py"
+    script.write_text(
+        "import sys, time\n"
+        f"if '--help' in sys.argv and not {on_help}: sys.exit(0)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    return [sys.executable, str(script)]
+
+
+def test_a_judge_that_times_out_is_exit_2_never_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(judge_cli, "JUDGE_TIMEOUT_SECONDS", 1)
+    config, side = _setup(tmp_path, "leak")
+    result = _run(monkeypatch, _sleeping_judge(tmp_path, on_help=False), config)
+    assert result.exit_code == 2, result.output
+    assert "timed out" in result.stderr
+    assert side.read_text() not in result.output
+
+
+def test_a_judge_probe_that_hangs_is_exit_2_before_any_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(judge_cli, "JUDGE_TIMEOUT_SECONDS", 1)
+    config, side = _setup(tmp_path)
+    result = _run(monkeypatch, _sleeping_judge(tmp_path, on_help=True), config)
+    assert result.exit_code == 2, result.output
+    assert "timed out" in result.stderr
+    assert not side.exists()
+
+
+def test_a_report_in_a_missing_directory_is_exit_2_before_any_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    config, side = _setup(tmp_path)
+    report = tmp_path / "missing" / "report.json"
+    result = _run(monkeypatch, judge, config, "--report", str(report))
+    assert result.exit_code == 2, result.output
+    assert "no such directory" in result.stderr
+    assert not side.exists()
+
+
+def test_a_report_that_cannot_be_written_is_exit_2_never_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    config, _ = _setup(tmp_path)
+    report = tmp_path / "out" / "report.json"
+    report.parent.mkdir()
+    real = judge_cli.judge
+
+    def judge_then_lose_the_directory(
+        command: list[str], run_dir: Path, *, json_report: bool = False
+    ) -> judge_cli.Verdict:
+        verdict = real(command, run_dir, json_report=json_report)
+        if report.parent.exists():
+            report.parent.rmdir()
+        return verdict
+
+    monkeypatch.setattr(judge_cli, "judge", judge_then_lose_the_directory)
+    result = _run(monkeypatch, judge, config, "--report", str(report))
+    assert result.exit_code == 2, result.output
+    assert "weir-run:" in result.stderr

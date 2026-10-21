@@ -208,10 +208,12 @@ def validate(spec: RunSpec, *, require_flows: bool = True) -> None:
         endpoint_ids.add(e.id)
         if not 100 <= e.status <= 599:
             raise SpecError(f"endpoint {e.id}: status {e.status} is not an HTTP status")
-    for name in spec.mock.credential_fields:
+    for name, fields in spec.mock.credential_fields.items():
         if name not in BUILTIN_ENDPOINTS:
             raise SpecError(
                 f"credential fields for {name!r}: built-in endpoints are model, oauth and otlp"
             )
+        if name == "otlp" and any(f.location == "body" for f in fields):
+            raise SpecError("credential fields for 'otlp': an OTLP export has no body: fields")
     if spec.mock.tool_calls not in TOOL_CALL_MODES:
         raise SpecError(f"tool_calls {spec.mock.tool_calls!r}: expected one of {TOOL_CALL_MODES}")

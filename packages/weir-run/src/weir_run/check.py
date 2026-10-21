@@ -29,7 +29,7 @@ from weir_run.capture import Capture
 from weir_run.ledger import Ledger
 from weir_run.mock import Mock
 from weir_run.shapes import ByteSource, shaped
-from weir_run.spec import FlowSpec, RunSpec, validate
+from weir_run.spec import FlowSpec, RunSpec, SpecError, validate
 
 
 @dataclass
@@ -84,6 +84,8 @@ class CheckRun:
     def run_flow(self, flow: FlowSpec) -> FlowOutcome:
         if self._stopped:
             raise RuntimeError("the check run has already been judged")
+        if any(o.id == flow.id for o in self.outcomes):
+            raise SpecError(f"flow id {flow.id} is defined twice")
         index = len(self.outcomes) + 1
         home = self._flow_dirs / f"{index:02d}" / "home"
         tmp = self._flow_dirs / f"{index:02d}" / "tmp"

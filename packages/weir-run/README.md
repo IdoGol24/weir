@@ -84,7 +84,7 @@ model_reply = "Done."             # the model's final answer
 tool_calls = "each-offered-tool-once"   # or "none"
 
 [mock.credential_fields]          # extra credential fields of built-in endpoints
-model = ["header:api-key"]        # endpoints: model, oauth, otlp
+model = ["header:api-key"]        # endpoints: model, oauth, otlp (otlp: header and query only)
 
 [[mock.endpoint]]                 # one of your project's own APIs
 id = "search"                     # served at {mock}/ep/search/...
@@ -103,8 +103,8 @@ provider_host = "api.search.example"   # a refused attempt to reach it is eviden
 
 [[placement]]
 id = "code.client.api_key"
-kind = "code"                     # the flow reads CANARY_CODE_CLIENT_API_KEY
-variable = "MY_VARIABLE"          # optional: name the variable yourself
+kind = "code"
+variable = "MY_VARIABLE"          # the flow reads this; omit it for CANARY_CODE_CLIENT_API_KEY
 
 [[flow]]
 id = "quickstart"
@@ -220,7 +220,8 @@ flow's stdout and stderr are swept capture files.
   fragment of one.
 - `--report FILE` also writes the judge's `canary-report/1` JSON.
 - The exit code is the judge's, or 2 for the runner's own usage and
-  configuration errors.
+  configuration errors and any other failure of the run (an unwritable
+  `--report`, a judge that times out). A runner fault never exits 1.
 
 A clean result is evidence about the flows that ran and the placements
 planted, not a statement that the program is safe. Read the coverage line:

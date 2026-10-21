@@ -1,12 +1,14 @@
 """`weir-run run`: one check run from a maintainer's config.
 
 Exit codes are the judge's (0 clean, 1 leak, 3 incomplete), and 2 for a
-usage, configuration or input error, the runner's own or the judge's
-(docs/canary.md, "Exit codes").
+usage, configuration or input error, the runner's own or the judge's, and
+for any other failure of the run (docs/canary.md, "Exit codes"). A runner
+fault never exits 1, which would read as a leak.
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -58,14 +60,22 @@ def run_command(
 ) -> None:
     """Plant canaries, run every flow against the loopback mock, judge the capture."""
     try:
+        if report is not None and not report.parent.is_dir():
+            raise SpecError(f"--report {report}: no such directory {report.parent}")
         spec = config.load(config_path)
         command = judge_cli.resolve(weir_path)
         judge_cli.check_available(command)
         code = run_spec(
             spec, command, out=sys.stdout, err=sys.stderr, seed=seed, json_report=report
         )
-    except (SpecError, LedgerError) as exc:
+    except (SpecError, LedgerError, OSError, subprocess.SubprocessError, RuntimeError) as exc:
         click.echo(f"weir-run: {exc}", err=True)
+        sys.exit(USAGE_ERROR)
+    except KeyboardInterrupt:
+        click.echo("weir-run: interrupted", err=True)
+        sys.exit(USAGE_ERROR)
+    except Exception as exc:
+        click.echo(f"weir-run: the run failed ({type(exc).__name__})", err=True)
         sys.exit(USAGE_ERROR)
     sys.exit(code)
 

@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from weir_run.pytest_plugin import CanaryCheck
+from weir_run.spec import SpecError
 
 PROBE = Path(__file__).parent / "_probe_flow.py"
 
@@ -117,3 +118,20 @@ def test_a_bad_declaration_is_refused_at_once(tmp_path: Path, judge: list[str]) 
         check.env("APP_KEY", id="env.SECOND")
     with pytest.raises(Exception, match="set by the runner|already taken"):
         check.env("PATH")
+
+
+def test_a_repeated_flow_id_is_refused_before_the_flow_starts(
+    tmp_path: Path, judge: list[str]
+) -> None:
+    check = CanaryCheck(judge, tmp_path)
+    try:
+        check.env("APP_KEY")
+        first, second = tmp_path / "first", tmp_path / "second"
+        probe = ["{python}", PROBE.as_posix()]
+        assert check.run(probe, id="main", env={"SIDE_FILE": str(first)}) == "ok"
+        with pytest.raises(SpecError, match="defined twice"):
+            check.run(probe, id="main", env={"SIDE_FILE": str(second)})
+        assert first.exists() and not second.exists()
+        assert check.judge().clean
+    finally:
+        check.close()

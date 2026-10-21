@@ -387,7 +387,8 @@ incompleteness, and the incomplete reasons are still listed.
 
 `0`, `1` and `2` follow `weir scan`'s convention (nothing to fail on,
 findings, unusable input). The runner exits with the judge's code, and
-uses `2` for its own usage and configuration errors.
+uses `2` for its own usage and configuration errors and for any other
+failure of the run, so a runner fault never reads as a leak.
 
 ## The text report
 
