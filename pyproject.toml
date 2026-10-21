@@ -17,7 +17,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["packages/weir/src", "packages/weir-tracegen/src"]
+src = ["packages/weir/src", "packages/weir-tracegen/src", "packages/weir-run/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -49,16 +49,28 @@ select = ["E", "F", "I", "UP", "B"]
 # happened to work because `uv run` puts the venv on PATH first.
 venvPath = "."
 venv = ".venv"
-include = ["packages/weir/src", "packages/weir-tracegen/src", "tests"]
+include = [
+    "packages/weir/src",
+    "packages/weir-tracegen/src",
+    "packages/weir-run/src",
+    "packages/weir-run/tests",
+    "packages/weir-run/demo",
+    "tests",
+]
 typeCheckingMode = "strict"
 pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/weir/tests", "packages/weir-tracegen/tests"]
+testpaths = [
+    "tests",
+    "packages/weir/tests",
+    "packages/weir-tracegen/tests",
+    "packages/weir-run/tests",
+]
 pythonpath = ["tests"]
 
 [tool.importlinter]
-root_packages = ["weir", "weir_tracegen"]
+root_packages = ["weir", "weir_tracegen", "weir_run"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
@@ -104,7 +116,7 @@ forbidden_modules = [
 # the files it is given and nothing else: no socket, no process, no clock, no
 # randomness, and none of the trace pipeline. The canary runner owns the
 # loopback mock and the flows; it is a separate package that weir never
-# imports. That row names the runner's package, so it lands with the runner.
+# imports (the "weir-run is outside weir-scan" contract below).
 name = "canary judge is pure: no network, process, clock or pipeline"
 type = "forbidden"
 source_modules = ["weir.canary"]
@@ -146,6 +158,22 @@ name = "tracegen is dev-side only: the engine never imports it"
 type = "forbidden"
 source_modules = ["weir"]
 forbidden_modules = ["weir_tracegen"]
+
+[[tool.importlinter.contracts]]
+# The canary runner opens a loopback socket for its mock, so it lives outside
+# weir-scan, and weir never imports it: the judge stays a pure function of
+# its input bytes (docs/canary.md, "The boundary").
+name = "weir-run is outside weir-scan: weir never imports weir_run"
+type = "forbidden"
+source_modules = ["weir", "weir_tracegen"]
+forbidden_modules = ["weir_run"]
+
+[[tool.importlinter.contracts]]
+# The runner calls the judge only through its documented command line.
+name = "weir_run reaches weir only through the judge's command line"
+type = "forbidden"
+source_modules = ["weir_run"]
+forbidden_modules = ["weir", "weir_tracegen"]
 
 [[tool.importlinter.contracts]]
 name = "tracegen reaches only the schema seam"

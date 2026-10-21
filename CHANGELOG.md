@@ -26,6 +26,19 @@
   a bundled sample (a ledger of fake values and an OTLP/JSON capture with
   one planted value in a span attribute) with no other input, offline, and
   exits 1 naming the placement, span and attribute, never the value.
+- **`weir-run` 0.1.0, the canary runner, a separate package.** It plants
+  unique fake canaries (`env` and `code` placements), runs a program's flows under an empty
+  environment plus an allowlist against a mock bound to `127.0.0.1` (an
+  OpenAI-compatible model API with scripted tool calls, OAuth endpoints
+  whose issued tokens become `mock-oauth` placements, an OTLP/HTTP receiver
+  writing OTLP/JSON lines, the program's own declared APIs, and refusal of
+  every proxied request to another host; the runner does not sandbox the
+  network, so a client that ignores proxy settings can connect directly),
+  relays flow output with every canary form redacted,
+  and exits with the code of `weir canary judge` (docs/canary.md). Ships a
+  subprocess-mode pytest plugin and a synthetic demo that is red with a
+  leak and green without. weir-scan's commands stay network-free, and weir
+  never imports the runner.
 - **`weir inventory` (experimental): which credentials an agent could reach,
   by name only.** Its output and JSON schema may change without notice. Four
   sources: a versioned list of standard credential locations under the given
