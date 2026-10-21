@@ -2,14 +2,14 @@
 
 **Leak tests for AI agents.**
 
-[![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-
 Plant fake credentials where your real ones live, run your agent, and find out exactly where they ended up, before a real key does.
 
 ```sh
 pip install weir-scan
 weir canary judge --sample
 ```
+
+[![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ## How it works
 
@@ -92,7 +92,7 @@ Each check is a rule, and a rule is a short JSON file naming a source, a destina
 Redaction is worth doing. Weir checks whether it worked: it searches the exported output for the exact planted values, whatever path they took to get there.
 
 **How is this different from gitleaks or trufflehog?**
-They find strings that look like secrets in code and files. Weir proves whether a value you planted reached your telemetry, in any of the encodings above. It does not replace them.
+They find strings that look like secrets in code and files. Weir proves whether a value you planted reached your telemetry, in any of the encodings [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md#the-encoded-forms) lists. It does not replace them.
 
 **Does it need my real keys?**
 No. It uses fake values by design, and a real key should never be in a run.
@@ -107,7 +107,7 @@ Any that can export OpenTelemetry spans to a file.
 
 A clean result is evidence about the flows that ran and the credentials planted, not a statement that the program is safe.
 
-- It finds whole values only. A truncated, split or partly masked value, a hashed, encrypted or compressed one, and encodings beyond those listed (URL-encoded base64, UTF-16, line-wrapped base64) are not matched.
+- It finds whole values only. A truncated, split or partly masked value, a hashed, encrypted or compressed one, and encodings beyond those [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md#the-encoded-forms) lists (URL-encoded base64, UTF-16, line-wrapped base64) are not matched.
 - It sees only telemetry that reached the capture.
 - This release plants environment variables, values passed in code, and OAuth tokens. Model APIs must be OpenAI-compatible.
 - The rig does not sandbox the network. A client that ignores the proxy settings and has a hard-coded host can reach that host directly; run such flows in a container or network namespace with no route out.
