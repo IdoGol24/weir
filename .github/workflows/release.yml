@@ -27,14 +27,20 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
+  # Trusted publishing (OIDC), one job and one environment per project.
+  # PyPI matches an OIDC token to a single trusted publisher by repository,
+  # workflow and environment, so two projects sharing one environment get a
+  # token scoped to only one of them. Each environment must exist in the
+  # repository settings:
+  #   - weir-scan: trusted publisher (this repository, workflow release.yml,
+  #     environment pypi)
+  #   - weir-run: trusted publisher (this repository, workflow release.yml,
+  #     environment pypi-weir-run)
+  # No API token or secret is stored anywhere. skip-existing lets a
+  # re-release succeed when some files are already on PyPI.
+  publish-weir-scan:
     needs: build
     runs-on: ubuntu-latest
-    # Trusted publishing (OIDC): the 'pypi' environment must exist in the
-    # repository settings and be registered as the trusted publisher on PyPI
-    # for both the 'weir-scan' and the 'weir-run' projects (this repository,
-    # workflow release.yml, environment pypi). No API token is stored
-    # anywhere.
     environment: pypi
     permissions:
       id-token: write
@@ -43,14 +49,28 @@ jobs:
         with:
           name: dist
           path: dist/
-      # weir-scan first: weir-run requires weir-scan>=0.5.0, so it must not
-      # appear on PyPI before the version it depends on. A failed weir-scan
-      # upload stops the job before weir-run is touched.
       - name: Publish weir-scan
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/weir-scan/
+          skip-existing: true
+
+  publish-weir-run:
+    # weir-run requires weir-scan>=0.5.0, so it must not appear on PyPI
+    # before the weir-scan version it depends on. A failed weir-scan job
+    # stops this one before it uploads.
+    needs: [build, publish-weir-scan]
+    runs-on: ubuntu-latest
+    environment: pypi-weir-run
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
       - name: Publish weir-run
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/weir-run/
+          skip-existing: true
