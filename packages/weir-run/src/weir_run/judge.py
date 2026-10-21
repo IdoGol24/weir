@@ -23,6 +23,8 @@ LEDGER = "ledger.jsonl"
 OTLP_DIR = "capture/otlp"
 SWEPT_DIR = "capture/swept"
 JUDGE_TIMEOUT_SECONDS = 600
+# docs/canary.md, "Exit codes": any other code is a judge that failed.
+JUDGE_CODES = frozenset({0, 1, 2, 3})
 
 
 @dataclass(frozen=True)
@@ -83,4 +85,8 @@ def judge(command: Sequence[str], run_dir: Path, *, json_report: bool = False) -
         timeout=JUDGE_TIMEOUT_SECONDS,
         check=False,
     )
-    return Verdict(done.returncode, done.stdout, done.stderr)
+    code = done.returncode
+    if code not in JUDGE_CODES:
+        cause = f"signal {-code}" if code < 0 else f"exit {code}"
+        raise RuntimeError(f"the judge failed ({cause})")
+    return Verdict(code, done.stdout, done.stderr)

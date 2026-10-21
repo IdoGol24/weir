@@ -12,8 +12,12 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import signal
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -269,3 +273,63 @@ def test_a_report_that_cannot_be_written_is_exit_2_never_1(
     result = _run(monkeypatch, judge, config, "--report", str(report))
     assert result.exit_code == 2, result.output
     assert "weir-run:" in result.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_judge_killed_by_a_signal_is_exit_2_never_its_raw_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "judge.py"
+    script.write_text(
+        "import os, signal, sys\nif '--help' in sys.argv: sys.exit(0)\n"
+        "os.kill(os.getpid(), signal.SIGKILL)\n",
+        encoding="utf-8",
+    )
+    config, side = _setup(tmp_path, "leak")
+    result = _run(monkeypatch, [sys.executable, str(script)], config)
+    assert result.exit_code == 2, result.output
+    assert "the judge failed (signal 9)" in result.stderr
+    assert side.read_text() not in result.output
+
+
+TERM_FLOW = """
+import os, subprocess, sys, time
+beat = os.environ["BEAT_FILE"]
+child = "import time\\nwhile True:\\n    open(%r, 'a').write('.')\\n    time.sleep(0.05)\\n" % beat
+subprocess.Popen([sys.executable, "-c", child])
+time.sleep(60)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_sigterm_during_a_flow_exits_2_and_cleans_up(tmp_path: Path, judge: list[str]) -> None:
+    flow = tmp_path / "flow.py"
+    flow.write_text(TERM_FLOW, encoding="utf-8")
+    beat = tmp_path / "beat.txt"
+    config = tmp_path / "canary.toml"
+    config.write_text(
+        '[[placement]]\nid = "env.APP_KEY"\nkind = "env"\n\n[[flow]]\nid = "main"\n'
+        f'command = ["{{python}}", {json.dumps(flow.as_posix())}]\n'
+        f"env = {{ BEAT_FILE = {json.dumps(beat.as_posix())} }}\n",
+        encoding="utf-8",
+    )
+    run_tmp = tmp_path / "run-tmp"
+    run_tmp.mkdir()
+    runner = subprocess.Popen(
+        [sys.executable, "-m", "weir_run.cli", "run", "--config", str(config), "--weir", judge[0]],
+        env={**os.environ, "TMPDIR": str(run_tmp)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    deadline = time.monotonic() + 30
+    while not (beat.exists() and beat.stat().st_size) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert beat.exists(), "the flow never started"
+    runner.send_signal(signal.SIGTERM)
+    _, stderr = runner.communicate(timeout=30)
+    assert runner.returncode == 2, stderr
+    assert b"weir-run: interrupted" in stderr
+    assert list(run_tmp.iterdir()) == []
+    size = beat.stat().st_size
+    time.sleep(0.5)
+    assert beat.stat().st_size == size, "the flow's child outlived the run"

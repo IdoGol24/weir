@@ -8,9 +8,11 @@ fault never exits 1, which would read as a leak.
 
 from __future__ import annotations
 
+import signal
 import subprocess
 import sys
 from pathlib import Path
+from types import FrameType
 
 import click
 
@@ -59,6 +61,9 @@ def run_command(
     config_path: Path, report: Path | None, seed: int | None, weir_path: str | None
 ) -> None:
     """Plant canaries, run every flow against the loopback mock, judge the capture."""
+    # A CI cancel or timeout sends SIGTERM: stop the same way as Ctrl-C, so
+    # the flow's processes are stopped and the ledger and capture deleted.
+    previous = signal.signal(signal.SIGTERM, _terminate)
     try:
         if report is not None and not report.parent.is_dir():
             raise SpecError(f"--report {report}: no such directory {report.parent}")
@@ -77,7 +82,13 @@ def run_command(
     except Exception as exc:
         click.echo(f"weir-run: the run failed ({type(exc).__name__})", err=True)
         sys.exit(USAGE_ERROR)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
     sys.exit(code)
+
+
+def _terminate(signum: int, frame: FrameType | None) -> None:
+    raise KeyboardInterrupt
 
 
 if __name__ == "__main__":
