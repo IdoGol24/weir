@@ -7,6 +7,7 @@ dev = [
     "pyright>=1.1",
     "pytest>=8",
     "hypothesis>=6",
+    "hatchling>=1.26",
     "import-linter>=2",
     "opentelemetry-proto>=1.44",
     "opentelemetry-sdk>=1.44",

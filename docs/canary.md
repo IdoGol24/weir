@@ -34,7 +34,7 @@ matches, the ledger and report schemas, coverage states and exit codes.
 | network | **none**: opens no socket, binds nothing, resolves nothing | a mock bound to `127.0.0.1` only; every other destination is refused |
 | processes | starts none | runs each flow under `env -i` with an allowlisted environment |
 | writes | nothing but its report on stdout and errors on stderr | the ledger (mode 0600, in the job's temporary directory, deleted after judging), the capture, its own reports |
-| reads | only the ledger and the capture paths it is given; no environment variable changes its output | the maintainer's config and the flows' output |
+| reads | only the ledger and the capture paths it is given, or with `--sample` the bundled sample; no environment variable changes its output | the maintainer's config and the flows' output |
 | determinism | a pure function of its input bytes; no clock, no randomness, no model | canary values are random per run (seedable for local reproduction); the mock's replies are scripted |
 
 - The judge stays inside weir-scan's no-network rule: the analysis path
@@ -67,14 +67,16 @@ matches, the ledger and report schemas, coverage states and exit codes.
 
 ```sh
 weir canary judge --ledger FILE --otlp PATH [--otlp PATH]... [--json] [PATH...]
+weir canary judge --sample [--json]
 ```
 
 | option | meaning |
 | --- | --- |
-| `--ledger` | **Required.** The canary ledger (`canary-ledger/1`, below). |
-| `--otlp` | **Required, repeatable.** A telemetry file, or a directory of them: OTLP/JSON export requests, one per line. Only these count toward completeness. |
+| `--ledger` | **Required** unless `--sample`. The canary ledger (`canary-ledger/1`, below). |
+| `--otlp` | **Required** unless `--sample`; repeatable. A telemetry file, or a directory of them: OTLP/JSON export requests, one per line. Only these count toward completeness. |
 | `PATH` | Zero or more further capture files or directories, such as non-OTLP telemetry bodies and each flow's stdout and stderr. They are swept for canaries and never count toward completeness. |
 | `--json` | Print the `canary-report/1` JSON report instead of the text report. |
+| `--sample` | Judge the bundled sample instead of given files: a ledger of prefix-free fake values and one OTLP/JSON capture, shipped in the package, with one planted value in a span attribute. It exits `1` and shows what a leak report looks like with no other input. It takes no `--ledger`, `--otlp` or `PATH`. The sample ledger is package data, so the mode-0600 rule below does not apply to it. |
 
 A directory, under either role, is read recursively in sorted path order. A
 symbolic link inside it is not followed, and is reported as not scanned.
