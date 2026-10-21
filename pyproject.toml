@@ -116,7 +116,7 @@ forbidden_modules = [
 # the files it is given and nothing else: no socket, no process, no clock, no
 # randomness, and none of the trace pipeline. The canary runner owns the
 # loopback mock and the flows; it is a separate package that weir never
-# imports. That row names the runner's package, so it lands with the runner.
+# imports (the "weir-run is outside weir-scan" contract below).
 name = "canary judge is pure: no network, process, clock or pipeline"
 type = "forbidden"
 source_modules = ["weir.canary"]
