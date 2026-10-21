@@ -22,6 +22,10 @@
   input, 3 incomplete. `--json` emits the `canary-report/1` report; both
   schemas are in `packages/weir/schema_artifacts/`. The judge opens no
   socket, starts no process and reads no clock.
+- **`weir canary judge --sample`: a leak report in one command.** It judges
+  a bundled sample (a ledger of fake values and an OTLP/JSON capture with
+  one planted value in a span attribute) with no other input, offline, and
+  exits 1 naming the placement, span and attribute, never the value.
 - **`weir inventory` (experimental): which credentials an agent could reach,
   by name only.** Its output and JSON schema may change without notice. Four
   sources: a versioned list of standard credential locations under the given

@@ -67,14 +67,16 @@ matches, the ledger and report schemas, coverage states and exit codes.
 
 ```sh
 weir canary judge --ledger FILE --otlp PATH [--otlp PATH]... [--json] [PATH...]
+weir canary judge --sample [--json]
 ```
 
 | option | meaning |
 | --- | --- |
-| `--ledger` | **Required.** The canary ledger (`canary-ledger/1`, below). |
-| `--otlp` | **Required, repeatable.** A telemetry file, or a directory of them: OTLP/JSON export requests, one per line. Only these count toward completeness. |
+| `--ledger` | **Required** unless `--sample`. The canary ledger (`canary-ledger/1`, below). |
+| `--otlp` | **Required** unless `--sample`; repeatable. A telemetry file, or a directory of them: OTLP/JSON export requests, one per line. Only these count toward completeness. |
 | `PATH` | Zero or more further capture files or directories, such as non-OTLP telemetry bodies and each flow's stdout and stderr. They are swept for canaries and never count toward completeness. |
 | `--json` | Print the `canary-report/1` JSON report instead of the text report. |
+| `--sample` | Judge the bundled sample instead of given files: a ledger of prefix-free fake values and one OTLP/JSON capture, shipped in the package, with one planted value in a span attribute. It exits `1` and shows what a leak report looks like with no other input. It takes no `--ledger`, `--otlp` or `PATH`. The sample ledger is package data, so the mode-0600 rule below does not apply to it. |
 
 A directory, under either role, is read recursively in sorted path order. A
 symbolic link inside it is not followed, and is reported as not scanned.

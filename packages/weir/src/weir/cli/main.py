@@ -14,6 +14,7 @@ rule exists.
 
 from __future__ import annotations
 
+import functools
 import importlib.resources
 import json as _json
 import os
@@ -27,8 +28,13 @@ from weir.adapters.otel import REMEDIATION, OtlpRejectError, decode_input, map_w
 from weir.adapters.otel.exposure import scan_surface
 from weir.canary import (
     CaptureError,
+    CaptureFile,
     LedgerError,
+    Report,
+    Role,
+    judge_capture,
     judge_paths,
+    parse_ledger,
     report_lines,
 )
 from weir.canary import encode_report as encode_canary_report
@@ -439,35 +445,73 @@ def canary_group() -> None:
     """Canary checks: did a planted fake credential reach the telemetry?"""
 
 
+_CANARY_SAMPLE = "canary-sample"
+
+
+def _judge_canary_sample() -> Report:
+    """Judge the bundled sample: a ledger and an OTLP capture shipped as
+    package data, holding prefix-free fake values only. They are read from
+    the package rather than from paths, so the ledger's mode-0600 rule does
+    not apply: an installed wheel's files are world-readable by design, and
+    these values guard nothing."""
+    sample = importlib.resources.files("weir.data").joinpath(_CANARY_SAMPLE)
+    ledger = parse_ledger(
+        sample.joinpath("ledger.jsonl").read_bytes(), f"{_CANARY_SAMPLE}/ledger.jsonl"
+    )
+    capture = CaptureFile(
+        path=f"{_CANARY_SAMPLE}/otlp.jsonl",
+        role=Role.TELEMETRY,
+        data=sample.joinpath("otlp.jsonl").read_bytes(),
+    )
+    return judge_capture(ledger, [capture])
+
+
 @canary_group.command("judge")
 @click.option(
     "--ledger",
     "ledger_path",
     metavar="FILE",
-    required=True,
-    help="The canary ledger (canary-ledger/1, docs/canary.md).",
+    help="The canary ledger (canary-ledger/1, docs/canary.md). Required unless --sample.",
 )
 @click.option(
     "--otlp",
     "otlp_paths",
     metavar="PATH",
     multiple=True,
-    required=True,
     help="A telemetry file or directory of OTLP/JSON export requests, one per line"
-    " (repeatable). Only these count toward completeness.",
+    " (repeatable). Only these count toward completeness. Required unless --sample.",
+)
+@click.option(
+    "--sample",
+    is_flag=True,
+    help="Judge the bundled sample (a fake ledger and a capture with one leak) - zero setup.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit the canary-report/1 JSON report.")
 @click.argument("paths", metavar="[PATH]...", nargs=-1)
 def canary_judge_command(
-    ledger_path: str, otlp_paths: tuple[str, ...], as_json: bool, paths: tuple[str, ...]
+    ledger_path: str | None,
+    otlp_paths: tuple[str, ...],
+    sample: bool,
+    as_json: bool,
+    paths: tuple[str, ...],
 ) -> None:
     """Report every placement whose value, or an encoded form of it, appears
     in the capture. PATHS are further files or directories swept for
     canaries. Prints placement ids and locations, never a value.
 
     Exit 0 clean, 1 leak, 2 unusable input, 3 incomplete."""
+    if sample:
+        if ledger_path is not None or otlp_paths or paths:
+            raise click.UsageError("--sample takes no --ledger, --otlp or PATH")
+        judge = _judge_canary_sample
+    elif ledger_path is None:
+        raise click.UsageError("Missing option '--ledger' (or use --sample).")
+    elif not otlp_paths:
+        raise click.UsageError("Missing option '--otlp' (or use --sample).")
+    else:
+        judge = functools.partial(judge_paths, ledger_path, otlp_paths, paths)
     try:
-        report = judge_paths(ledger_path, otlp_paths, paths)
+        report = judge()
     except (LedgerError, CaptureError) as exc:
         click.echo(f"error: {exc}", err=True)
         raise SystemExit(2) from exc
