@@ -34,7 +34,7 @@ matches, the ledger and report schemas, coverage states and exit codes.
 | network | **none**: opens no socket, binds nothing, resolves nothing | a mock bound to `127.0.0.1` only; every other destination is refused |
 | processes | starts none | runs each flow under `env -i` with an allowlisted environment |
 | writes | nothing but its report on stdout and errors on stderr | the ledger (mode 0600, in the job's temporary directory, deleted after judging), the capture, its own reports |
-| reads | only the ledger and the capture paths it is given; no environment variable changes its output | the maintainer's config and the flows' output |
+| reads | only the ledger and the capture paths it is given, or with `--sample` the bundled sample; no environment variable changes its output | the maintainer's config and the flows' output |
 | determinism | a pure function of its input bytes; no clock, no randomness, no model | canary values are random per run (seedable for local reproduction); the mock's replies are scripted |
 
 - The judge stays inside weir-scan's no-network rule: the analysis path
