@@ -24,7 +24,7 @@ weir-run run --config canary.toml
   4. capture OTLP/JSON lines + other telemetry bodies + each flow's stdout and stderr
   5. judge   weir canary judge (weir-scan: opens no socket, starts no process)
   6. delete  the ledger and the capture
-exit 0 clean and complete | 1 a canary reached the capture | 2 usage or input error | 3 incomplete
+exit 0 clean and complete | 1 a canary reached the capture | 2 usage, input or runner error | 3 incomplete
 ```
 
 - **The judge is weir-scan's**, called only through its command line. The
