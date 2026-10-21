@@ -7,7 +7,9 @@ the shipped rule and only a human diff would notice.
 
 Applies to every public markdown doc that carries a marker, not just the
 README: CONTRIBUTING.md quotes a rule too, and a contributor guide showing a
-rule that no longer exists is worse than one showing none.
+rule that no longer exists is worse than one showing none. The README quotes
+no rule today, so only CONTRIBUTING.md must carry a marker; a block the README
+does carry is still checked.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).parents[3]
 _MARKED_DOCS = ("README.md", "CONTRIBUTING.md")
+_MUST_QUOTE_A_RULE = ("CONTRIBUTING.md",)
 _BLOCK = re.compile(
     r"<!--\s*verify-file:\s*(?P<path>.+?)\s*-->\s*\n+```(?:[^\n]*)\n(?P<body>.*?)```",
     re.DOTALL,
@@ -29,7 +32,8 @@ _BLOCK = re.compile(
 def test_every_verify_file_block_matches_the_shipped_file(doc: str) -> None:
     text = (_REPO_ROOT / doc).read_text(encoding="utf-8")
     blocks = list(_BLOCK.finditer(text))
-    assert blocks, f"expected at least one '<!-- verify-file: ... -->' block in {doc}"
+    if doc in _MUST_QUOTE_A_RULE:
+        assert blocks, f"expected at least one '<!-- verify-file: ... -->' block in {doc}"
     for block in blocks:
         target = _REPO_ROOT / block.group("path")
         shipped = target.read_text(encoding="utf-8")

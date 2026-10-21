@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="352" viewBox="0 0 880 352" role="img" aria-labelledby="t d">
+  <title id="t">Place a weir on your agent's data flow</title>
+  <desc id="d">Weir plants fake keys in your agent. The agent's telemetry flows on, and weir-scan checks every span, log and metric for those exact values without stopping the flow: leak (exit 1), clean (exit 0) or incomplete (exit 3).</desc>
+  <style>
+    .bg{fill:#F6F8FB;stroke:#D5DEE8}
+    .ink{fill:#18242F}
+    .muted{fill:#5A6B7C}
+    .box{fill:#FFFFFF;stroke:#C8D3DF}
+    .river{fill:#CFE7F7}
+    .falls{fill:none;stroke:#7FB8DF;stroke-width:2;stroke-linecap:round}
+    .chip{fill:#FFFFFF;stroke:#9CCBEA}
+    .chipt{fill:#2B5A7A}
+    .key{fill:#FFF3D1;stroke:#E2A93B}
+    .keyt{fill:#7A5300}
+    .weir{fill:#2E4356}
+    .accent{fill:#0B6E99}
+    .line{stroke:#8A9AAB;stroke-width:1.5;fill:none}
+    .tag{fill:#FFFFFF;stroke:#C8D3DF}
+    @media (prefers-color-scheme: dark){
+      .bg{fill:#0F1720;stroke:#2A3644}
+      .ink{fill:#E6EDF3}
+      .muted{fill:#9AA8B6}
+      .box{fill:#16202B;stroke:#2F3D4C}
+      .river{fill:#12324A}
+      .falls{stroke:#3F86B5}
+      .chip{fill:#0F2333;stroke:#2D6B93}
+      .chipt{fill:#A9D3F0}
+      .key{fill:#3A2E12;stroke:#C99231}
+      .keyt{fill:#F2CF86}
+      .weir{fill:#B7C7D6}
+      .accent{fill:#5CC0EE}
+      .line{stroke:#6B7B8C}
+      .tag{fill:#16202B;stroke:#2F3D4C}
+    }
+    text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  </style>
+
+  <rect class="bg" x="0.5" y="0.5" width="879" height="351" rx="16"/>
+
+  <text class="ink" x="24" y="40" font-size="20" font-weight="600">Place a weir on your agent's data flow</text>
+  <text class="muted" x="24" y="62" font-size="13">Plant fake keys. Let the data flow. See exactly where they surface.</text>
+
+  <!-- the agent, where fake keys are planted -->
+  <rect class="box" x="24" y="96" width="150" height="128" rx="12"/>
+  <text class="ink" x="99" y="122" font-size="14" font-weight="600" text-anchor="middle">your agent</text>
+  <rect class="key" x="40" y="136" width="118" height="22" rx="6"/>
+  <text class="keyt mono" x="99" y="151" font-size="11" text-anchor="middle">fake key · env</text>
+  <rect class="key" x="40" y="166" width="118" height="22" rx="6"/>
+  <text class="keyt mono" x="99" y="181" font-size="11" text-anchor="middle">fake key · code</text>
+  <text class="muted" x="99" y="210" font-size="11" text-anchor="middle">planted by weir-run</text>
+
+  <!-- the river of telemetry, upstream of the weir -->
+  <path class="river" d="M174,128 C220,122 260,134 300,128 S380,122 420,128 S500,134 578,128 L578,192 L174,192 Z"/>
+  <rect class="chip" x="196" y="148" width="46" height="22" rx="6"/>
+  <text class="chipt mono" x="219" y="163" font-size="11" text-anchor="middle">span</text>
+  <rect class="chip" x="256" y="148" width="40" height="22" rx="6"/>
+  <text class="chipt mono" x="276" y="163" font-size="11" text-anchor="middle">log</text>
+  <rect class="key" x="310" y="148" width="124" height="22" rx="6"/>
+  <text class="keyt mono" x="372" y="163" font-size="11" text-anchor="middle">span · fake key</text>
+  <rect class="chip" x="448" y="148" width="58" height="22" rx="6"/>
+  <text class="chipt mono" x="477" y="163" font-size="11" text-anchor="middle">metric</text>
+
+  <!-- the weir: it measures, the flow keeps moving -->
+  <text class="accent" x="569" y="108" font-size="13" font-weight="600" text-anchor="middle">weir-scan · exact-value check</text>
+  <rect class="weir" x="560" y="134" width="18" height="64" rx="3"/>
+  <path class="falls" d="M579,130 q9,2 11,11 M579,135 q7,2 9,9"/>
+
+  <!-- downstream: the data flows on -->
+  <path class="river" d="M578,140 C620,134 660,146 700,140 S780,134 856,140 L856,192 L578,192 Z"/>
+  <rect class="chip" x="604" y="154" width="46" height="22" rx="6"/>
+  <text class="chipt mono" x="627" y="169" font-size="11" text-anchor="middle">span</text>
+  <rect class="key" x="662" y="154" width="124" height="22" rx="6"/>
+  <text class="keyt mono" x="724" y="169" font-size="11" text-anchor="middle">span · fake key</text>
+  <circle cx="784" cy="155" r="6" fill="#D64545"/>
+  <rect class="chip" x="800" y="154" width="40" height="22" rx="6"/>
+  <text class="chipt mono" x="820" y="169" font-size="11" text-anchor="middle">log</text>
+
+  <!-- the verdict -->
+  <path class="line" d="M569,198 L569,228"/>
+  <path class="line" d="M564,223 L569,229 L574,223"/>
+  <rect class="box" x="440" y="232" width="416" height="100" rx="12"/>
+  <circle cx="460" cy="257" r="5" fill="#D64545"/>
+  <text class="ink" x="474" y="262" font-size="13" font-weight="600">leak</text>
+  <text class="muted mono" x="556" y="262" font-size="12">env.API_KEY in span "call_llm"</text>
+  <text class="muted mono" x="840" y="262" font-size="12" text-anchor="end">exit 1</text>
+  <circle cx="460" cy="283" r="5" fill="#2E9E5B"/>
+  <text class="ink" x="474" y="288" font-size="13" font-weight="600">clean</text>
+  <text class="muted" x="556" y="288" font-size="12">no planted key in the telemetry</text>
+  <text class="muted mono" x="840" y="288" font-size="12" text-anchor="end">exit 0</text>
+  <circle cx="460" cy="309" r="5" fill="#D9922E"/>
+  <text class="ink" x="474" y="314" font-size="13" font-weight="600">incomplete</text>
+  <text class="muted" x="556" y="314" font-size="12">a required key was never used</text>
+  <text class="muted mono" x="840" y="314" font-size="12" text-anchor="end">exit 3</text>
+
+  <!-- the metaphor -->
+  <text class="muted" x="24" y="262" font-size="13" font-style="italic">A weir is a low dam that measures a river's flow.</text>
+  <text class="muted" x="24" y="284" font-size="13" font-style="italic">The water keeps moving. The measurement happens anyway.</text>
+  <rect class="tag" x="24" y="304" width="62" height="22" rx="11"/>
+  <text class="muted" x="55" y="319" font-size="11" text-anchor="middle">offline</text>
+  <rect class="tag" x="94" y="304" width="96" height="22" rx="11"/>
+  <text class="muted" x="142" y="319" font-size="11" text-anchor="middle">deterministic</text>
+  <rect class="tag" x="198" y="304" width="86" height="22" rx="11"/>
+  <text class="muted" x="241" y="319" font-size="11" text-anchor="middle">no AI model</text>
+</svg>
