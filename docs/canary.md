@@ -19,7 +19,7 @@ The check has two parts with a hard line between them:
   captured telemetry, and reports every placement whose value, or an
   encoded form of it, appears anywhere in the capture. It names the
   placement and where it was found, never a value or any fragment of one.
-- **The canary runner** (separate package, name pending). It generates and
+- **The canary runner** (`weir-run`, a separate package). It generates and
   plants the canaries, writes the ledger, runs the flows against a local
   mock, writes the capture, and calls the judge.
 
@@ -28,7 +28,7 @@ matches, the ledger and report schemas, coverage states and exit codes.
 
 ## The boundary
 
-| | the judge (`weir canary judge`, in weir-scan) | the canary runner (separate package, name pending) |
+| | the judge (`weir canary judge`, in weir-scan) | the canary runner (`weir-run`, a separate package) |
 | --- | --- | --- |
 | does | reads a ledger and capture files, prints a report | plants canaries, runs the mock and the flows, writes ledger and capture, calls the judge |
 | network | **none**: opens no socket, binds nothing, resolves nothing | a mock bound to `127.0.0.1` only; every other destination is refused |

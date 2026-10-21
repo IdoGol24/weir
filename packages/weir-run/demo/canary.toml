@@ -1,0 +1,33 @@
+# The canary runner's demo: one synthetic agent flow that exports clean
+# telemetry. `weir-run run --config canary.toml` exits 0.
+# canary-leak.toml runs the same flow with DEMO_LEAK=1 and exits 1.
+
+[mock]
+oauth = true                      # the flow's OAuth provider is the mock
+
+[[mock.endpoint]]
+id = "search"                     # the search API, at {mock}/ep/search
+credential_fields = ["header:x-api-key"]
+reply = '{"results": [{"title": "weir", "snippet": "a post-hoc verification engine"}]}'
+
+[[placement]]
+id = "env.OPENAI_API_KEY"
+kind = "env"
+shape = "openai"
+required = true
+
+[[placement]]
+id = "env.SEARCH_API_KEY"
+kind = "env"
+required = true
+
+[[placement]]
+id = "code.auth.client_secret"    # read from CANARY_CODE_AUTH_CLIENT_SECRET
+kind = "code"
+required = true
+
+[[flow]]
+id = "demo"
+command = ["{python}", "flow.py"]
+timeout_seconds = 60
+env = { SEARCH_BASE_URL = "{mock}/ep/search" }
