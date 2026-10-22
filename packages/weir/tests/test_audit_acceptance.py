@@ -167,12 +167,16 @@ def test_a_credential_in_an_otlp_output_tool_call_part_was_sent_out(tmp_path: Pa
 
 
 def _base64url_with_marker(value: str) -> str:
-    """The value after a filler, URL-safe base64, with the filler chosen so
-    the encoding holds a `-` or `_` and so differs from standard base64."""
-    for filler in range(1, 64):
-        encoded = base64.urlsafe_b64encode(b"u" * filler + b":" + value.encode()).decode()
-        if "-" in encoded or "_" in encoded:
-            return encoded.rstrip("=")
+    """`user:<value>` after a filler, URL-safe base64, with the filler's
+    length chosen so the value's own characters encode to a `-` or `_` and
+    so differ from standard base64 (the fixture's value holds a `~` for
+    that). The decoded text is still the assignment `<filler>user:<value>`."""
+    for filler in range(3):
+        plain = b"u" * filler + b"user:" + value.encode()
+        encoded = base64.urlsafe_b64encode(plain).decode().rstrip("=")
+        core = encoded[(8 * (filler + 5) + 5) // 6 :]
+        if "-" in core or "_" in core:
+            return encoded
     raise AssertionError("no filler gives a URL-safe character")
 
 

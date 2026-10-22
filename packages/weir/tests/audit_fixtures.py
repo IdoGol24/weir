@@ -8,7 +8,8 @@ home, session or credential.
 
 Every value is derived from a seed by hashing (`canary_fixtures.fake_value`),
 so it has no real provider shape. `SPECIAL` adds the characters the encoded
-forms change (`/`, `"`, `+`, a non-ASCII letter). The tests take credential
+forms change (`/`, `"`, `+`, a non-ASCII letter), and a `~`, whose byte
+encodes to a `-` in URL-safe base64 at one alignment. The tests take credential
 ids from the inventory report the run wrote, and locations from where the
 builders below put each value, never from the audit's output.
 
@@ -43,7 +44,7 @@ def _values() -> dict[str, str]:
     special = (
         cfx.fake_value("audit-special-a", 8) + "/" + cfx.fake_value("audit-special-b", 6)
         + '"' + cfx.fake_value("audit-special-c", 6) + "+" + "é"
-        + cfx.fake_value("audit-special-d", 8)
+        + cfx.fake_value("audit-special-d", 8) + "~" + cfx.fake_value("audit-special-e", 4)
     )
     return {
         ACME: cfx.fake_value("audit-acme"),
