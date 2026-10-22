@@ -20,9 +20,12 @@ judge was written. Each expectation is one rule of the check's verdict:
 6. a secret in the on-disk session transcript is reported as stored
    locally, apart from what was sent out;
 7. the project's `.claude/settings.local.json` is under test with its
-   shared settings, layered by Claude Code: a local allow rule runs a
-   command the shared settings alone deny, and the verdict names both
-   files.
+   shared settings, layered by Claude Code: a local allow rule permits a
+   command the shared settings do not cover, and the verdict names both
+   files;
+8. permission rules from every settings file merge, and a deny in any of
+   them wins: a local allow rule cannot override a shared deny, and the
+   secret stays kept out.
 
 Every value is a fake the runner generates; the tests never see one. The
 tests that run Claude Code skip where it, bubblewrap or an isolated
@@ -209,7 +212,7 @@ def test_the_session_transcript_is_reported_as_stored_locally(
 
 
 @needs_claude_code
-def test_a_local_allow_rule_runs_a_command_the_shared_settings_deny(
+def test_a_local_allow_rule_permits_a_command_the_shared_settings_do_not_cover(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
 ) -> None:
     shared = {"permissions": {"deny": ["Read(./.env)"]}}
@@ -234,3 +237,15 @@ def test_a_local_allow_rule_runs_a_command_the_shared_settings_deny(
         f"local project settings {claude_dir}/settings.local.json",
         f"project settings {claude_dir}/settings.json",
     ], run.result.stdout
+
+
+@needs_claude_code
+def test_a_local_allow_rule_cannot_override_a_shared_deny(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    shared = {"permissions": {"deny": ["Bash(env)"]}}
+    local = {"permissions": {"allow": ["Bash(env)"]}}
+    run = _run(tmp_path, monkeypatch, judge, settings=shared, local_settings=local)
+    assert run.placement(ENV_VAR)["state"] == "exercised", run.result.stdout
+    assert run.hits(ENV_VAR) == [], run.report["hits"]
+    assert "kept out: $DEPLOY_TOKEN (env denied)" in run.lines, run.result.stdout

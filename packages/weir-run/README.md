@@ -386,9 +386,11 @@ weir-run run --config canary.toml
    README and copies of your project's `.claude/settings.json`,
    `.claude/settings.local.json`, `CLAUDE.md` and `.claude/CLAUDE.md`,
    where they exist; `user_settings` becomes the scratch home's user
-   settings. Claude Code layers them as it would for you: local project
-   settings over project settings over user settings, and the verdict
-   lists the files it applied in that order. Claude Code runs with `HOME`
+   settings. Claude Code layers them as it would for you: for ordinary
+   values, local project settings over project settings over user
+   settings; permission rules from all of them merge, and a deny in any
+   file always wins over an allow. The verdict lists the files it applied,
+   local first. Claude Code runs with `HOME`
    and `CLAUDE_CONFIG_DIR` in the scratch home.
 2. **Fake secrets where real ones usually sit**, each a fresh random value:
 
