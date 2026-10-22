@@ -48,6 +48,8 @@ HOST = "127.0.0.1"
 MAX_BODY = 64 * 1024 * 1024
 ALWAYS_INSPECTED = ("authorization", "proxy-authorization")
 ENDPOINT_PREFIX = "/ep/"
+# The connectivity check Claude Code sends to its base URL before a run.
+ANTHROPIC_PREFLIGHT = "/api/hello"
 DEFAULT_PORTS = {"http": 80, "https": 443}
 
 type Reply = tuple[int, bytes, str, dict[str, str]]
@@ -193,7 +195,7 @@ class Mock:
         """The mocked endpoint that answers a request for path, if any."""
         if path in otlp.PATHS and method == "POST":
             return "otlp"
-        if path.startswith("/v1/"):
+        if path.startswith("/v1/") or path == ANTHROPIC_PREFLIGHT:
             return "model"
         if self.oauth is not None and path.startswith(("/oauth/", "/.well-known/")):
             return "oauth"
@@ -480,6 +482,8 @@ class _Handler(BaseHTTPRequestHandler):
         if handler is not None:
             reply, kind = handler(request)
             return 200, reply, kind, {}
+        if method in ("GET", "HEAD") and path == ANTHROPIC_PREFLIGHT:
+            return 200, b"{}", "application/json", {}
         if method == "GET" and path == "/v1/models":
             return 200, *model.models(), {}
         if method == "GET" and path.startswith("/v1/models/"):

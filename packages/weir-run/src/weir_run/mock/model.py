@@ -334,6 +334,7 @@ class ModelApi:
             events.append((kind, {"type": kind, **fields}))
 
         emit("message_start", message={**message, "content": [], "stop_reason": None})
+        emit("ping")
         for index, block in enumerate(content):
             if block["type"] == "tool_use":
                 start: Json = {**block, "input": {}}
