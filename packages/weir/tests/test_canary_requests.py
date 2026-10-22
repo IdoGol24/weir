@@ -3,8 +3,9 @@ provider", "The request capture", "The text report").
 
 Each test plants a fake value, places it in a request record built with
 the standard library, and expects what the attribution rules say: in a
-request to the placement's own provider it is evidence, anywhere else it
-is a hit naming the request's sink. Values are prefix-free and synthetic.
+credential field of a request to the placement's own provider it is
+evidence, anywhere else it is a hit naming the request's sink. Values are
+prefix-free and synthetic.
 """
 
 from __future__ import annotations
@@ -70,6 +71,67 @@ def test_a_value_in_a_request_to_its_own_endpoint_is_request_evidence(tmp_path: 
     assert _state(run, "env.MODEL_KEY")["evidence"] == ["request"]
 
 
+def test_a_model_key_in_the_prompt_of_its_own_model_request_is_a_leak_to_the_model(
+    tmp_path: Path,
+) -> None:
+    value = fx.fake_value("prompt")
+    body = json.dumps({"messages": [{"role": "user", "content": f"my key is {value}"}]})
+    record = fx.request(headers=[("Authorization", f"Bearer {value}")], body=body.encode())
+    run = _run(tmp_path, [record], [fx.placement("env.MODEL_KEY", value, providers=["model"])])
+    assert run.exit_code == 1, run.stdout
+    assert _hits(run) == [
+        ("env.MODEL_KEY", "requests", "model", "body.messages[0].content", "raw")
+    ]
+    assert _state(run, "env.MODEL_KEY")["state"] == "leaked"
+    # Its auth header is still its own provider's credential field.
+    assert _state(run, "env.MODEL_KEY")["evidence"] == ["request"]
+
+
+_FORM = ("Content-Type", "application/x-www-form-urlencoded")
+
+
+@pytest.mark.parametrize(
+    ("field", "place"),
+    [
+        (("header", "X-Api-Key"), lambda v: fx.request(headers=[("x-api-KEY", v)])),
+        (("query", "key"), lambda v: fx.request(query=f"q=1&key={v}")),
+        (("body", "api_key"), lambda v: fx.request(body=json.dumps({"api_key": v}).encode())),
+        (("body", "auth"), lambda v: fx.request(body=json.dumps({"auth": [{"t": v}]}).encode())),
+        (("body", "api_key"), lambda v: fx.request(headers=[_FORM], body=f"api_key={v}".encode())),
+    ],
+)
+def test_only_its_own_endpoints_credential_fields_are_evidence(
+    tmp_path: Path, field: tuple[str, str], place: typing.Callable[[str], dict[str, object]]
+) -> None:
+    value = fx.fake_value(f"field {field}")
+    placement = fx.placement("env.MODEL_KEY", value, providers=["model"])
+    record = place(value)
+    declared = {**record, "credential_fields": [list(f) for f in (*fx.AUTH_HEADERS, field)]}
+    run = _run(tmp_path, [declared], [placement])
+    assert run.exit_code == 0, run.stdout
+    assert _state(run, "env.MODEL_KEY")["evidence"] == ["request"]
+    # The same request with the field not declared: the value is in no
+    # credential field, so it is a leak to its own provider's sink.
+    run = _run(tmp_path, [record], [placement])
+    assert run.exit_code == 1, run.stdout
+    assert [(h[0], h[2]) for h in _hits(run)] == [("env.MODEL_KEY", "model")]
+    assert _state(run, "env.MODEL_KEY")["evidence"] == []
+
+
+def test_a_value_in_the_body_of_a_refused_request_to_its_provider_host_is_a_leak(
+    tmp_path: Path,
+) -> None:
+    value = fx.fake_value("egress body")
+    body = json.dumps({"key": value}).encode()
+    record = fx.request("refused", None, host="api.search.invalid", port=80, body=body)
+    placement = fx.placement(SINK_PLACEMENT, value, provider_host="api.search.invalid")
+    run = _run(tmp_path, [record], [placement])
+    assert _hits(run) == [
+        (SINK_PLACEMENT, "requests", "api.search.invalid (blocked)", "body.key", "raw")
+    ]
+    assert _state(run, SINK_PLACEMENT)["evidence"] == ["egress"]
+
+
 def test_a_request_to_its_own_endpoint_without_the_value_is_no_evidence(tmp_path: Path) -> None:
     value = fx.fake_value("unused")
     record = fx.request(headers=[("Authorization", "Bearer unrelated")])
@@ -97,7 +159,13 @@ def test_a_minted_token_belongs_to_every_provider_it_lists(tmp_path: Path) -> No
     pid = "runtime.oauth.access_token#1"
     records = [
         fx.request("served", "search", headers=[("Authorization", f"Bearer {value}")]),
-        fx.request("served", "oauth", body=f"refresh_token={value}".encode()),
+        fx.request(
+            "served",
+            "oauth",
+            headers=[("Content-Type", "application/x-www-form-urlencoded")],
+            body=f"refresh_token={value}".encode(),
+            credential_fields=[*fx.AUTH_HEADERS, ("body", "refresh_token")],
+        ),
         fx.request("served", "model", headers=[("Authorization", f"Bearer {value}")]),
     ]
     placement = fx.placement(pid, value, kind="mock-oauth", providers=["oauth", "search"])

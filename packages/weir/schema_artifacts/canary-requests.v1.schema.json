@@ -14,6 +14,27 @@
             }
           ]
         },
+        "credential_fields": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "enum": [
+                  "body",
+                  "header",
+                  "query"
+                ]
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
         "endpoint": {
           "anyOf": [
             {
@@ -107,7 +128,8 @@
         "query",
         "headers",
         "body",
-        "unread"
+        "unread",
+        "credential_fields"
       ],
       "title": "Request",
       "type": "object"

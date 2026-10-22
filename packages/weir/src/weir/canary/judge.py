@@ -13,10 +13,11 @@ file a raw hit is reported only where the walk found nothing for the same
 placement on the same line.
 
 Each request capture file is judged record by record under the attribution
-rules: a needle in a request to the placement's own provider is evidence
-that it was exercised, a needle in any other request is a hit naming that
-request's sink. Only a line that is not a request record gets the raw
-sweep, since nothing says where it went.
+rules: a needle in one of the credential fields of a request to the
+placement's own provider is evidence that it was exercised, a needle
+anywhere else in any request is a hit naming that request's sink. Only a
+line that is not a request record gets the raw sweep, since nothing says
+where it went.
 """
 
 from __future__ import annotations
@@ -206,10 +207,20 @@ def _sink(record: Request, display: Callable[[str], str]) -> str:
     return f"{_host(record, display)} (blocked)"
 
 
-def _found(parts: Sequence[Part], table: Sequence[_Needle]) -> set[tuple[str, str, Form]]:
-    """(placement id, location, form) for every needle in the request; a
-    whole query or body only where no finer part of it found the placement."""
-    fine: set[tuple[str, str, Form]] = set()
+def _credential_fields(record: Request) -> set[tuple[str, str]]:
+    return {
+        (location, name.lower() if location == "header" else name)
+        for location, name in record.credential_fields
+    }
+
+
+def _found(
+    parts: Sequence[Part], table: Sequence[_Needle], credentials: set[tuple[str, str]]
+) -> set[tuple[str, str, Form, bool]]:
+    """(placement id, location, form, in a credential field) for every
+    needle in the request; a whole query or body only where no finer part
+    of it found the placement."""
+    fine: set[tuple[str, str, Form, bool]] = set()
     whole: set[tuple[str, str, Form, str | None]] = set()
     grouped: set[tuple[str, str | None]] = set()
     # One search per needle over the whole request first: a needle in no
@@ -223,11 +234,11 @@ def _found(parts: Sequence[Part], table: Sequence[_Needle]) -> set[tuple[str, st
                 if part.whole:
                     whole.add((pid, part.location, needle.form, part.group))
                 else:
-                    fine.add((pid, part.location, needle.form))
+                    fine.add((pid, part.location, needle.form, part.field in credentials))
                     grouped.add((pid, part.group))
     for pid, location, form, group in whole:
         if (pid, group) not in grouped:
-            fine.add((pid, location, form))
+            fine.add((pid, location, form, False))
     return fine
 
 
@@ -260,9 +271,10 @@ def _judge_requests(
                 if _own_provider(placement, record):
                     out.evidence.setdefault(placement.id, set()).add("egress")
         sink = _sink(record, display)
-        for pid, location, form in _found(request_parts(record, display), table):
+        parts = request_parts(record, display)
+        for pid, location, form, credential in _found(parts, table, _credential_fields(record)):
             placement = placements[pid]
-            if _own_provider(placement, record):
+            if credential and _own_provider(placement, record):
                 if record.outcome == "served":
                     out.evidence.setdefault(pid, set()).add("request")
                 continue

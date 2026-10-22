@@ -8,9 +8,10 @@ and the HTTP(S) proxy for everything else. As a proxy it refuses: a
 
 Every request it receives, refused ones included, is recorded before it is
 answered as one line of the request capture (docs/canary.md, "The request
-capture"): destination, method, path, query, headers and body. The judge
-decides from it whether a planted value went to its own provider
-(exercised) or anywhere else (a leak).
+capture"): destination, method, path, query, headers, body and the
+request's credential fields. The judge decides from it whether a planted
+value went to its own provider's credential fields (exercised) or anywhere
+else (a leak).
 
 Before any mocked endpoint handles a request, the credential-field rules
 run (docs/canary.md, "Runtime values"): a credential field that holds no
@@ -202,6 +203,18 @@ class Mock:
                 return endpoint
         return None
 
+    def credential_fields(self, endpoint: str | None) -> list[CredentialField]:
+        """The credential fields of a request to endpoint, or of one to no
+        mocked endpoint when it is None (docs/canary.md, "Runtime values"):
+        the auth headers of every request, the fields a mocked endpoint
+        declares, and on the OAuth endpoints their form fields."""
+        fields = [CredentialField("header", name) for name in ALWAYS_INSPECTED]
+        if endpoint is not None:
+            fields += [f for f in self.spec.fields_for(endpoint) if f not in fields]
+        if endpoint == "oauth":
+            fields += [CredentialField("body", name) for name in CREDENTIAL_FORM_FIELDS]
+        return fields
+
     def body_judged_elsewhere(self, endpoint: str | None) -> bool:
         """An OTLP export is the telemetry capture, and a configured
         endpoint with capture on keeps its bodies as swept files: neither
@@ -314,6 +327,9 @@ class _Handler(BaseHTTPRequestHandler):
                 "headers": [[_text(k), _text(v)] for k, v in self.headers.items()],
                 "body": None if body is None else base64.b64encode(body).decode("ascii"),
                 "unread": unread,
+                "credential_fields": [
+                    [f.location, f.name] for f in self.owner.credential_fields(endpoint)
+                ],
             }
         )
 

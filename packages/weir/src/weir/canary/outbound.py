@@ -2,9 +2,10 @@
 
 A request capture line is one request the mock received. `parse_request`
 reads it into a `Request` record, or None when the line is not one, and
-`request_parts` breaks the record into `Part`s: the bytes to match and the
-printed, value-free location within the request. The judge decides what a
-match means; this module only says where in the request the bytes are.
+`request_parts` breaks the record into `Part`s: the bytes to match, the
+printed, value-free location within the request, and the field whose
+value they are, if they are one. The judge decides what a match means;
+this module only says where in the request the bytes are.
 
 Every part of the request is searched: the method, the host, the path as
 received and percent-decoded, each query parameter, each header, and the
@@ -49,6 +50,11 @@ class Part:
     # same request found the same placement.
     group: str | None = None
     whole: bool = False
+    # The field these bytes are the value of, as a credential field names
+    # it: `("header", <lower-case name>)`, `("query", <name>)` or
+    # `("body", <name>)`, a form field or a top-level JSON member and
+    # everything under it. None for every other part.
+    field: tuple[str, str] | None = None
 
 
 def parse_request(line: bytes) -> Request | None:
@@ -113,21 +119,31 @@ def _pairs(data: bytes, root: str, display: Display) -> list[Part]:
         name = _unquote(raw_name, plus=True)
         location = f"{root}.{shown(display, _text(name), _text(raw_name))}"
         parts.append(Part(name, location, root))
-        parts.append(Part(_unquote(raw_value, plus=True), location, root))
+        value = _unquote(raw_value, plus=True)
+        parts.append(Part(value, location, root, field=(root, _text(name))))
     return parts
 
 
-def _json_parts(node: Json, location: str, display: Display, parts: list[Part]) -> None:
+def _json_parts(
+    node: Json,
+    location: str,
+    display: Display,
+    parts: list[Part],
+    field: tuple[str, str] | None = None,
+) -> None:
     if isinstance(node, str):
-        parts.append(Part(_utf8(node), location, "body"))
+        parts.append(Part(_utf8(node), location, "body", field=field))
     elif isinstance(node, list):
         for index, item in enumerate(node):
-            _json_parts(item, f"{location}[{index}]", display, parts)
+            _json_parts(item, f"{location}[{index}]", display, parts, field)
     elif isinstance(node, dict):
         for key, value in node.items():
             member = f"{location}.{display(key)}"
-            parts.append(Part(_utf8(key), member, "body"))
-            _json_parts(value, member, display, parts)
+            parts.append(Part(_utf8(key), member, "body", field=field))
+            # A member of the top-level object is a body field: everything
+            # under it is its value.
+            top = ("body", key) if location == "body" else None
+            _json_parts(value, member, display, parts, field or top)
 
 
 def _is_form(record: Request) -> bool:
@@ -164,7 +180,7 @@ def request_parts(record: Request, display: Display) -> list[Part]:
     for name, value in record.headers:
         location = f"headers.{shown(display, name.lower(), name)}"
         parts.append(Part(_utf8(name), location))
-        parts.append(Part(_utf8(value), location))
+        parts.append(Part(_utf8(value), location, field=("header", name.lower())))
     if record.body is not None:
         body = _body_bytes(record.body)
         assert body is not None  # parse_request refuses a body that does not decode

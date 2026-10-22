@@ -267,6 +267,27 @@ def test_each_record_names_the_endpoint_that_answered(
     assert [r["endpoint"] for r in rig.requests()] == [endpoint]
 
 
+@pytest.mark.parametrize(
+    ("target", "declared"),
+    [
+        ("/v1/embeddings", ()),
+        ("/ep/search/q", SPEC.endpoints[0].credential_fields),
+        ("/oauth/token", tuple(CredentialField("body", n) for n in CREDENTIAL_FORM_FIELDS)),
+        ("/ep/elsewhere/q", ()),
+        ("http://collector.other.invalid/x", ()),
+    ],
+)
+def test_each_record_names_the_credential_fields_of_its_destination(
+    rig: Rig, target: str, declared: tuple[CredentialField, ...]
+) -> None:
+    rig.request("POST", target, b"", {"Content-Type": "application/x-www-form-urlencoded"})
+    [record] = rig.requests()
+    # docs/canary.md, "Runtime values": the auth headers of every request,
+    # then what the destination declares.
+    auth = [["header", "authorization"], ["header", "proxy-authorization"]]
+    assert record["credential_fields"] == auth + [[f.location, f.name] for f in declared]
+
+
 def test_a_compressed_body_is_recorded_decompressed(rig: Rig) -> None:
     body = json.dumps({"input": "hi"}).encode()
     headers = {"Content-Type": "application/json", "Content-Encoding": "gzip"}

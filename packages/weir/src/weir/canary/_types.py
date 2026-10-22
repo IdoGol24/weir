@@ -135,6 +135,9 @@ class Request(msgspec.Struct, forbid_unknown_fields=True):
     headers: list[tuple[str, str]]
     body: str | None
     unread: Literal["encoding", "too_large", "error"] | None
+    # The credential fields of the request's destination (docs/canary.md,
+    # "Runtime values"): only a needle in one of them is its own provider's.
+    credential_fields: list[tuple[Literal["header", "query", "body"], str]]
 
 
 class Ledger(msgspec.Struct, frozen=True):

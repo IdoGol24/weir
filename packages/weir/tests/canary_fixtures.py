@@ -93,6 +93,10 @@ def gauge(name: str, points: int = 1, **fields: object) -> dict[str, object]:
     }
 
 
+# docs/canary.md, "Runtime values": a credential field of every request.
+AUTH_HEADERS = (("header", "authorization"), ("header", "proxy-authorization"))
+
+
 def request(
     outcome: str = "served",
     endpoint: str | None = "model",
@@ -105,6 +109,7 @@ def request(
     headers: Sequence[tuple[str, str]] = (),
     body: bytes | None = b"",
     unread: str | None = None,
+    credential_fields: Sequence[tuple[str, str]] = AUTH_HEADERS,
 ) -> dict[str, object]:
     """One request record (docs/canary.md, "The request capture")."""
     if outcome == "connect":
@@ -120,6 +125,7 @@ def request(
         "headers": [list(h) for h in headers],
         "body": None if body is None else base64.b64encode(body).decode(),
         "unread": unread,
+        "credential_fields": [list(f) for f in credential_fields],
     }
 
 

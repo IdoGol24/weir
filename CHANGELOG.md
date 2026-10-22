@@ -30,10 +30,12 @@
   one line per request the mock received: destination, method, path,
   query, headers and body, and whether it was served, refused or a
   `CONNECT`) and searches every request for every planted value in every
-  encoded form. A value in a request to the placement's own provider (a
-  ledger placement's new optional `providers` endpoint ids and
-  `provider_host`) is `request` or `egress` evidence that it was
-  exercised; anywhere else it is a leak, reported with `signal=requests`,
+  encoded form. A value in a credential field of a request to the
+  placement's own provider (a ledger placement's new optional `providers`
+  endpoint ids and `provider_host`; each request record names its
+  `credential_fields`) is `request` or `egress` evidence that it was
+  exercised; anywhere else, the rest of that request included, it is a
+  leak, reported with `signal=requests`,
   the request's `sink` (`model`, `oauth`, `otlp`, a declared api's id,
   `unmocked`, or `<host> (blocked)` for a refused plain-HTTP request) and
   the field (`headers.<name>`, `query.<name>`, `body.<json path>`,
