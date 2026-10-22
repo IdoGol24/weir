@@ -203,16 +203,24 @@ class Mock:
                 return endpoint
         return None
 
-    def credential_fields(self, endpoint: str | None) -> list[CredentialField]:
-        """The credential fields of a request to endpoint, or of one to no
-        mocked endpoint when it is None (docs/canary.md, "Runtime values"):
-        the auth headers of every request, the fields a mocked endpoint
-        declares, and on the OAuth endpoints their form fields."""
+    def credential_fields(
+        self, outcome: str, endpoint: str | None, host: str
+    ) -> list[CredentialField]:
+        """The credential fields of a request's destination (docs/canary.md,
+        "The request capture"): the auth headers of every request, and the
+        fields of the endpoint that answered it or, for a refused request
+        or a CONNECT, of the endpoints whose placements name its host as
+        their provider host. An endpoint's fields are those it declares,
+        and on the OAuth endpoints their form fields."""
         fields = [CredentialField("header", name) for name in ALWAYS_INSPECTED]
-        if endpoint is not None:
-            fields += [f for f in self.spec.fields_for(endpoint) if f not in fields]
-        if endpoint == "oauth":
-            fields += [CredentialField("body", name) for name in CREDENTIAL_FORM_FIELDS]
+        if outcome == "served":
+            endpoints = [] if endpoint is None else [endpoint]
+        else:
+            endpoints = self.ledger.provider_endpoints(host)
+        for name in endpoints:
+            fields += [f for f in self.spec.fields_for(name) if f not in fields]
+            if name == "oauth":
+                fields += [CredentialField("body", n) for n in CREDENTIAL_FORM_FIELDS]
         return fields
 
     def body_judged_elsewhere(self, endpoint: str | None) -> bool:
@@ -328,7 +336,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "body": None if body is None else base64.b64encode(body).decode("ascii"),
                 "unread": unread,
                 "credential_fields": [
-                    [f.location, f.name] for f in self.owner.credential_fields(endpoint)
+                    [f.location, f.name]
+                    for f in self.owner.credential_fields(outcome, endpoint, host)
                 ],
             }
         )

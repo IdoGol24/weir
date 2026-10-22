@@ -436,7 +436,7 @@ first line is the header; every other line is one request:
 | `headers` | array | every header as a `[name, value]` pair of strings, in the order received |
 | `body` | string or null | the body after its `Content-Encoding` is removed, base64-encoded (standard alphabet, padded); empty when there is no body. Null for a `connect`, for an OTLP export (its content is the telemetry capture) and for a declared endpoint that keeps its bodies as swept capture files: a body judged elsewhere is not judged twice |
 | `unread` | string or null | why the body could not be judged in full: `encoding` (a `Content-Encoding` the mock cannot remove; `body` holds the bytes as received), `too_large` (over the mock's 64 MiB limit; `body` is null) or `error` (the mock failed while reading or answering the request; `body` is null); null otherwise |
-| `credential_fields` | array | the request's [credential fields](#runtime-values), each a `[location, name]` pair: `location` is `header`, `query` or `body`, and a header name is matched without regard to letter case. The `Authorization` and `Proxy-Authorization` headers of every request, the fields its endpoint declares in the runner's configuration, and on the mock's OAuth endpoints their form fields. A `body` field is a form field or a member of a top-level JSON object, everything under the member included |
+| `credential_fields` | array | the request's [credential fields](#runtime-values), each a `[location, name]` pair: `location` is `header`, `query` or `body`, and a header name is matched without regard to letter case. The `Authorization` and `Proxy-Authorization` headers of every request, then the fields of its endpoints: for a `served` request the endpoint that answered it, and for a `refused` or `connect` request the providers of every placement whose provider host is its host (matched without regard to letter case), since those endpoints stand in for that host. An endpoint's fields are those it declares in the runner's configuration, and on the mock's OAuth endpoints also their form fields. A `body` field is a form field or a member of a top-level JSON object, everything under the member included |
 
 ### Attribution
 
@@ -455,13 +455,17 @@ query; and every body is also searched as a whole. Then:
   [own provider](#a-placements-own-provider) is not a hit. A `served`
   request to one of its providers that holds a needle there is `request`
   evidence that the placement was exercised. Any `refused` or `connect`
-  request to its provider host is `egress` evidence, whatever it holds.
+  request to its provider host is `egress` evidence, whatever it holds,
+  and a needle in its credential fields, such as the `header:x-api-key`
+  or `query:key` its own endpoint declares, is not a hit there either.
 - **Anywhere else.** A needle found anywhere else in any request is a hit:
   a leak to that request's **sink**. That includes every other part of a
   request to its own provider: a model key copied into
   `body.messages[0].content` of a request to the model API is a leak to
-  `model`, and a key in the body of a request to its own declared API,
-  outside the fields that API declares, is a leak to that API's id.
+  `model`, a key in the body of a request to its own declared API,
+  outside the fields that API declares, is a leak to that API's id, and a
+  key in the body of a refused request to its provider host is a leak to
+  `<host> (blocked)`.
 
 | sink | the request |
 | --- | --- |

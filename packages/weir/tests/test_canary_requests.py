@@ -118,17 +118,43 @@ def test_only_its_own_endpoints_credential_fields_are_evidence(
     assert _state(run, "env.MODEL_KEY")["evidence"] == []
 
 
+# A refused request to its provider host, as the mock records it: the auth
+# headers and the fields its own endpoint declares.
+_HOST = "api.search.invalid"
+_HOST_FIELDS = (*fx.AUTH_HEADERS, ("header", "x-api-key"), ("query", "key"))
+
+
+@pytest.mark.parametrize(
+    "place",
+    [
+        lambda v: fx.request("refused", None, host=_HOST, port=80, headers=[("X-Api-Key", v)]),
+        lambda v: fx.request("refused", None, host=_HOST, port=80, query=f"q=1&key={v}"),
+    ],
+    ids=["header:x-api-key", "query:key"],
+)
+def test_a_declared_field_of_its_endpoint_sent_to_its_provider_host_is_egress(
+    tmp_path: Path, place: typing.Callable[[str], dict[str, object]]
+) -> None:
+    value = fx.fake_value("egress field")
+    record = {**place(value), "credential_fields": [list(f) for f in _HOST_FIELDS]}
+    placement = fx.placement(SINK_PLACEMENT, value, providers=["search"], provider_host=_HOST)
+    run = _run(tmp_path, [record], [placement])
+    assert run.exit_code == 0, run.stdout
+    assert _hits(run) == []
+    assert _state(run, SINK_PLACEMENT)["evidence"] == ["egress"]
+
+
 def test_a_value_in_the_body_of_a_refused_request_to_its_provider_host_is_a_leak(
     tmp_path: Path,
 ) -> None:
     value = fx.fake_value("egress body")
     body = json.dumps({"key": value}).encode()
-    record = fx.request("refused", None, host="api.search.invalid", port=80, body=body)
-    placement = fx.placement(SINK_PLACEMENT, value, provider_host="api.search.invalid")
+    record = fx.request(
+        "refused", None, host=_HOST, port=80, body=body, credential_fields=_HOST_FIELDS
+    )
+    placement = fx.placement(SINK_PLACEMENT, value, providers=["search"], provider_host=_HOST)
     run = _run(tmp_path, [record], [placement])
-    assert _hits(run) == [
-        (SINK_PLACEMENT, "requests", "api.search.invalid (blocked)", "body.key", "raw")
-    ]
+    assert _hits(run) == [(SINK_PLACEMENT, "requests", f"{_HOST} (blocked)", "body.key", "raw")]
     assert _state(run, SINK_PLACEMENT)["evidence"] == ["egress"]
 
 

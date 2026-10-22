@@ -42,6 +42,8 @@ class Placement:
     kind: str
     value: str = field(repr=False)
     required: bool = False
+    providers: tuple[str, ...] = ()
+    provider_host: str | None = None
 
 
 class Ledger:
@@ -104,7 +106,9 @@ class Ledger:
             if len(value) < MIN_VALUE_LENGTH:
                 raise LedgerError(f"placement {placement_id}: value shorter than 16 characters")
             self._claim_id("placement", placement_id)
-            placement = Placement(placement_id, kind, value, required)
+            placement = Placement(
+                placement_id, kind, value, required, tuple(providers), provider_host
+            )
             self._placements[placement_id] = placement
             record: dict[str, object] = {
                 "type": "placement",
@@ -200,6 +204,15 @@ class Ledger:
     def placements(self) -> list[Placement]:
         with self._lock:
             return list(self._placements.values())
+
+    def provider_endpoints(self, host: str) -> list[str]:
+        """The providers of every placement whose provider host is host,
+        matched without regard to letter case, in ledger order."""
+        endpoints: list[str] = []
+        for p in self.placements:
+            if p.provider_host is not None and p.provider_host.lower() == host.lower():
+                endpoints += [e for e in p.providers if e not in endpoints]
+        return endpoints
 
     def value(self, placement_id: str) -> str:
         return self._placements[placement_id].value

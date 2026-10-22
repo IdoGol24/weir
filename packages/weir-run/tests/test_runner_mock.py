@@ -288,6 +288,27 @@ def test_each_record_names_the_credential_fields_of_its_destination(
     assert record["credential_fields"] == auth + [[f.location, f.name] for f in declared]
 
 
+@pytest.mark.parametrize(
+    ("method", "target"),
+    [("GET", "http://Search.Host.invalid/q?key={key}"), ("CONNECT", "search.host.invalid:443")],
+)
+def test_a_refused_request_to_a_provider_host_names_its_endpoints_fields(
+    rig: Rig, method: str, target: str
+) -> None:
+    host_key = rig.ledger.plant(
+        "env.HOST_KEY",
+        "env",
+        shaped(rig.ledger.source, "generic"),
+        providers=("search",),
+        provider_host="search.HOST.invalid",
+    ).value
+    assert rig.request(method, target.format(key=host_key)).status == 403
+    [record] = rig.requests()
+    auth = [["header", "authorization"], ["header", "proxy-authorization"]]
+    declared = [[f.location, f.name] for f in SPEC.endpoints[0].credential_fields]
+    assert record["credential_fields"] == auth + declared
+
+
 def test_a_compressed_body_is_recorded_decompressed(rig: Rig) -> None:
     body = json.dumps({"input": "hi"}).encode()
     headers = {"Content-Type": "application/json", "Content-Encoding": "gzip"}
