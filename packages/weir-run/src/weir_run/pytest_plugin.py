@@ -15,6 +15,10 @@ clean. Call `judge()` yourself to assert on the result instead.
 
 The judge is `weir` beside this interpreter or on PATH; override the
 `canary_judge_command` fixture to use another.
+
+Flows run in a loopback-only network namespace where one can be made, as
+under `weir-run run`. `pytest --canary-require-isolation` makes a check
+whose flows could not be isolated incomplete.
 """
 
 from __future__ import annotations
@@ -55,9 +59,16 @@ class CanaryResult:
 
 
 class CanaryCheck:
-    def __init__(self, judge_command: Sequence[str], cwd: Path) -> None:
+    def __init__(
+        self,
+        judge_command: Sequence[str],
+        cwd: Path,
+        *,
+        require_isolation: bool = False,
+    ) -> None:
         self._judge_command = list(judge_command)
         self._cwd = cwd
+        self._require_isolation = require_isolation
         self._placements: list[PlacementSpec] = []
         self._mock = MockSpec()
         self._run: CheckRun | None = None
@@ -155,7 +166,12 @@ class CanaryCheck:
         if self._run is None:
             judge_cli.check_available(self._judge_command)
             spec = RunSpec(tuple(self._placements), (), self._mock)
-            self._run = CheckRun(spec, self._judge_command, validate_spec=False)
+            self._run = CheckRun(
+                spec,
+                self._judge_command,
+                validate_spec=False,
+                require_isolation=self._require_isolation,
+            )
         return self._run
 
     @property
@@ -213,6 +229,15 @@ class CanaryCheck:
             self._run.cleanup()
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    group = parser.getgroup("weir-run", "canary checks (weir-run)")
+    group.addoption(
+        "--canary-require-isolation",
+        action="store_true",
+        help="Make a canary check whose flows could not be isolated from the network incomplete.",
+    )
+
+
 @pytest.fixture
 def canary_judge_command() -> list[str]:
     """The judge's command prefix; override to judge with another weir."""
@@ -223,7 +248,11 @@ def canary_judge_command() -> list[str]:
 def canary_check(
     canary_judge_command: list[str], request: pytest.FixtureRequest
 ) -> Generator[CanaryCheck]:
-    check = CanaryCheck(canary_judge_command, Path(str(request.path)).parent)
+    check = CanaryCheck(
+        canary_judge_command,
+        Path(str(request.path)).parent,
+        require_isolation=bool(request.config.getoption("canary_require_isolation")),
+    )
     try:
         yield check
         if check.started and check.result is None:

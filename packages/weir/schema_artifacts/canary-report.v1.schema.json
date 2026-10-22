@@ -68,6 +68,30 @@
       "title": "Coverage",
       "type": "object"
     },
+    "DirectEntry": {
+      "properties": {
+        "attempts": {
+          "type": "integer"
+        },
+        "flow": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flow",
+        "protocol",
+        "target",
+        "attempts"
+      ],
+      "title": "DirectEntry",
+      "type": "object"
+    },
     "FlowState": {
       "properties": {
         "id": {
@@ -209,14 +233,39 @@
     },
     "IncompleteReason": {
       "enum": [
+        "direct_connection",
         "empty_capture",
         "flow_not_ok",
+        "network_not_isolated",
         "not_scanned",
         "required_not_exercised",
         "unexpected_credential",
         "unparsed_record"
       ],
       "title": "IncompleteReason"
+    },
+    "NetworkState": {
+      "properties": {
+        "direct": {
+          "items": {
+            "$ref": "#/$defs/DirectEntry"
+          },
+          "type": "array"
+        },
+        "isolated": {
+          "type": "boolean"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "isolated",
+        "required",
+        "direct"
+      ],
+      "title": "NetworkState",
+      "type": "object"
     },
     "NotScanned": {
       "properties": {
@@ -303,6 +352,9 @@
           },
           "type": "array"
         },
+        "network": {
+          "$ref": "#/$defs/NetworkState"
+        },
         "not_scanned": {
           "items": {
             "$ref": "#/$defs/NotScanned"
@@ -333,7 +385,8 @@
         "flows",
         "not_scanned",
         "incomplete",
-        "coverage"
+        "coverage",
+        "network"
       ],
       "title": "Report",
       "type": "object"

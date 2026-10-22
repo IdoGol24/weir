@@ -1,5 +1,48 @@
 {
   "$defs": {
+    "Direct": {
+      "additionalProperties": false,
+      "description": "A connection a flow tried to open around the mock, blocked by\n    isolation. Never content: a protocol, a target and a count.",
+      "properties": {
+        "attempts": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "flow": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._:#/-]{1,128}$",
+          "type": "string"
+        },
+        "protocol": {
+          "enum": [
+            "dns",
+            "tcp",
+            "udp"
+          ]
+        },
+        "target": {
+          "maxLength": 260,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._:\\[\\]-]{1,260}$",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "direct"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "flow",
+        "protocol",
+        "target",
+        "attempts"
+      ],
+      "title": "Direct",
+      "type": "object"
+    },
     "Exercised": {
       "additionalProperties": false,
       "properties": {
@@ -75,6 +118,30 @@
         "schema"
       ],
       "title": "LedgerHeader",
+      "type": "object"
+    },
+    "Network": {
+      "additionalProperties": false,
+      "description": "Whether the flows ran with no route out but loopback. At most one.",
+      "properties": {
+        "isolated": {
+          "type": "boolean"
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "network"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "isolated"
+      ],
+      "title": "Network",
       "type": "object"
     },
     "Placement": {
@@ -158,12 +225,20 @@
         },
         {
           "$ref": "#/$defs/Unexpected"
+        },
+        {
+          "$ref": "#/$defs/Network"
+        },
+        {
+          "$ref": "#/$defs/Direct"
         }
       ],
       "discriminator": {
         "mapping": {
+          "direct": "#/$defs/Direct",
           "exercised": "#/$defs/Exercised",
           "flow": "#/$defs/Flow",
+          "network": "#/$defs/Network",
           "placement": "#/$defs/Placement",
           "unexpected": "#/$defs/Unexpected"
         },

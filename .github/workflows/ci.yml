@@ -23,6 +23,15 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
+      # weir-run isolates flows in an unprivileged user and network
+      # namespace. Ubuntu restricts those by default; allow them, and make
+      # the isolation tests fail rather than skip if isolation is missing.
+      - name: Allow unprivileged user namespaces
+        if: runner.os == 'Linux'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          echo "WEIR_TEST_REQUIRE_NETNS=1" >> "$GITHUB_ENV"
+
       - name: Run tests
         run: uv run pytest -q
 

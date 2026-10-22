@@ -26,11 +26,13 @@ from weir.canary._types import (
     EXIT_CODES,
     REPORT_SCHEMA,
     Coverage,
+    DirectEntry,
     Form,
     Hit,
     Incomplete,
     IncompleteReason,
     Ledger,
+    NetworkState,
     NotScanned,
     Placement,
     PlacementState,
@@ -285,6 +287,19 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
         key=lambda entry: (entry.file, entry.reason.value),
     )
     flows = sorted((FlowEntry(id=f.id, status=f.status) for f in ledger.flows), key=lambda f: f.id)
+    network = NetworkState(
+        isolated=ledger.network is not None and ledger.network.isolated,
+        required=ledger.network is not None and ledger.network.required,
+        direct=sorted(
+            (
+                DirectEntry(
+                    flow=d.flow, protocol=d.protocol, target=display(d.target), attempts=d.attempts
+                )
+                for d in ledger.direct
+            ),
+            key=lambda d: (d.flow, d.protocol, d.target),
+        ),
+    )
 
     reasons: list[tuple[IncompleteReason, str | None, int]] = []
     reasons += [
@@ -300,6 +315,12 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
     reasons += [(IncompleteReason.UNPARSED_RECORD, path, line) for path, line in unparsed]
     if spans + log_records + data_points == 0:
         reasons.append((IncompleteReason.EMPTY_CAPTURE, None, 0))
+    if network.required and not network.isolated:
+        reasons.append((IncompleteReason.NETWORK_NOT_ISOLATED, None, 0))
+    reasons += [
+        (IncompleteReason.DIRECT_CONNECTION, f"{d.flow}={d.protocol}:{d.target}", 0)
+        for d in network.direct
+    ]
     reasons.sort(key=lambda r: (r[0].value, r[1] or "", r[2]))
     incomplete = [
         Incomplete(
@@ -349,6 +370,7 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
         not_scanned=not_scanned,
         incomplete=incomplete,
         coverage=coverage,
+        network=network,
     )
 
 

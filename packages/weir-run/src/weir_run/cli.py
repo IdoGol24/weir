@@ -57,10 +57,23 @@ def main() -> None:
     "weir_path",
     help="The weir executable to judge with. Default: the one beside this Python, else PATH.",
 )
+@click.option(
+    "--require-isolation",
+    is_flag=True,
+    help="Make a run whose flows could not be isolated from the network incomplete (exit 3).",
+)
 def run_command(
-    config_path: Path, report: Path | None, seed: int | None, weir_path: str | None
+    config_path: Path,
+    report: Path | None,
+    seed: int | None,
+    weir_path: str | None,
+    require_isolation: bool,
 ) -> None:
-    """Plant canaries, run every flow against the loopback mock, judge the capture."""
+    """Plant canaries, run every flow against the loopback mock, judge the capture.
+
+    On Linux, flows run in a network namespace whose only network is
+    loopback, so a client that ignores the proxy settings reaches nothing,
+    and its attempt is reported."""
     # A CI cancel or timeout sends SIGTERM: stop the same way as Ctrl-C, so
     # the flow's processes are stopped and the ledger and capture deleted.
     previous = signal.signal(signal.SIGTERM, _terminate)
@@ -71,7 +84,13 @@ def run_command(
         command = judge_cli.resolve(weir_path)
         judge_cli.check_available(command)
         code = run_spec(
-            spec, command, out=sys.stdout, err=sys.stderr, seed=seed, json_report=report
+            spec,
+            command,
+            out=sys.stdout,
+            err=sys.stderr,
+            seed=seed,
+            json_report=report,
+            require_isolation=require_isolation,
         )
     except (SpecError, LedgerError, OSError, subprocess.SubprocessError, RuntimeError) as exc:
         click.echo(f"weir-run: {exc}", err=True)

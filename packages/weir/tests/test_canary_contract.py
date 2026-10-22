@@ -23,11 +23,15 @@ import pytest
 from weir.canary import (
     EXIT_CODES,
     Coverage,
+    Direct,
+    DirectEntry,
     Exercised,
     Flow,
     Form,
     Hit,
     IncompleteReason,
+    Network,
+    NetworkState,
     Placement,
     PlacementState,
     Report,
@@ -105,6 +109,8 @@ def test_ledger_record_fields_match_the_contract_table() -> None:
         "exercised": Exercised,
         "flow": Flow,
         "unexpected": Unexpected,
+        "network": Network,
+        "direct": Direct,
     }
     assert set(rows) == {"header", *structs}
     for record, cls in structs.items():
@@ -115,8 +121,10 @@ def test_ledger_record_fields_match_the_contract_table() -> None:
 
 def test_ledger_enumerations_match_the_contract_table() -> None:
     rows = dict(_ledger_rows()["exercised"]) | {f"flow.{k}": v for k, v in _ledger_rows()["flow"]}
+    rows |= {f"direct.{k}": v for k, v in _ledger_rows()["direct"]}
     assert set(_ticked(rows["evidence"])) == _literal_args(Exercised, "evidence")
     assert set(_ticked(rows["flow.status"])) == _literal_args(Flow, "status")
+    assert set(_ticked(rows["direct.protocol"])) == _literal_args(Direct, "protocol")
 
 
 def test_coverage_states_and_incomplete_reasons_match_the_contract() -> None:
@@ -144,6 +152,13 @@ def test_report_fields_are_in_the_contract_schema_order() -> None:
         f.name for f in msgspec.structs.fields(PlacementState)
     ]
     assert _ticked(meaning["coverage"]) == [f.name for f in msgspec.structs.fields(Coverage)]
+    network_fields = _ticked(meaning["network"])
+    assert network_fields[:3] == [f.name for f in msgspec.structs.fields(NetworkState)]
+    direct_fields = re.search(r"`\{([^}]*)\}`", meaning["network"])
+    assert direct_fields
+    assert [f.strip() for f in direct_fields.group(1).split(",")] == [
+        f.name for f in msgspec.structs.fields(DirectEntry)
+    ]
     assert _first_ticked(_table(section, 1)) == [f.name for f in msgspec.structs.fields(Hit)]
     hit_forms = dict((_ticked(r[0])[0], r[2]) for r in _table(section, 1))["form"]
     assert _ticked(hit_forms) == [f.value for f in Form]

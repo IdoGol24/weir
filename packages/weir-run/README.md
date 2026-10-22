@@ -20,7 +20,8 @@ weir-run run --config canary.toml
   2. mock    127.0.0.1 only: OpenAI-compatible model API, OAuth endpoints,
              OTLP/HTTP receiver, your project's own APIs; refuses every proxied
              request to another host
-  3. flows   each under an empty environment plus an allowlist, URLs pointed at the mock
+  3. flows   each under an empty environment plus an allowlist, URLs pointed at the mock,
+             in a network namespace whose only network is loopback (Linux)
   4. capture OTLP/JSON lines + other telemetry bodies + each flow's stdout and stderr
   5. judge   weir canary judge (weir-scan: opens no socket, starts no process)
   6. delete  the ledger and the capture
@@ -30,15 +31,16 @@ exit 0 clean and complete | 1 a canary reached the capture | 2 usage, input or r
 - **The judge is weir-scan's**, called only through its command line. The
   runner never imports weir, and weir never imports the runner (both are
   import-linter contracts in the repository's `pyproject.toml`). The runner
-  requires weir-scan 0.5.0 or later, the first release that ships
-  `weir canary judge`; without a judge it exits 2 before running anything.
+  requires weir-scan 0.6.0 or later, the first release whose
+  `weir canary judge` reads the ledger's `network` and `direct` records;
+  without a judge it exits 2 before running anything.
 - **Local and offline.** The mock binds `127.0.0.1` on a port the OS picks;
   there is no option to bind anything else. Every flow gets the mock as its
   HTTP and HTTPS proxy, and the mock refuses every proxied request: a
   `CONNECT` or an absolute-URL request for any other host gets a 403, and
-  nothing is forwarded, opened or resolved. The runner does not sandbox the
-  network: a client that ignores proxy settings can connect directly (see
-  [Limits of this release](#limits-of-this-release)).
+  nothing is forwarded, opened or resolved. On Linux every flow also runs
+  in a network namespace with no route out, so a client that ignores proxy
+  settings reaches nothing either (see [Network isolation](#network-isolation)).
 - **Test-time only.** The runner is a dependency of your CI job, never of
   your program. The mock and the receiver exist only for one run.
 
@@ -209,14 +211,72 @@ decode is kept as its own capture file and a marker line makes the run
 incomplete. Request bodies of an endpoint with `capture = true` and each
 flow's stdout and stderr are swept capture files.
 
+## Network isolation
+
+On Linux, the runner runs the mock and every flow in an unprivileged user
+and network namespace (what `unshare --user --net` makes) whose only
+interface is loopback. The mock listens on `127.0.0.1` inside it, so flows
+reach it as before, and nothing has a route to any other host. A flow
+holds no capability in the namespace, so it cannot add one.
+
+Every other address is routed to the namespace's own loopback, so a client
+that ignores the proxy settings fails at once (connection refused, or a
+failed name lookup) instead of hanging, and the runner sees the attempt:
+
+| observed | reported as |
+| --- | --- |
+| a TCP connection opened to any address but loopback | `tcp`, the address and port |
+| a UDP datagram sent to any address but loopback | `udp`, the address and port |
+| a DNS query sent to any address, loopback included | `dns`, the name asked for |
+
+Each distinct attempt makes the run incomplete, as
+`incomplete: direct_connection <flow>=<protocol>:<target>`: isolation
+stopped it, but what it would have sent was never seen. The runner's
+output lists them as `network: blocked direct ...` lines. A blocked
+datagram's payload, a DNS query included, is a swept capture file, so a
+canary in it is a `LEAK` like any other.
+
+Not observed: traffic on loopback, which never leaves; a name lookup made
+through a host service over a Unix socket, such as systemd-resolved's NSS
+module or nscd, which happens outside the namespace (the connection that
+follows is still blocked and reported); an IPv6 attempt where the kernel
+has IPv6 disabled, which fails with no packet; Unix-socket traffic to a
+host service such as a Docker socket; anything a process the flow detached
+does after the run.
+
+Where the namespace cannot be made (not Linux; unprivileged user
+namespaces disabled or restricted, as Ubuntu's
+`kernel.apparmor_restrict_unprivileged_userns=1` does), the run goes ahead
+as before, the runner's output says `network: not isolated (<why>)`, and
+the report carries:
+
+```text
+network not isolated: direct connections were not observed
+```
+
+| option | `weir-run run` | pytest |
+| --- | --- | --- |
+| an unisolated run is incomplete (exit 3, `incomplete: network_not_isolated`) | `--require-isolation` | `--canary-require-isolation` |
+
+Use `--require-isolation` in CI on Linux. A found leak still exits 1. A
+flow that needs the host's network (installing packages, a database on the
+host's loopback) does not work isolated: install first, or mock the
+service. On a GitHub-hosted Ubuntu runner, allow unprivileged user
+namespaces first:
+
+```sh
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+```
+
 ## Output
 
 - **stderr:** each flow's status and its own stdout and stderr, relayed
   after the run with every encoded form of every canary replaced by
-  `<canary:PLACEMENT-ID>`; refused egress and unmocked requests by count.
+  `<canary:PLACEMENT-ID>`; whether the network was isolated, and each
+  blocked direct attempt; refused egress and unmocked requests by count.
 - **stdout:** the judge's text report: one `LEAK` line per hit, the
-  not-exercised placements, the incomplete reasons, the coverage line and
-  the result. It names placements and locations, never a value or a
+  not-exercised placements, the incomplete reasons, the coverage line, the
+  network line and the result. It names placements and locations, never a value or a
   fragment of one.
 - `--report FILE` also writes the judge's `canary-report/1` JSON.
 - The exit code is the judge's, or 2 for the runner's own usage and
@@ -247,15 +307,18 @@ prints the redacted flow output and the report, deletes the ledger and the
 capture, and fails the test unless the result is clean. To assert on the
 result yourself, call `result = canary_check.judge()` (`result.code`,
 `result.report`). The judge is the `weir` beside the interpreter or on
-`PATH`; override the `canary_judge_command` fixture to use another.
+`PATH`; override the `canary_judge_command` fixture to use another. Flows
+run isolated as under `weir-run run`; `--canary-require-isolation` is the
+pytest option (see [Network isolation](#network-isolation)).
 
 ## Limits of this release
 
 - Placements: `env`, `code` and `mock-oauth` only. The other kinds in the
   contract (`tool-field`, `mcp`, `settings-file` and the rest) are reserved.
 - Model APIs: OpenAI-compatible only.
-- The runner does not sandbox the network. A client that ignores proxy
+- Network isolation is Linux only. Elsewhere, a client that ignores proxy
   settings and has a hard-coded host is not stopped by the runner: on a
   machine with network access it connects to that host directly. Run such
-  flows in a container or network namespace with no route out.
+  flows in a container with no route out, and use `--require-isolation`
+  where a run must not pass unisolated.
 - No GitHub Action and no in-process pytest mode yet.

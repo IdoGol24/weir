@@ -49,6 +49,7 @@ The sample is a bundled fake ledger and capture with one planted value in a span
 ```text
 LEAK env.SAMPLE_SERVICE_KEY file=canary-sample/otlp.jsonl:1 signal=traces span="call_service" at=attributes.app.client.config form=raw
 coverage: 2 placements (1 leaked, 1 exercised, 0 not exercised, 1 required), 1 flows (1 ok), 1 files, 3 spans, 0 log records, 0 metric data points, 29 strings, 1347 bytes swept
+network not isolated: direct connections were not observed
 result: leak
 ```
 

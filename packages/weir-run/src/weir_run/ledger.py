@@ -25,9 +25,11 @@ SCHEMA = "canary-ledger/1"
 KINDS = ("env", "code", "mock-oauth")
 EVIDENCE = ("request", "minted", "egress")
 FLOW_STATUSES = ("ok", "failed", "timeout", "skipped")
+DIRECT_PROTOCOLS = ("tcp", "udp", "dns")
 MIN_VALUE_LENGTH = 16
 
 _ID = re.compile(r"[A-Za-z0-9._:#/-]{1,128}")
+_TARGET = re.compile(r"[A-Za-z0-9._:\[\]-]{1,260}")
 
 
 class LedgerError(Exception):
@@ -56,6 +58,7 @@ class Ledger:
         self._ids_by_type: dict[str, set[str]] = {}
         self._exercised: set[tuple[str, str]] = set()
         self._counters: dict[str, int] = {}
+        self._network = False
         self._needles: list[tuple[bytes, str]] = []
         self._pattern: re.Pattern[bytes] | None = None
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND, 0o600)
@@ -147,6 +150,32 @@ class Ledger:
                 raise LedgerError(f"unknown flow status {status}")
             self._claim_id("flow", flow_id)
             self._write({"type": "flow", "id": flow_id, "status": status})
+
+    def network(self, *, isolated: bool, required: bool) -> None:
+        """Whether the flows ran isolated, and whether the run requires it."""
+        with self._lock:
+            if self._network:
+                raise LedgerError("the network record is already written")
+            self._network = True
+            record: dict[str, object] = {"type": "network", "isolated": isolated}
+            if required:
+                record["required"] = True
+            self._write(record)
+
+    def direct(self, flow_id: str, protocol: str, target: str, attempts: int) -> None:
+        """A direct connection attempt the isolated network blocked."""
+        with self._lock:
+            if protocol not in DIRECT_PROTOCOLS or not _TARGET.fullmatch(target) or attempts < 1:
+                raise LedgerError(f"flow {flow_id}: not a direct connection record")
+            self._write(
+                {
+                    "type": "direct",
+                    "flow": flow_id,
+                    "protocol": protocol,
+                    "target": target,
+                    "attempts": attempts,
+                }
+            )
 
     def close(self) -> None:
         with self._lock:

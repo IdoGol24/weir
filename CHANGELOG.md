@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+- **weir-run: flows run where the only network is loopback.** On Linux,
+  `weir-run run` and the pytest plugin run the mock and every flow in an
+  unprivileged user and network namespace with no route out, so a client
+  that ignores the proxy settings reaches nothing. Each blocked attempt is
+  seen and reported (`tcp` and `udp` by address and port, `dns` by name),
+  and a blocked datagram's payload, a DNS query included, is swept capture,
+  so a canary in it is a leak. Where the namespace cannot be made (not
+  Linux, user namespaces disabled or restricted), the run goes ahead
+  unisolated and says why. `--require-isolation`
+  (`--canary-require-isolation`) makes an unisolated run incomplete, exit
+  3. weir-run now requires `weir-scan>=0.6.0`, whose judge reads the new
+  ledger records.
+- **weir-scan: the judge reports whether the network was isolated.**
+  `canary-ledger/1` gains a `network` record (`isolated`, `required`) and a
+  `direct` record (`flow`, `protocol`, `target`, `attempts`) for each
+  connection attempt isolation blocked. Every report carries a network
+  line after the coverage line, `network isolated: N direct connections
+  blocked` or `network not isolated: direct connections were not
+  observed`, and `canary-report/1` a `network` object. Two incomplete
+  reasons are new: `network_not_isolated` (isolation was required and
+  missing) and `direct_connection` (a flow tried to reach a host around the
+  mock). A ledger with no `network` record is reported as not isolated.
+
 ## [0.5.0] - 2026-10-21
 
 ### Added
