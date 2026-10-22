@@ -34,7 +34,7 @@ pip install weir-scan weir-run
 - **It doesn't guess.** It looks for the exact values it planted, so a hit is a real leak, and a key is found even when it doesn't look like a key, in any of seven forms, raw or encoded.
 - **It checks every way out.** Spans, logs and metrics, the agent's console output, the prompts and messages it sends the model, the requests it makes to your other APIs, and requests to any other host, which the mock refuses and records.
 - **Offline and deterministic.** No AI model decides anything. The judge opens no sockets and starts no processes, and CI enforces that. The rig's mock listens on 127.0.0.1 only and forwards nothing.
-- **No false all-clear.** If a run didn't exercise something you marked required, or a flow crashed, or a flow tried to connect around the mock, Weir says "incomplete", not "clean", and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
+- **No false all-clear.** If a run didn't exercise something you marked required, or a flow crashed, or, where the network is isolated, a flow tried to connect around the mock, Weir says "incomplete", not "clean", and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
 
 ## Proof
 
@@ -132,7 +132,7 @@ A clean result is evidence about the flows that ran and the credentials planted,
 - It sees only what reached the capture: telemetry, each flow's output, and the requests the rig's mock received. A refused HTTPS `CONNECT` has no visible content, because the mock refuses the tunnel before any byte goes through it: it is listed as a blocked connection, never judged a leak.
 - A placement with neither a `provider` nor a `provider_host` belongs in no request, so any request that holds it counts as a leak, its own auth header included. weir-run warns about each one before any flow runs.
 - When placements that belong to different endpoints (or one with no provider) share one `provider_host`, their credential fields are merged for refused requests to that host, so one placement's value in the other's declared field counts as evidence, not a leak.
-- This release plants environment variables, values passed in code, and OAuth tokens. Model APIs must be OpenAI-compatible or the Anthropic Messages API.
+- This release plants environment variables, values passed in code, and OAuth tokens. Model APIs must be OpenAI-compatible or Anthropic Messages API.
 - The rig isolates the network only on Linux, where it can make an unprivileged network namespace. Elsewhere, or where unprivileged user namespaces are disabled or restricted, the run goes ahead, a client that ignores the proxy settings and has a hard-coded host can reach that host directly, and the report says `network not isolated: direct connections were not observed`. `--require-isolation` makes such a run incomplete. Even isolated, some paths are not observed, such as a name lookup through a host resolver socket ([network isolation](https://github.com/IdoGol24/weir/tree/main/packages/weir-run#network-isolation)).
 - The flow scan needs content capture switched on in your instrumentation; `weir gauge` tells you whether it is.
 

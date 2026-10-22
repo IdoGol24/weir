@@ -36,7 +36,7 @@ PROBE = Path(__file__).parent / "_request_flow.py"
 REQUESTS_FILE = "capture/requests.jsonl"
 FOREIGN_HTTP_HOST = "collector.foreign.invalid"
 FOREIGN_HTTPS_HOST = "api.foreign.invalid"
-# The contract's printing rule, in the captain's words: never a value or a
+# The contract's printing rule: never a value or a
 # fragment of 6 or more characters of one.
 FRAGMENT = 6
 

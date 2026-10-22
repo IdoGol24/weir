@@ -2,37 +2,10 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-22
+
 ### Added
-- **weir-run: an Anthropic Messages API mock.** The mock serves
-  `POST /v1/messages` beside the OpenAI-compatible APIs, plain and
-  streaming (`message_start`, `ping`, `content_block_start`,
-  `content_block_delta`, `content_block_stop`, `message_delta`,
-  `message_stop`), on the same script: with tools offered, turn one
-  answers with a `tool_use` block for every tool, and once the last user
-  message carries `tool_result` blocks it answers `model_reply`. It
-  accepts the shapes Claude Code sends in headless mode: the `?beta=true`
-  query, body fields it does not know, `system` entries between turns, and
-  the `HEAD /api/hello` connectivity check, which the model API answers.
-  Flows get `ANTHROPIC_BASE_URL` pointing at the mock, the variable the
-  Anthropic SDKs read their base URL from; a flow's `env` may no longer
-  set it. The model API now always declares the `x-api-key` header as a
-  credential field: a placement with `provider = "model"` sent there is
-  exercised, the same value in a prompt or a tool result is a leak to
-  `model`, and any other value in `x-api-key` is
-  `unexpected.model.x-api-key` and makes the run incomplete.
-- **weir-run: flows run where the only network is loopback.** On Linux,
-  `weir-run run` and the pytest plugin run the mock and every flow in an
-  unprivileged user and network namespace with no route out, so a client
-  that ignores the proxy settings reaches nothing. Each blocked attempt is
-  seen and reported (`tcp` and `udp` by address and port, `dns` by name),
-  and a blocked datagram's payload, a DNS query included, is swept capture,
-  so a canary in it is a leak. Where the namespace cannot be made (not
-  Linux, user namespaces disabled or restricted), the run goes ahead
-  unisolated and says why. `--require-isolation`
-  (`--canary-require-isolation`) makes an unisolated run incomplete, exit
-  3. weir-run now requires `weir-scan>=0.6.0`, whose judge reads the new
-  ledger records.
-- **weir-scan: the judge reports whether the network was isolated.**
+- **The judge reports whether the network was isolated.**
   `canary-ledger/1` gains a `network` record (`isolated`, `required`) and a
   `direct` record (`flow`, `protocol`, `target`, `attempts`) for each
   connection attempt isolation blocked. Every report carries a network
@@ -42,7 +15,7 @@
   reasons are new: `network_not_isolated` (isolation was required and
   missing) and `direct_connection` (a flow tried to reach a host around the
   mock). A ledger with no `network` record is reported as not isolated.
-- **weir-scan: outbound requests are a sink (`weir canary judge
+- **Outbound requests are a sink (`weir canary judge
   --requests`).** The judge reads a request capture (`canary-requests/1`,
   one line per request the mock received: destination, method, path,
   query, headers and body, and whether it was served, refused or a
@@ -68,7 +41,39 @@
   `canary-requests.v1.schema.json` is new; `canary-ledger.v1` and
   `canary-report.v1` gain the fields above. The judge stays offline and
   deterministic.
-- **weir-run: every request the mock receives is recorded.** The mock
+
+### Changed
+- **The printing rule withholds runs of 6 characters, down from 8.** No
+  report prints a run of 6 or more consecutive characters of any planted
+  value, and a ledger id may not hold one.
+- **The PyPI summary names every sink the judge searches.** It reads
+  "Leak tests for AI agents: deterministically find planted credentials
+  in your agent's telemetry, model requests and outbound calls."
+
+### Corpus
+- The release commit regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.5.0 to
+  0.6.0. That diff is version-only; no flow fact, node count or finding
+  moved.
+
+## [weir-run 0.2.0] - 2026-10-22
+
+Released beside weir-scan 0.6.0 and requiring `weir-scan>=0.6.0`.
+
+### Added
+- **Flows run where the only network is loopback.** On Linux,
+  `weir-run run` and the pytest plugin run the mock and every flow in an
+  unprivileged user and network namespace with no route out, so a client
+  that ignores the proxy settings reaches nothing. Each blocked attempt is
+  seen and reported (`tcp` and `udp` by address and port, `dns` by name),
+  and a blocked datagram's payload, a DNS query included, is swept capture,
+  so a canary in it is a leak. Where the namespace cannot be made (not
+  Linux, user namespaces disabled or restricted), the run goes ahead
+  unisolated and says why. `--require-isolation`
+  (`--canary-require-isolation`) makes an unisolated run incomplete, exit
+  3. weir-run now requires `weir-scan>=0.6.0`, whose judge reads the new
+  ledger records.
+- **Every request the mock receives is recorded.** The mock
   writes each request, refused ones included, to `capture/requests.jsonl`
   before answering it, and the runner passes it to the judge with
   `--requests` and deletes it after the run with the rest of the capture.
@@ -78,24 +83,42 @@
   credential, sent to the wrong one of the program's APIs or sent in a
   plain-HTTP request to another host is a leak. A token the mock's OAuth
   endpoints issue belongs to them and to every declared endpoint.
-- **weir-run: a warning for each placement without a provider.** Before
+- **A warning for each placement without a provider.** Before
   any flow runs, `weir-run run` and the pytest plugin print `placement
   <id> has no provider: any request holding it counts as a leak` to
   stderr for every placement with neither `provider` nor
   `provider_host`. It names the id, never a value.
+- **An Anthropic Messages API mock.** Model APIs can now be
+  OpenAI-compatible or Anthropic Messages API. Beside the
+  OpenAI-compatible APIs, the mock serves `POST /v1/messages`, plain and
+  streaming (`message_start`, `ping`, `content_block_start`,
+  `content_block_delta`, `content_block_stop`, `message_delta`,
+  `message_stop`), on the same script: with tools offered, turn one
+  answers with a `tool_use` block for every tool, and once the last user
+  message carries `tool_result` blocks it answers `model_reply`. A query
+  such as `?beta=true`, body fields it does not know and `system` entries
+  between turns are accepted, and the model API answers `HEAD` and `GET
+  /api/hello` with `200`. Flows get `ANTHROPIC_BASE_URL` pointing at the
+  mock, the variable the Anthropic SDKs read their base URL from; a
+  flow's `env` may no longer set it. The model API now always declares
+  the `x-api-key` header as a credential field: a placement with
+  `provider = "model"` sent there is exercised, the same value in a
+  prompt or a tool result is a leak to `model`, and any other value in
+  `x-api-key` is `unexpected.model.x-api-key` and makes the run
+  incomplete.
 
 ### Changed
-- **weir-run: a placement without `provider` belongs in no request.** Any
+- **A placement without `provider` belongs in no request.** Any
   request that holds its value is now a leak, where a credential field
   holding it used to count as exercised wherever it was sent. Add
   `provider` to each placement that a flow legitimately sends to a mocked
   endpoint. The runner refuses a weir-scan whose judge has no `--requests`.
-- **weir-run: the mock no longer writes `request` or `egress` evidence.**
+- **The mock no longer writes `request` or `egress` evidence.**
   The judge derives both from the request capture, so the evidence and
   the leak verdict come from one place.
-- **The printing rule withholds runs of 6 characters, down from 8.** No
-  report prints a run of 6 or more consecutive characters of any planted
-  value, and a ledger id may not hold one.
+- **The PyPI summary describes the rig.** It reads "Leak tests for AI
+  agents: plant fake credentials, run your agent in an isolated rig, and
+  capture everything it sends out."
 
 ## [0.5.0] - 2026-10-21
 

@@ -48,7 +48,7 @@ HOST = "127.0.0.1"
 MAX_BODY = 64 * 1024 * 1024
 ALWAYS_INSPECTED = ("authorization", "proxy-authorization")
 ENDPOINT_PREFIX = "/ep/"
-# The connectivity check Claude Code sends to its base URL before a run.
+# A connectivity check on the model API's base URL.
 ANTHROPIC_PREFLIGHT = "/api/hello"
 DEFAULT_PORTS = {"http": 80, "https": 443}
 

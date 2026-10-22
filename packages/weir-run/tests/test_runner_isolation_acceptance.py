@@ -1,6 +1,6 @@
 """Acceptance tests for network isolation, locked before the implementation.
 
-Two captain tests (docs/canary.md, "Network isolation"):
+Two acceptance tests (docs/canary.md, "Network isolation"):
 
 - with isolation on, a client that bypasses the proxy fails and is reported;
 - without isolation, the report carries the line "network not isolated:
@@ -119,7 +119,7 @@ def _unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(isolation, "jail", jail)
 
 
-# -- captain test 6: with isolation on, a bypassing client fails and is reported
+# -- with isolation on, a bypassing client fails and is reported
 
 
 def test_isolated_a_client_that_bypasses_the_proxy_fails_and_is_reported(
@@ -165,7 +165,7 @@ def test_isolated_a_clean_run_passes_with_require_isolation(
     assert report["network"] == {"isolated": True, "required": True, "direct": []}
 
 
-# -- captain test 7: without isolation, the line, and --require-isolation exits 3
+# -- without isolation, the line, and --require-isolation exits 3
 
 
 def test_without_isolation_the_coverage_line_says_so(

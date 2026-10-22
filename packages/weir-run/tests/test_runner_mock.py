@@ -725,8 +725,8 @@ def test_messages_unaccounted_x_api_key_is_recorded_without_its_value(rig: Rig) 
     assert stranger not in rig.ledger.path.read_text()
 
 
-# Shapes observed from Claude Code in headless mode (`claude -p`).
-CLAUDE_CODE_FIELDS: dict[str, Any] = {
+# Messages API body fields the mock does not model, which it must accept.
+MESSAGES_EXTRA_FIELDS: dict[str, Any] = {
     "max_tokens": 128000,
     "system": [
         {"type": "text", "text": "You are a coding agent.", "cache_control": {"type": "ephemeral"}}
@@ -742,7 +742,7 @@ SYSTEM_NOTE = {"role": "system", "content": "a note between turns"}
 def test_messages_beta_query_and_unknown_fields_are_served(rig: Rig) -> None:
     reply = rig.post_json(
         "/v1/messages?beta=true",
-        {"model": "claude-mock", "messages": [HELLO], "stream": True, **CLAUDE_CODE_FIELDS},
+        {"model": "claude-mock", "messages": [HELLO], "stream": True, **MESSAGES_EXTRA_FIELDS},
         {**ANTHROPIC_VERSION, "anthropic-beta": "a-beta", "x-api-key": rig.key},
     )
     assert reply.status == 200

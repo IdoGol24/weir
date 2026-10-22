@@ -191,7 +191,7 @@ leftover child processes are stopped when the flow ends.
 | `POST /v1/chat/completions` | Chat Completions, plain and streaming. With tools offered, turn one calls every tool once with a minimal schema-valid argument, so each tool's credentials are exercised; once tool results are in the conversation it answers `model_reply` |
 | `POST /v1/responses` | Responses, plain and streaming, same script |
 | `POST /v1/messages` | the Anthropic Messages API, plain and streaming (`message_start`, `ping`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`), same script: turn one answers with a `tool_use` block for every offered tool, and once the last user message carries `tool_result` blocks it answers `model_reply`. A query such as `?beta=true`, body fields it does not know and `system` entries between turns are accepted. The key goes in `x-api-key` |
-| `HEAD`, `GET /api/hello` | the connectivity check Claude Code sends to its base URL: `200` |
+| `HEAD`, `GET /api/hello` | a connectivity check on the model API's base URL: `200` |
 | `POST /v1/embeddings`, `GET /v1/models` | fixed answers |
 | `POST /v1/traces`, `/v1/logs`, `/v1/metrics` | the OTLP/HTTP receiver: protobuf or JSON, gzip or deflate |
 | `GET /oauth/authorize` | redirects with a fresh code |
@@ -356,8 +356,9 @@ pytest option (see [Network isolation](#network-isolation)).
 
 - Placements: `env`, `code` and `mock-oauth` only. The other kinds in the
   contract (`tool-field`, `mcp`, `settings-file` and the rest) are reserved.
-- Model APIs: OpenAI-compatible, and the Anthropic Messages API's
-  `POST /v1/messages` only (no token counting, batches or files).
+- Model APIs: OpenAI-compatible or Anthropic Messages API. Of the
+  Messages API, `POST /v1/messages` only (no token counting, batches or
+  files).
 - Network isolation is Linux only. Elsewhere, a client that ignores proxy
   settings and has a hard-coded host is not stopped by the runner: on a
   machine with network access it connects to that host directly. Run such
