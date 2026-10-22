@@ -213,6 +213,30 @@ def test_an_encoded_form_is_found_under_that_form(tmp_path: Path, form: str) -> 
     )
 
 
+def test_the_url_form_finds_a_value_inside_a_fully_encoded_nested_url(tmp_path: Path) -> None:
+    """In `%3D<value>%26` the value is glued to `3D` and `26`, so no
+    candidate of the encoded string is the value; the decoded string has
+    one between its `=` and `&`."""
+    setup = fx.build(tmp_path)
+    value = setup.values[fx.ACME]
+    nested = urllib.parse.quote(f"https://x.invalid/?token={value}&y=1", safe="")
+    text = f"Location: https://login.invalid/cb?redirect={nested}"
+    assert f"%3D{value}%26" in text
+    session = fx.Session()
+    session.prompt("follow the redirect")
+    session.tool_use("Bash", {"command": "curl -sI https://login.invalid/"}, "toolu_01")
+    line, location = session.tool_result("toolu_01", text)
+    path = session.write(tmp_path / "s.jsonl")
+
+    run = setup.audit([path])
+
+    assert run.exit_code == 1
+    (hit,) = fx.hits(run.report, setup.ids[fx.ACME])
+    assert (hit["kind"], hit["line"], hit["location"], hit["form"]) == (
+        "context", line, location, "url",
+    )
+
+
 def test_the_raw_form_finds_a_value_holding_every_special_character(tmp_path: Path) -> None:
     setup = fx.build(tmp_path)
     value = setup.values[fx.SPECIAL]

@@ -315,6 +315,8 @@ class Matcher:
                     for inner, whole in json_texts(text):
                         take(Form.JSON2, self.text(inner, whole=whole))
         if "+" in string or _PERCENT.search(string):
+            for decoded in url_decodings(string):
+                take(Form.URL, self.text(decoded))
             for candidate in set(candidates(string)):
                 if "+" in candidate or _PERCENT.search(candidate):
                     for decoded in url_decodings(candidate):
