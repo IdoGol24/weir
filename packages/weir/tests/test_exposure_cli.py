@@ -89,8 +89,8 @@ def test_gauge_on_native_input_says_not_applicable() -> None:
 
 
 def test_scan_on_native_input_prints_no_exposure_section() -> None:
-    # The hero SVG is generated from exactly this command; an unconditional
-    # exposure line here would silently restyle the README's animation.
+    # Native input carries no attributes, so an exposure line here could only
+    # be an unconditional one, noise above every native scan's findings.
     result = _run(["scan", str(_FIXTURES_DIR / "injection-exfil.json")])
     assert "exposure" not in result.output
     assert result.output.startswith("1 verdict-grade finding(s)")

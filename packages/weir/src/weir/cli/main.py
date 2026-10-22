@@ -300,8 +300,8 @@ def scan_command(
         Path(report_path).write_text(html, encoding="utf-8")
 
     # Exposure renders ABOVE the flow findings, and only when there is
-    # something to say: `weir scan` on a native trace must stay byte-identical
-    # (the README's hero SVG is generated from it).
+    # something to say: `weir scan` on a native trace, which carries no
+    # attributes, prints no exposure section at all.
     for line in exposure_lines(exposure_findings):
         click.echo(line)
 
