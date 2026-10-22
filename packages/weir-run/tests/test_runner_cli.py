@@ -99,7 +99,11 @@ def test_relayed_output_is_redacted(
 def test_a_placement_without_a_provider_is_named_before_any_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
 ) -> None:
-    extra = '\n[[placement]]\nid = "env.LOOSE_KEY"\nkind = "env"\n'
+    extra = (
+        '\n[[placement]]\nid = "env.LOOSE_KEY"\nkind = "env"\n'
+        '\n[[placement]]\nid = "env.HOSTED_KEY"\nkind = "env"\n'
+        'provider_host = "search.invalid"\n'
+    )
     config, side = _setup(tmp_path, extra=extra)
     result = _run(monkeypatch, judge, config)
     assert result.exit_code == 0, result.output

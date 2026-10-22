@@ -64,7 +64,8 @@
 - **weir-run: a warning for each placement without a provider.** Before
   any flow runs, `weir-run run` and the pytest plugin print `placement
   <id> has no provider: any request holding it counts as a leak` to
-  stderr for every such placement. It names the id, never a value.
+  stderr for every placement with neither `provider` nor
+  `provider_host`. It names the id, never a value.
 
 ### Changed
 - **weir-run: a placement without `provider` belongs in no request.** Any

@@ -216,11 +216,12 @@ class CheckRun:
 
 
 def warn_unowned(spec: RunSpec, err: TextIO) -> None:
-    """Name each placement with no provider: it belongs in no request, so
-    any request that holds it is a leak (docs/canary.md, "A placement's own
-    provider"). Printed before any flow runs; it names the id, never a value."""
+    """Name each placement with neither a provider nor a provider host: it
+    belongs in no request, so any request that holds it is a leak
+    (docs/canary.md, "A placement's own provider"). Printed before any flow
+    runs; it names the id, never a value."""
     for p in spec.placements:
-        if p.provider is None:
+        if p.provider is None and p.provider_host is None:
             err.write(
                 f"placement {p.id} has no provider: any request holding it counts as a leak\n"
             )

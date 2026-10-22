@@ -216,8 +216,9 @@ canary and decides by the placement's own provider (`provider` and
   `blocked connection: <host>:<port>` and counted in the coverage, never a
   leak by itself.
 
-A placement with no `provider` belongs in no request, so any request that
-holds it is a leak, and the runner says so before any flow runs:
+A placement with neither a `provider` nor a `provider_host` belongs in no
+request, so any request that holds it is a leak, and the runner says so
+before any flow runs:
 `placement <id> has no provider: any request holding it counts as a leak`. A token the mock's OAuth endpoints issue belongs
 to those endpoints and to every `[[mock.endpoint]]`.
 

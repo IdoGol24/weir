@@ -119,7 +119,7 @@ They find strings that look like secrets in code and files. Weir proves whether 
 No. It uses fake values by design, and a real key should never be in a run.
 
 **Does it send anything anywhere?**
-No. The analysis opens no sockets, and a test enforces it. The rig's mock listens on `127.0.0.1` only and refuses every proxied request to another host, and on Linux the flows have no route out.
+No. The analysis opens no sockets, and a test enforces it. The rig's mock listens on `127.0.0.1` only and refuses every proxied request to another host, and on Linux, where it can make an unprivileged network namespace, the flows have no route out.
 
 **Which frameworks?**
 Any that can export OpenTelemetry spans to a file.
@@ -130,7 +130,7 @@ A clean result is evidence about the flows that ran and the credentials planted,
 
 - It finds whole values only. A truncated, split or partly masked value, a hashed, encrypted or compressed one, and encodings beyond those [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md#the-encoded-forms) lists (URL-encoded base64, UTF-16, line-wrapped base64) are not matched.
 - It sees only what reached the capture: telemetry, each flow's output, and the requests the rig's mock received. A refused HTTPS `CONNECT` has no visible content, because the mock refuses the tunnel before any byte goes through it: it is listed as a blocked connection, never judged a leak.
-- A placement without a `provider` belongs in no request, so any request that holds it counts as a leak, its own auth header included. weir-run warns about each one before any flow runs.
+- A placement with neither a `provider` nor a `provider_host` belongs in no request, so any request that holds it counts as a leak, its own auth header included. weir-run warns about each one before any flow runs.
 - When placements that belong to different endpoints (or one with no provider) share one `provider_host`, their credential fields are merged for refused requests to that host, so one placement's value in the other's declared field counts as evidence, not a leak.
 - This release plants environment variables, values passed in code, and OAuth tokens. Model APIs must be OpenAI-compatible.
 - The rig isolates the network only on Linux, where it can make an unprivileged network namespace. Elsewhere, or where unprivileged user namespaces are disabled or restricted, the run goes ahead, a client that ignores the proxy settings and has a hard-coded host can reach that host directly, and the report says `network not isolated: direct connections were not observed`. `--require-isolation` makes such a run incomplete. Even isolated, some paths are not observed, such as a name lookup through a host resolver socket ([network isolation](https://github.com/IdoGol24/weir/tree/main/packages/weir-run#network-isolation)).
