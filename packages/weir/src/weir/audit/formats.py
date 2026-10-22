@@ -173,11 +173,14 @@ def recognise(
     where = PurePath(os.path.abspath(path))
     if _is_session(where, lines, projects_dirs):
         return Format.CLAUDE_CODE
-    if where.parent.name == "tool-results":
+    # Claude Code's other files count only inside a Claude Code projects
+    # directory: a `tool-results` or `subagents` folder elsewhere is anyone's.
+    claude = _in_claude_projects(where, projects_dirs)
+    if claude and where.parent.name == "tool-results":
         return Format.CLAUDE_CODE_TOOL_RESULTS
     if _is_claude_code_memory(where):
         return Format.CLAUDE_CODE_MEMORY
-    if where.parent.name == "subagents" and where.name.endswith(".meta.json"):
+    if claude and where.parent.name == "subagents" and where.name.endswith(".meta.json"):
         return Format.CLAUDE_CODE_SUBAGENT_META
     if any(is_otlp(line.parsed) for line in lines):
         return Format.OTLP

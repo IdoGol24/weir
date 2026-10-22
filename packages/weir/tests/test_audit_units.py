@@ -288,7 +288,7 @@ def test_a_session_directory_is_read_with_its_subagents_and_tool_results(
     tmp_path: Path,
 ) -> None:
     setup = fx.build(tmp_path)
-    project = tmp_path / "projects" / "-fake-home-work-proj"
+    project = tmp_path / ".claude" / "projects" / "-fake-home-work-proj"
     _session(setup, project / f"{fx.SESSION_ID}.jsonl")
     sub = fx.Session()
     sub_line, _ = sub.tool_result("toolu_9", f"token {setup.values[fx.GH]}")
@@ -298,7 +298,7 @@ def test_a_session_directory_is_read_with_its_subagents_and_tool_results(
     cfx.write(spill, f"line one\n{fx.ACME}={setup.values[fx.ACME]}\n")
     os.symlink(spill, project / "linked.jsonl")
 
-    given = tmp_path / "projects"
+    given = tmp_path / ".claude" / "projects"
     run = setup.audit([given])
 
     report = run.report
@@ -616,12 +616,12 @@ def test_an_export_request_member_outside_the_signals_is_searched(
 
 
 def _memory_tree(setup: fx.Setup, tmp_path: Path) -> dict[str, Path]:
-    project = tmp_path / "claude" / "projects" / "-fake-home-work-proj"
+    project = tmp_path / ".claude" / "projects" / "-fake-home-work-proj"
     files = {
         "session": _session(setup, project / f"{fx.SESSION_ID}.jsonl"),
         "index": project / "memory" / "MEMORY.md",
         "topic": project / "memory" / "deploy.md",
-        "claude_md": tmp_path / "claude" / "CLAUDE.md",
+        "claude_md": tmp_path / ".claude" / "CLAUDE.md",
     }
     files["index"].parent.mkdir(parents=True)
     cfx.write(files["index"], "# Memory\n- [Deploy](deploy.md) - how to deploy\n")
@@ -633,7 +633,7 @@ def _memory_tree(setup: fx.Setup, tmp_path: Path) -> dict[str, Path]:
 def test_clean_claude_code_memory_and_claude_md_files_are_clean(tmp_path: Path) -> None:
     setup = fx.build(tmp_path)
     files = _memory_tree(setup, tmp_path)
-    given = tmp_path / "claude"
+    given = tmp_path / ".claude"
     run = setup.audit([given])
     formats = {f["file"]: f["format"] for f in run.report["files"]}  # type: ignore[union-attr,index]
     assert formats == {
@@ -651,7 +651,7 @@ def test_a_value_in_a_memory_or_claude_md_file_is_in_context(tmp_path: Path, nam
     path = _memory_tree(setup, tmp_path)[name]
     before = path.read_text()
     cfx.write(path, before + f"token: {setup.values[fx.ACME]}\n")
-    given = tmp_path / "claude"
+    given = tmp_path / ".claude"
     run = setup.audit([given])
     hit = _only_hit(run, setup)
     assert (hit["kind"], hit["file"], hit["line"], hit["format"], hit["location"]) == (
@@ -906,8 +906,8 @@ def test_a_subagent_sidecar_is_bookkeeping_and_an_unknown_key_stays_unknown(
 
 def test_a_subagent_sidecar_that_is_not_a_json_object_is_unparsed(tmp_path: Path) -> None:
     setup = fx.build(tmp_path)
-    sub = tmp_path / "subagents"
-    sub.mkdir()
+    sub = tmp_path / ".claude" / "projects" / "-fake-proj" / fx.SESSION_ID / "subagents"
+    sub.mkdir(parents=True)
     broken = sub / "agent-c3.meta.json"
     cfx.write(broken, '{"agentType": "x", "description": "trunc')
     run = setup.audit([broken])
@@ -956,3 +956,28 @@ def test_a_message_record_field_is_stored_only_when_the_contract_names_it(
     hit = _only_hit(run, setup)
     assert (hit["kind"], hit["line"], hit["record"]) == (kind, line, "user")
     assert run.exit_code == exit_code
+
+
+@pytest.mark.parametrize(
+    ("where", "content"),
+    [
+        ("work/tool-results/out.txt", "token {v}\n"),
+        ("work/subagents/x.meta.json", '{{"description": "key {v}"}}'),
+    ],
+)
+def test_claude_code_files_outside_a_projects_folder_are_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str, content: str
+) -> None:
+    """docs/audit.md: tool-results, subagent sidecar and memory files are Claude
+    Code's only inside a Claude Code projects directory; elsewhere a folder of
+    that name is anyone's, so a value there is unknown, never stored or context."""
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    setup = fx.build(tmp_path)
+    path = tmp_path / where
+    path.parent.mkdir(parents=True)
+    cfx.write(path, content.format(v=setup.values[fx.ACME]))
+    run = setup.audit([path])
+    assert run.report["files"][0]["format"] == "unknown"  # type: ignore[index]
+    assert _only_hit(run, setup)["kind"] == "unknown"
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+
