@@ -322,11 +322,14 @@ def test_a_lookup_of_an_underscore_name_is_reported(
 ) -> None:
     # Service and policy names, as SRV and DMARC lookups ask for.
     clean = DATAGRAMS.split("# A metrics client")[0]
-    body = clean + """
+    body = (
+        clean
+        + """
 query = struct.pack("!HHHHHH", 7, 0x0100, 1, 0, 0, 0)
 query += b"\\x06_dmarc\\x07example\\x03com\\x00\\x00\\x10\\x00\\x01"
 socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(query, ("192.0.2.53", 53))
 """
+    )
     result = _cli(monkeypatch, judge, tmp_path, body)
     assert result.exit_code == 3, result.output
     direct = [line for line in result.stdout.splitlines() if "direct_connection" in line]
