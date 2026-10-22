@@ -10,8 +10,10 @@ mock, and judges what it sent:
    scratch home and an environment variable; and a fake model key in
    `ANTHROPIC_API_KEY`, whose own provider is the mock's model API and,
    for an Anthropic key, its own host (`key_owner`).
-2. **Settings under test.** The project's `.claude/settings.json`, or a
-   supplied file, is copied into the scratch project, with its
+2. **Settings under test.** The project's `.claude/settings.json` and
+   `.claude/settings.local.json`, and a supplied user settings file, are
+   copied where Claude Code reads them in the scratch project and home, so
+   it layers them as it would for the user, with the project's
    `CLAUDE.md`. A setting that would move the model API, the key or the
    telemetry away from the mock is overridden, and each override is
    reported; it is never followed. The scratch config marks the project
@@ -167,11 +169,19 @@ _OTLP_PROTOCOL = re.compile(r"OTEL_EXPORTER_OTLP_(?:(?:TRACES|LOGS|METRICS)_)?PR
 EXPORT_INTERVALS = {"OTEL_METRIC_EXPORT_INTERVAL": "1000", "OTEL_LOGS_EXPORT_INTERVAL": "500"}
 
 
+# How the verdict names each settings scope.
+SCOPES = {
+    "local": "local project settings",
+    "project": "project settings",
+    "user": "user settings",
+}
+
+
 @dataclass
 class SettingsFile:
     """One settings file under test, as the run applies it."""
 
-    scope: str  # "project" or "user"
+    scope: str  # "local", "project" or "user"
     path: Path
     data: dict[str, Any]
     overrides: list[str] = field(default_factory=list[str])
@@ -253,6 +263,12 @@ class Layout:
     def resolv(self) -> Path:
         return self.root / "resolv.conf"
 
+    def settings(self, scope: str) -> Path:
+        if scope == "user":
+            return self.config / "settings.json"
+        name = "settings.local.json" if scope == "local" else "settings.json"
+        return self.project / ".claude" / name
+
     def file(self, secret: Secret) -> Path:
         return (self.project if secret.root == "project" else self.home) / secret.path
 
@@ -319,12 +335,14 @@ def _settings_file(scope: str, path: Path) -> SettingsFile:
 
 
 def settings_under_test(spec: ClaudeCodeSpec) -> list[SettingsFile]:
-    """The project's .claude/settings.json, if it has one, and the user
-    settings the config supplies, if any."""
+    """The project's .claude/settings.local.json and .claude/settings.json,
+    where it has them, and the user settings the config supplies, if any:
+    highest precedence first, as Claude Code layers them."""
     found: list[SettingsFile] = []
-    project = spec.project / ".claude" / "settings.json"
-    if project.exists():
-        found.append(_settings_file("project", project))
+    for scope, name in (("local", "settings.local.json"), ("project", "settings.json")):
+        path = spec.project / ".claude" / name
+        if path.exists():
+            found.append(_settings_file(scope, path))
     if spec.user_settings is not None:
         found.append(_settings_file("user", spec.user_settings))
     return found
@@ -360,11 +378,9 @@ def plant(layout: Layout, settings: Sequence[SettingsFile], run: CheckRun, trust
         value = run.ledger.value(secret.id)
         target.write_text(secret.template.replace(VALUE, value), encoding="utf-8")
     for applied in settings:
-        directory = layout.project / ".claude" if applied.scope == "project" else layout.config
-        directory.mkdir(exist_ok=True)
-        (directory / "settings.json").write_text(
-            json.dumps(applied.data, indent=2), encoding="utf-8"
-        )
+        target = layout.settings(applied.scope)
+        target.parent.mkdir(exist_ok=True)
+        target.write_text(json.dumps(applied.data, indent=2), encoding="utf-8")
     config: dict[str, object] = {}
     if trust:
         config["projects"] = {str(layout.project): {"hasTrustDialogAccepted": True}}
@@ -623,7 +639,7 @@ def verdict(
     lines = [f"claude-code: {result}"]
     for applied in settings:
         lines.append(
-            f"claude-code: settings under test: {applied.scope} settings {_shown(applied.path)}"
+            f"claude-code: settings under test: {SCOPES[applied.scope]} {_shown(applied.path)}"
         )
     if not settings:
         lines.append("claude-code: settings under test: none, so Claude Code's defaults")

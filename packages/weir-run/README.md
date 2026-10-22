@@ -366,7 +366,7 @@ another host or the console.
 ```toml
 [claude_code]
 key_owner = "anthropic"            # required to judge: "anthropic" or "gateway"
-project = "."                      # its .claude/settings.json and CLAUDE.md are under test
+project = "."                      # its .claude/settings.json, settings.local.json and CLAUDE.md are under test
 user_settings = "my-settings.json" # optional: applied as your user settings
 trust_project = true               # default: the project is marked trusted for the run
 executable = "claude"              # default: the first `claude` on PATH
@@ -384,8 +384,11 @@ weir-run run --config canary.toml
 
 1. **A scratch project and a scratch home.** The project holds a short
    README and copies of your project's `.claude/settings.json`,
-   `CLAUDE.md` and `.claude/CLAUDE.md`, where they exist; `user_settings`
-   becomes the scratch home's user settings. Claude Code runs with `HOME`
+   `.claude/settings.local.json`, `CLAUDE.md` and `.claude/CLAUDE.md`,
+   where they exist; `user_settings` becomes the scratch home's user
+   settings. Claude Code layers them as it would for you: local project
+   settings over project settings over user settings, and the verdict
+   lists the files it applied in that order. Claude Code runs with `HOME`
    and `CLAUDE_CONFIG_DIR` in the scratch home.
 2. **Fake secrets where real ones usually sit**, each a fresh random value:
 

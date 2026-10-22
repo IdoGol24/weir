@@ -71,8 +71,10 @@
   network. It plants fake secrets in the project's `.env`, a project
   config file, a credentials file in the scratch home and an environment
   variable, and a fake model key with `ANTHROPIC_BASE_URL` at the mock;
-  copies in the project's `.claude/settings.json` and `CLAUDE.md`, and
-  applies `user_settings` as the user's own settings; and lets the mock's
+  copies in the project's `.claude/settings.json`,
+  `.claude/settings.local.json` and `CLAUDE.md`, and applies
+  `user_settings` as the user's own settings, layered as Claude Code
+  layers them, the verdict listing each file applied; and lets the mock's
   model ask for ordinary coding actions (read the files, run `cat` and
   `env`). The verdict reads as a check of the user's controls, before the
   judge's report: `kept out: 3 of 4`, then where each other secret went

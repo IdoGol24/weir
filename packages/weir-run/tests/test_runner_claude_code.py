@@ -18,7 +18,11 @@ judge was written. Each expectation is one rule of the check's verdict:
 5. a settings file that moves the model API's base URL is overridden to
    the mock, and the override is reported;
 6. a secret in the on-disk session transcript is reported as stored
-   locally, apart from what was sent out.
+   locally, apart from what was sent out;
+7. the project's `.claude/settings.local.json` is under test with its
+   shared settings, layered by Claude Code: a local allow rule runs a
+   command the shared settings alone deny, and the verdict names both
+   files.
 
 Every value is a fake the runner generates; the tests never see one. The
 tests that run Claude Code skip where it, bubblewrap or an isolated
@@ -87,14 +91,16 @@ def _run(
     judge: list[str],
     *,
     settings: dict[str, Any] | None = None,
+    local_settings: dict[str, Any] | None = None,
     key_owner: str | None = "anthropic",
 ) -> Outcome:
     project = tmp_path / "project"
     project.mkdir()
     (project / "README.md").write_text("# A small service\n", encoding="utf-8")
-    if settings is not None:
-        (project / ".claude").mkdir()
-        (project / ".claude" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    for name, data in (("settings.json", settings), ("settings.local.json", local_settings)):
+        if data is not None:
+            (project / ".claude").mkdir(exist_ok=True)
+            (project / ".claude" / name).write_text(json.dumps(data), encoding="utf-8")
     lines = ["[claude_code]", f"project = {json.dumps(project.as_posix())}"]
     if key_owner is not None:
         lines.append(f"key_owner = {json.dumps(key_owner)}")
@@ -200,3 +206,31 @@ def test_the_session_transcript_is_reported_as_stored_locally(
     assert any(".env" in ln for ln in stored), run.result.stdout
     # Stored locally is not sent out: it is no hit of the judge's.
     assert all("transcript" not in (h["file"] or "") for h in run.report["hits"])
+
+
+@needs_claude_code
+def test_a_local_allow_rule_runs_a_command_the_shared_settings_deny(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    shared = {"permissions": {"deny": ["Read(./.env)"]}}
+    (tmp_path / "shared").mkdir()
+    alone = _run(tmp_path / "shared", monkeypatch, judge, settings=shared)
+    assert "kept out: $DEPLOY_TOKEN (env denied)" in alone.lines, alone.result.stdout
+
+    (tmp_path / "layered").mkdir()
+    local = {"permissions": {"allow": ["Bash(env)"]}}
+    run = _run(tmp_path / "layered", monkeypatch, judge, settings=shared, local_settings=local)
+    assert run.result.exit_code == 1, run.result.output
+    assert any(h["sink"] == "model" for h in run.hits(ENV_VAR)), run.report["hits"]
+    assert "reached the model: $DEPLOY_TOKEN through a command (env)" in run.lines, (
+        run.result.stdout
+    )
+    assert not any("$DEPLOY_TOKEN" in ln for ln in run.starting("kept out: "))
+    # The shared deny still holds: Claude Code merges permission rules.
+    assert run.placement(DOTENV)["state"] == "exercised", run.result.stdout
+    claude_dir = (tmp_path / "layered" / "project" / ".claude").resolve()
+    applied = "claude-code: settings under test: "
+    assert [ln.removeprefix(applied) for ln in run.starting(applied)] == [
+        f"local project settings {claude_dir}/settings.local.json",
+        f"project settings {claude_dir}/settings.json",
+    ], run.result.stdout
