@@ -65,9 +65,8 @@ write.
    as usual: each flow's output with every planted value replaced, then
    the report.
 4. In a separate step, the only one of its own steps that is given the
-   job's token, it writes
-   the verdict to the job's step summary and, on a pull request, to its
-   comment, then ends with the verdict's exit code.
+   job's token, it writes the verdict to the job's step summary and, on a
+   pull request, to its comment, then ends with the verdict's exit code.
 
 ## Inputs
 
