@@ -24,6 +24,7 @@ from weir.audit._types import (
     Coverage,
     CredentialResult,
     FileResult,
+    Form,
     Format,
     Hit,
     Kind,
@@ -51,9 +52,9 @@ from weir.audit.formats import (
     whole_json,
     whole_otlp,
 )
-from weir.audit.inputs import AuditInputError, Credential, load_inputs
-from weir.audit.matching import Matcher
-from weir.canary import CaptureError, Form, collect_capture, needles
+from weir.audit.inputs import AuditInputError, Credential, Inputs, load_inputs
+from weir.audit.matching import Matcher, References
+from weir.canary import CaptureError, collect_capture, needles
 from weir.canary.text import WITHHELD, Display
 from weir.canary.walk import Segment
 from weir.inventory.classify import looks_secret_shaped
@@ -90,16 +91,42 @@ class _File:
 
 
 class _Auditor:
-    def __init__(self, matcher: Matcher, by_fingerprint: dict[bytes, tuple[str, ...]]) -> None:
+    def __init__(
+        self, matcher: Matcher, by_fingerprint: dict[bytes, tuple[str, ...]],
+        references: References,
+    ) -> None:
         self.matcher = matcher
         self.by_fingerprint = by_fingerprint
+        self.references = references
         self.found: list[_Found] = []
 
     def search(self, file: _File, line: int, site: Site) -> None:
         file.strings += 1
+        fmt = file.format or Format.UNKNOWN
         for fp, form in self.matcher.find(site.string).items():
-            fmt = file.format or Format.UNKNOWN
-            self.found.append(_Found(self.by_fingerprint[fp], file.path, line, fmt, site, form))
+            found = _Found(self.by_fingerprint[fp], file.path, line, fmt, site, Form(form.value))
+            self.found.append(found)
+        if site.place.kind is Kind.TOOL_CALL:
+            named = self.references.find(site.string)
+            if named:
+                self.found.append(
+                    _Found(tuple(sorted(named)), file.path, line, fmt, site, Form.NAME)
+                )
+
+    def file(self, file: _File, data: bytes, lines: list[Line]) -> None:
+        """Search one file's bytes as its format reads them."""
+        if file.format is Format.CLAUDE_CODE:
+            self.claude_code(file, lines)
+        elif file.format is Format.CLAUDE_CODE_TOOL_RESULTS:
+            self.text(file, data, _STORED)
+        elif file.format is Format.CLAUDE_CODE_MEMORY:
+            self.text(file, data, _CONTEXT)
+        elif file.format is Format.CLAUDE_CODE_SUBAGENT_META:
+            self.subagent_meta(file, data, lines)
+        elif file.format is Format.OTLP:
+            self.otlp(file, data, lines)
+        else:
+            self.unknown(file, lines)
 
     def claude_code(self, file: _File, lines: list[Line]) -> None:
         tools: dict[str, str] = {}
@@ -229,7 +256,9 @@ def _dedupe(hits: list[Hit]) -> list[Hit]:
 
 
 def _state(credential: Credential, counts: dict[Kind, int]) -> State:
-    if credential.fingerprint is None:
+    # A credential the store holds no fingerprint of has no hit but one by
+    # name: a tool call that names it sent it all the same.
+    if credential.fingerprint is None and not counts:
         return State.NOT_CHECKABLE
     for kind, state in (
         (Kind.TOOL_CALL, State.IN_TOOL_CALL),
@@ -240,6 +269,28 @@ def _state(credential: Credential, counts: dict[Kind, int]) -> State:
         if counts.get(kind):
             return state
     return State.NOT_FOUND
+
+
+def _references(credentials: Sequence[Credential]) -> References:
+    """The environment credentials, by variable name (docs/audit.md,
+    "References by name"). Several records may share a name."""
+    names: dict[str, list[str]] = {}
+    for c in credentials:
+        if c.source == "environment":
+            names.setdefault(c.name, []).append(c.id)
+    return References({name: tuple(sorted(ids)) for name, ids in names.items()})
+
+
+@dataclass(frozen=True)
+class Chunk:
+    """Bytes to audit as one file: a whole file, or whole lines of one read
+    as the format the whole file has (`format`, None to recognise it from
+    these bytes). A file's lines are records each on its own, so the lines
+    of a file audited in chunks give the hits the whole file gives."""
+
+    path: str
+    data: bytes
+    format: Format | None = None
 
 
 def audit_files(
@@ -265,35 +316,58 @@ def audit_files(
         )
     except CaptureError as exc:
         raise AuditInputError(str(exc).replace("capture ", "file ", 1)) from None
-    projects_dirs = [PurePath(os.path.abspath(d), "projects") for d in claude_config_dirs]
-    auditor = _Auditor(matcher, by_fingerprint)
-    files: list[_File] = []
-    not_scanned: dict[str, NotScannedReason] = {
-        path: NotScannedReason.MISSING for path in missing
-    }
-    files.extend(_File(path, None, 0) for path in missing)
+    items: list[_Item] = [_Item(path, None, NotScannedReason.MISSING) for path in missing]
     for item in capture:
         if item.data is None or item.not_scanned is not None:
-            files.append(_File(item.path, None, 0))
             reason = item.not_scanned.value if item.not_scanned is not None else "compressed"
-            not_scanned[item.path] = NotScannedReason(reason)
+            items.append(_Item(item.path, None, NotScannedReason(reason)))
+        else:
+            items.append(_Item(item.path, item.data, None))
+    return _audit(credentials, by_fingerprint, matcher, items, claude_config_dirs)
+
+
+def audit_chunks(
+    inputs: Inputs, chunks: Sequence[Chunk], claude_config_dirs: Sequence[str] = ()
+) -> Report:
+    """Audit bytes already read: each chunk as one file, read as its
+    `format` when given. `weir statusline` reads a growing session file in
+    chunks of whole lines and keeps what each chunk found."""
+    items = [_Item(c.path, c.data, None, c.format) for c in chunks]
+    matcher = Matcher(inputs.key, set(inputs.by_fingerprint))
+    return _audit(inputs.credentials, inputs.by_fingerprint, matcher, items, claude_config_dirs)
+
+
+@dataclass(frozen=True)
+class _Item:
+    path: str
+    # None: not scanned, for `not_scanned`
+    data: bytes | None
+    not_scanned: NotScannedReason | None
+    format: Format | None = None
+
+
+def _audit(
+    credentials: Sequence[Credential],
+    by_fingerprint: dict[bytes, tuple[str, ...]],
+    matcher: Matcher,
+    items: Sequence[_Item],
+    claude_config_dirs: Sequence[str],
+) -> Report:
+    projects_dirs = [PurePath(os.path.abspath(d), "projects") for d in claude_config_dirs]
+    auditor = _Auditor(matcher, by_fingerprint, _references(credentials))
+    files: list[_File] = []
+    not_scanned: dict[str, NotScannedReason] = {}
+    for item in items:
+        if item.data is None:
+            files.append(_File(item.path, None, 0))
+            not_scanned[item.path] = item.not_scanned or NotScannedReason.MISSING
             continue
         data = item.data
         lines = json_lines(data)
-        file = _File(item.path, recognise(item.path, data, lines, projects_dirs), len(data))
+        file = _File(item.path, item.format or recognise(item.path, data, lines, projects_dirs),
+                     len(data))
         files.append(file)
-        if file.format is Format.CLAUDE_CODE:
-            auditor.claude_code(file, lines)
-        elif file.format is Format.CLAUDE_CODE_TOOL_RESULTS:
-            auditor.text(file, data, _STORED)
-        elif file.format is Format.CLAUDE_CODE_MEMORY:
-            auditor.text(file, data, _CONTEXT)
-        elif file.format is Format.CLAUDE_CODE_SUBAGENT_META:
-            auditor.subagent_meta(file, data, lines)
-        elif file.format is Format.OTLP:
-            auditor.otlp(file, data, lines)
-        else:
-            auditor.unknown(file, lines)
+        auditor.file(file, data, lines)
 
     # Every path the report prints is checked against the store first, so a
     # value that is only in a file name is withheld like a found one.

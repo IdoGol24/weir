@@ -189,13 +189,14 @@
       "type": "object"
     },
     "Form": {
-      "description": "The encoded forms, in the contract's table order (docs/canary.md).",
+      "description": "The form a hit was found in, in table order (docs/audit.md).",
       "enum": [
         "base64",
         "base64url",
         "hex",
         "json",
         "json2",
+        "name",
         "raw",
         "url"
       ],

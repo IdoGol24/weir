@@ -353,3 +353,27 @@ class Matcher:
         for decoded in _hex_decodings(string):
             take(Form.HEX, self.text(decoded))
         return found
+
+
+# docs/audit.md, "References by name": a shell variable name, and the
+# expansions a tool's shell performs on it. A `$` after a `\` or another `$`
+# is not an expansion of the name that follows.
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_EXPANSION = r"(?<![\\$])\$(?:\{{|env:)?({names})(?![A-Za-z0-9_])"
+
+
+class References:
+    """The environment credentials a tool call names: `$NAME`, `${NAME}`
+    (with any modifier after the name) or PowerShell's `$env:NAME`. A pure
+    function of the string and the names."""
+
+    def __init__(self, names: dict[str, tuple[str, ...]]) -> None:
+        self._ids = {name: ids for name, ids in names.items() if _ENV_NAME.fullmatch(name)}
+        alternatives = "|".join(re.escape(n) for n in sorted(self._ids, key=lambda n: -len(n)))
+        self._pattern = re.compile(_EXPANSION.format(names=alternatives)) if self._ids else None
+
+    def find(self, string: str) -> set[str]:
+        """The credential ids whose names the string expands."""
+        if self._pattern is None or "$" not in string:
+            return set()
+        return {cid for found in self._pattern.finditer(string) for cid in self._ids[found[1]]}

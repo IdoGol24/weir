@@ -126,6 +126,12 @@ def _is_claude_code(obj: dict[str, Json]) -> bool:
     )
 
 
+def is_session_record(obj: Json) -> bool:
+    """A Claude Code message record: a file holding one is a `claude-code`
+    file whatever else it holds."""
+    return isinstance(obj, dict) and _is_claude_code(obj)
+
+
 def _in_claude_projects(where: PurePath, projects_dirs: Sequence[PurePath]) -> bool:
     """Inside a `.claude/projects` directory, or inside the `projects`
     directory of the Claude config directory `CLAUDE_CONFIG_DIR` names."""

@@ -14,7 +14,8 @@ of them reach a coding agent? It takes the keyed fingerprints that
 machine, reads saved agent session files or exported telemetry, and
 reports, per credential, whether its value **entered the agent's context**
 (the agent read it: a tool result, a prompt, an attachment) or was **sent
-out in a tool call** (the agent put it in a tool's arguments), with counts
+out in a tool call** (the agent put it in a tool's arguments, or named an
+environment credential there for the tool's shell to expand), with counts
 and locations. It never prints a value or any fragment of one.
 
 The audit works from fingerprints alone. It never reads a credential file
@@ -78,7 +79,10 @@ A credential is **checkable** when the store holds a fingerprint of its
 value: the report's `value_state` is `literal`. Every other credential (a
 whole-file credential, a shell expansion, a scanner result the file does
 not hold, a value not fully read) is listed as **not checkable**, with its
-`value_state`, and is never reported as not found.
+`value_state`, and is never reported as not found. An environment
+credential is also found by its name, whatever its `value_state` (see
+[References by name](#references-by-name)): one a tool call names is
+`in_tool_call`, not checkable or not.
 
 ## Files and formats
 
@@ -134,6 +138,7 @@ fingerprinted, or **decoded candidates** directly:
 | `base64` | the candidates of each run of 8 or more characters of `A-Za-z0-9+/` (and up to two `=` after it), decoded from its first, second, third and fourth character on (a last group of 2 or 3 characters padded, one of 1 dropped), read as UTF-8 |
 | `base64url` | the same for each run of 8 or more characters of `A-Za-z0-9_-` that holds a `-` or a `_` |
 | `hex` | the candidates of each run of 16 or more hex digits, decoded from its first and from its second digit on, up to the last whole pair, read as UTF-8 |
+| `name` | not the value: a reference to an environment credential by its variable name, in a tool call (see [References by name](#references-by-name)) |
 
 The JSON string literal rule and the url rule decode a candidate found in
 the encoded string, so a value holding a separator (a quote, say) is still
@@ -183,6 +188,28 @@ value (`same_value_as`) all match.
 
 One string gives at most one **hit** per credential: its location, and the
 first form in the table above that holds it.
+
+### References by name
+
+A tool call can send a credential without holding its value: a shell
+command that reads `$ACME_API_TOKEN` sends whatever the variable holds in
+the agent's environment. So a string in a `tool_call` place (below) is
+also searched for the names of the credentials whose inventory `source` is
+`environment` (the launch environment and the shell startup files that
+export into it). It holds a credential's name when it holds `$NAME`,
+`${NAME` (`${NAME}`, `${NAME:-default}` and the other modifiers) or
+PowerShell's `$env:NAME`, with `NAME` exactly the credential's name (a
+shell variable name: a letter or `_`, then letters, digits or `_`), not
+followed by a letter, digit or `_`, and the `$` not just after a `\` or
+another `$`. Such a string is a hit of kind `tool_call` with form `name`
+for every environment credential of that name. A name in any other place
+(a prompt, a tool result) is not a hit: nothing there expands it.
+
+The audit reads the reference, not the shell: it does not parse quoting
+(`'$NAME'` in single quotes counts), and it does not know whether the tool
+runs a shell at all (a file the agent writes that holds `$NAME` counts).
+A reference by name says the tool call could send the credential; a hit by
+value says it held it.
 
 ### What a hit means
 
@@ -285,7 +312,7 @@ holds:
 
 | state | when |
 | --- | --- |
-| `not_checkable` | the store holds no fingerprint of it |
+| `not_checkable` | the store holds no fingerprint of it, and no tool call names it |
 | `in_tool_call` | at least one `tool_call` hit |
 | `in_context` | at least one `context` hit |
 | `unknown` | at least one `unknown` hit |
@@ -450,7 +477,7 @@ A hit:
 | `tool` | string or null | the tool's name |
 | `argument` | string or null | the location within the tool call's arguments |
 | `location` | string or null | the location within the record, or within a JSON line of a text file; null for any other text line |
-| `form` | string | the first form whose decoded text held the value |
+| `form` | string | the first form whose decoded text held the value, or `name` for a reference by name |
 
 ## What the audit does not claim
 
@@ -463,6 +490,10 @@ credentials and the matching rules above. The audit does not find:
   assignment, quoted run, PEM or word rule takes whole;
 - a value hashed, encrypted, compressed, or encoded in a way not listed
   (URL-encoded base64, UTF-16, HTML entities);
+- a credential a tool call reaches by name in any way but the references
+  listed ([References by name](#references-by-name)): a program that
+  reads its environment (`os.environ`, `process.env`), a variable copied to
+  another name first, a file credential named by its path;
 - a credential whose value changed since the inventory ran (its
   fingerprint is of the old value);
 - anything in the agent's context that is not in the files given: a

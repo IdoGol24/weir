@@ -23,6 +23,36 @@
   directory it names counts like `~/.claude/projects`.
   Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
   schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
+- **weir-scan: `weir audit` finds a credential a tool call sends by name.**
+  A string in a tool call's arguments that expands an environment
+  credential's variable name (`$NAME`, `${NAME}` with any modifier, or
+  PowerShell's `$env:NAME`) is a `tool_call` hit with the new form `name`,
+  since the tool's shell sends whatever the variable holds. It counts for
+  every environment credential, its value read or not, so one the store
+  holds no fingerprint of is `in_tool_call` when a tool call names it, and
+  `not_checkable` only when none does. A name anywhere else, such as a
+  prompt, is not a hit. The `weir-audit/1` schema's `form` gains `name`.
+- **weir-scan: `weir statusline`, a Claude Code status-line segment and a
+  `/weir` session report (experimental).** The segment reads the session
+  JSON Claude Code passes on stdin, audits that session's transcript,
+  subagent transcripts and saved tool outputs with the inventory's keyed
+  fingerprints, and prints counts only: `weir: 2 in context, 1 sent` (the
+  credentials whose value entered the context, and those sent in a tool
+  call by value or by name), `weir: unknown` when a file is in a format it
+  cannot read and nothing was found elsewhere, `part unknown` beside counts
+  otherwise, and `checking P%` while a long session is still being read. It
+  reads a session in steps and caches what each step found (credential
+  ids, offsets and keyed MACs, never a value), so it fits in a status line
+  run and picks up where the last run stopped. `weir statusline report`
+  lists, per credential, its source, the turn and tool call that put it in
+  the context or sent it, where it now sits, and advice.
+  `weir statusline setup` shows the exact settings change, adds the
+  segment beside the status line command already there (which keeps
+  running, its output first) and installs the `/weir` command, writing
+  nothing until you type `yes`; `--dry-run` only shows it.
+  `weir statusline undo` restores the files byte for byte, and refuses when
+  one changed after setup. Display only, local and offline
+  ([docs/statusline.md](docs/statusline.md)).
 - **weir-scan: the inventory store carries a key check.**
   `weir-inventory-store/1` gains `key_check`, an HMAC of a fixed message
   under the fingerprint key, so a reader can tell the store's key from
