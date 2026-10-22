@@ -96,6 +96,19 @@ def test_relayed_output_is_redacted(
     assert "<canary:env.APP_KEY>" in result.stderr.split("b64 ", 1)[1]
 
 
+def test_a_placement_without_a_provider_is_named_before_any_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    extra = '\n[[placement]]\nid = "env.LOOSE_KEY"\nkind = "env"\n'
+    config, side = _setup(tmp_path, extra=extra)
+    result = _run(monkeypatch, judge, config)
+    assert result.exit_code == 0, result.output
+    warning = "placement env.LOOSE_KEY has no provider: any request holding it counts as a leak\n"
+    assert result.stderr.count("has no provider") == 1, result.stderr
+    assert result.stderr.startswith(warning), result.stderr
+    assert side.read_text(encoding="utf-8") not in result.output
+
+
 def test_a_crashed_flow_makes_the_run_incomplete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
 ) -> None:

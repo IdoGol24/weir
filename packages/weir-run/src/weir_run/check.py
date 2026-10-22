@@ -215,6 +215,17 @@ class CheckRun:
         return failed
 
 
+def warn_unowned(spec: RunSpec, err: TextIO) -> None:
+    """Name each placement with no provider: it belongs in no request, so
+    any request that holds it is a leak (docs/canary.md, "A placement's own
+    provider"). Printed before any flow runs; it names the id, never a value."""
+    for p in spec.placements:
+        if p.provider is None:
+            err.write(
+                f"placement {p.id} has no provider: any request holding it counts as a leak\n"
+            )
+
+
 def run_spec(
     spec: RunSpec,
     judge: Sequence[str],
@@ -227,6 +238,7 @@ def run_spec(
     require_isolation: bool = False,
 ) -> int:
     """Run every flow of spec, judge, clean up. Returns the exit code."""
+    warn_unowned(spec, err)
     run = CheckRun(spec, judge, seed=seed, python=python, require_isolation=require_isolation)
     try:
         for flow in spec.flows:

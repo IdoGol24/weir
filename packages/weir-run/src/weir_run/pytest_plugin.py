@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 from weir_run import judge as judge_cli
-from weir_run.check import CheckRun
+from weir_run.check import CheckRun, warn_unowned
 from weir_run.spec import (
     CredentialField,
     EndpointSpec,
@@ -170,6 +170,7 @@ class CanaryCheck:
         if self._run is None:
             judge_cli.check_available(self._judge_command)
             spec = RunSpec(tuple(self._placements), (), self._mock)
+            warn_unowned(spec, sys.stderr)
             self._run = CheckRun(
                 spec,
                 self._judge_command,
