@@ -70,6 +70,31 @@ def test_counts_credentials_in_context_and_sent_in_a_tool_call(tmp_path: Path) -
     assert run.stdout == sx.segment_for(expected) + "\n"
 
 
+def test_one_variable_in_two_environment_records_counts_once(tmp_path: Path) -> None:
+    claude = sx.build(tmp_path, bashrc=f'export {fx.GH}="$(gh auth token)"\n')
+    report = json.loads(claude.setup.report.read_text())
+    records = [c for c in report["credentials"] if c["name"] == fx.GH]
+    assert {c["location"]["kind"] for c in records} == {"launch_env", "file"}
+    session = fx.Session()
+    session.prompt("call the api")
+    session.tool_use("Bash", {"command": f'curl -H "Authorization: ${fx.GH}" x.invalid'}, "t1")
+    session.write(claude.transcript())
+    audit = claude.audit()
+    assert all(fx.hits(audit, c["id"]) for c in records)
+
+    run = claude.statusline()
+    shown = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
+
+    expected = sx.expected_counts(claude.setup, audit)
+    assert expected == (0, 1, False)
+    assert run.stdout == sx.segment_for(expected) + "\n"
+    assert shown.exit_code == 0, shown.stderr
+    assert shown.lines[0] == sx.segment_for(expected)
+    blocks = _blocks(shown.stdout)
+    for c in records:
+        assert f"{c['name']} ({c['location']['display']})" in blocks
+
+
 def test_subagent_transcripts_and_saved_outputs_are_read(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     v = claude.setup.values
@@ -279,6 +304,19 @@ def test_setup_dry_run_shows_the_change_and_writes_nothing(tmp_path: Path) -> No
         assert "existing status" in run.stdout
         assert "statusline" in run.stdout
         assert str(claude.command_file) in run.stdout
+    assert _snapshot(claude.setup.home) == before
+    assert not claude.command_file.exists()
+
+
+@pytest.mark.parametrize("answer", ["y\n", "Y\n", "YES\n", "Yes\n", "yes please\n"])
+def test_setup_applies_only_on_the_exact_answer_yes(tmp_path: Path, answer: str) -> None:
+    claude = sx.build(tmp_path)
+    _existing_settings(claude)
+    before = _snapshot(claude.setup.home)
+
+    run = _setup(claude, answer=answer)
+
+    assert run.exit_code == 0, run.stderr
     assert _snapshot(claude.setup.home) == before
     assert not claude.command_file.exists()
 

@@ -98,8 +98,8 @@ class Claude:
         return run.report
 
 
-def build(root: Path) -> Claude:
-    setup = fx.build(root)
+def build(root: Path, *, bashrc: str | None = None) -> Claude:
+    setup = fx.build(root, bashrc=bashrc)
     config = setup.home / ".claude"
     (config / "projects" / PROJECT).mkdir(parents=True)
     return Claude(setup=setup, config=config, state=setup.home / ".weir" / "statusline")
@@ -122,22 +122,31 @@ def status_json(transcript: Path, session_id: str) -> str:
 
 
 def groups(setup: fx.Setup) -> dict[str, str]:
-    """Credential id -> the value it holds, as the store links them: ids
-    whose stored fingerprints are equal are one value. An id the store holds
-    no fingerprint for is its own group."""
+    """Credential id -> the credential it stands for: ids whose stored
+    fingerprints are equal are one value, and environment records of the
+    inventory report that share a variable name are one variable. An id
+    linked to no other is its own group."""
     store = json.loads(setup.store.read_text())
     report = json.loads(setup.report.read_text())
-    out = {c["id"]: c["id"] for c in report["credentials"]}
+    links: dict[str, set[str]] = {}
     for record in store["records"]:
-        out[record["credential_id"]] = record["fingerprint"]
-    return out
+        links.setdefault("fingerprint:" + record["fingerprint"], set()).add(record["credential_id"])
+    for c in report["credentials"]:
+        if c["source"] == "environment":
+            links.setdefault("name:" + c["name"], set()).add(c["id"])
+    group = {c["id"]: {c["id"]} for c in report["credentials"]}
+    for ids in links.values():
+        merged = set[str]().union(*(group[cid] for cid in ids))
+        for cid in merged:
+            group[cid] = merged
+    return {cid: min(members) for cid, members in group.items()}
 
 
 def expected_counts(setup: fx.Setup, report: Mapping[str, object]) -> tuple[int, int, bool]:
     """(in context, sent, incomplete) from an audit report: a credential
     entered the context when it has a `context` hit, or a `tool_call` hit by
     value; it was sent when it has any `tool_call` hit, by value or by name.
-    Values, not inventory records, are counted."""
+    Credentials, not inventory records, are counted."""
     group = groups(setup)
     context: set[str] = set()
     sent: set[str] = set()

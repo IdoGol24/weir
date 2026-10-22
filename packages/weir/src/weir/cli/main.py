@@ -600,42 +600,30 @@ def statusline_group(
 
 @statusline_group.command("report")
 @_inventory_options(required=True)
-@click.option("--session", "session_id", default=None, help="The Claude Code session id.")
-@click.option(
-    "--transcript", type=click.Path(dir_okay=False, path_type=Path), default=None,
-    help="The session's transcript file, instead of --session.",
-)
+@click.option("--session", "session_id", required=True, help="The Claude Code session id.")
 @click.option(
     "--claude-dir", type=click.Path(file_okay=False, path_type=Path), default=None,
     help="The Claude config directory [default: CLAUDE_CONFIG_DIR, else HOME/.claude].",
 )
 def statusline_report_command(
-    report_path: Path, store_path: Path, key_path: Path, session_id: str | None,
-    transcript: Path | None, claude_dir: Path | None,
+    report_path: Path, store_path: Path, key_path: Path, session_id: str,
+    claude_dir: Path | None,
 ) -> None:
     """(experimental) The /weir report: per credential that reached the
     session, its source, the turn and tool call, where it now sits, and
     advice. Never prints a value."""
-    if (session_id is None) == (transcript is None):
-        raise click.UsageError("give one of --session and --transcript")
-    if transcript is None:
-        assert session_id is not None
-        if not valid_session_id(session_id):
-            click.echo("error: --session: not a session id", err=True)
-            raise SystemExit(2)
-        projects = _claude_dir(claude_dir) / "projects"
-        found = sorted(projects.glob(f"*/{session_id}.jsonl"))
-        if len(found) != 1:
-            many = "more than one transcript" if found else "no transcript"
-            click.echo(f"error: {many} for session {session_id} under {projects}", err=True)
-            raise SystemExit(2)
-        transcript = found[0]
-        name = session_id
-    else:
-        name = transcript.stem
+    if not valid_session_id(session_id):
+        click.echo("error: --session: not a session id", err=True)
+        raise SystemExit(2)
+    projects = _claude_dir(claude_dir) / "projects"
+    found = sorted(projects.glob(f"*/{session_id}.jsonl"))
+    if len(found) != 1:
+        many = "more than one transcript" if found else "no transcript"
+        click.echo(f"error: {many} for session {session_id} under {projects}", err=True)
+        raise SystemExit(2)
     try:
         inputs = load_inputs(report_path, store_path, key_path)
-        lines = session_report_lines(inputs, str(transcript), name, _claude_config_dirs())
+        lines = session_report_lines(inputs, str(found[0]), session_id, _claude_config_dirs())
     except AuditInputError as exc:
         click.echo(f"error: {exc}", err=True)
         raise SystemExit(2) from exc

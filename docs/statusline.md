@@ -63,9 +63,12 @@ and from its hits:
 
 A credential sent by value is in both counts; one sent only by name is in
 S only, since its value never entered the context. `stored` hits are not
-counted. Values are counted, not inventory records: records whose stored
-fingerprints are equal (the same secret found in the launch environment and
-in a project `.env`, say) count once.
+counted. Credentials are counted, not inventory records: records whose
+stored fingerprints are equal (the same secret found in the launch
+environment and in a project `.env`, say) count once, and so do
+environment records that share a variable name (`GITHUB_TOKEN` in the
+launch environment and in `~/.bashrc`), whether the hit was by value or by
+name. The /weir report still lists each of those records.
 
 Some of the session is **unknown** when the audit of any of its files is
 incomplete ([docs/audit.md](audit.md#unknown): an unrecognised format, a
@@ -137,7 +140,7 @@ discarded.
 ## The /weir report
 
 ```sh
-weir statusline report --inventory REPORT --store STORE --key KEY (--session ID | --transcript PATH) [--claude-dir DIR]
+weir statusline report --inventory REPORT --store STORE --key KEY --session ID [--claude-dir DIR]
 ```
 
 It audits the session's files in full, with no cache, and prints:
@@ -228,8 +231,8 @@ path absolute, so they do not depend on the PATH Claude Code runs them
 with.
 
 With `--dry-run` it stops there. Otherwise it asks, and writes only when
-the answer is `yes` (or `y`); any other answer, or no input, writes
-nothing. When it writes, it writes first the undo record,
+the answer is exactly `yes`, lower-case; any other answer (`y`, `YES`),
+or no input, writes nothing. When it writes, it writes first the undo record,
 `<cache>/setup-undo.json`, then a copy of the settings file's bytes before
 setup, `settings.json.weir-backup` beside it (owner-only), then the files,
 each atomically, keeping the settings file's permissions.

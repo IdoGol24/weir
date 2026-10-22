@@ -72,13 +72,24 @@ def tally(report: Report) -> Tally:
 
 
 def value_groups(inputs: Inputs) -> dict[str, str]:
-    """Credential id -> the value it stands for: records that share a
-    fingerprint are one value, counted once. In memory only."""
+    """Credential id -> the credential it stands for: records that share a
+    fingerprint are one value, and environment records that share a
+    variable name are one variable; each is counted once. In memory only."""
     out = {c.id: c.id for c in inputs.credentials}
-    for ids in inputs.by_fingerprint.values():
-        for cid in ids:
-            out[cid] = ids[0]
-    return out
+
+    def find(cid: str) -> str:
+        while out[cid] != cid:
+            cid = out[cid]
+        return cid
+
+    names: dict[str, list[str]] = {}
+    for c in inputs.credentials:
+        if c.source == "environment":
+            names.setdefault(c.name, []).append(c.id)
+    for ids in [*inputs.by_fingerprint.values(), *names.values()]:
+        for cid in ids[1:]:
+            out[find(cid)] = find(ids[0])
+    return {cid: find(cid) for cid in out}
 
 
 def segment_text(

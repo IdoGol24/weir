@@ -325,7 +325,7 @@ def apply_undo(plan: UndoPlan) -> None:
 
 
 def confirmed(read_line: Callable[[], str]) -> bool:
-    """An explicit yes: the answer `yes` or `y`. Anything else, an empty
-    line or no input at all, is no."""
-    return read_line().strip().lower() in ("yes", "y")
+    """An explicit yes: the answer `yes`, lower-case. Anything else, `y`,
+    an empty line or no input at all, is no."""
+    return read_line().strip() == "yes"
 
