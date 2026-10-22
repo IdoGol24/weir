@@ -1,0 +1,4 @@
+# no-mistakes repository settings: https://github.com/kunchenguid/no-mistakes
+# Read only from the default branch.
+pr:
+  template: .github/pull_request_template.md
