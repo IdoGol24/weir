@@ -113,6 +113,7 @@ provider_host = "api.search.example"   # its real host: a refused attempt to rea
 id = "code.client.api_key"
 kind = "code"
 variable = "MY_VARIABLE"          # the flow reads this; omit it for CANARY_CODE_CLIENT_API_KEY
+provider = "model"                # passed to the model client, so it belongs to the model API
 
 [[flow]]
 id = "quickstart"
@@ -215,9 +216,12 @@ canary and decides by the placement's own provider (`provider` and
   `blocked connection: <host>:<port>` and counted in the coverage, never a
   leak by itself.
 
-A placement with no `provider` belongs in no request, so any request that
-holds it is a leak. A token the mock's OAuth endpoints issue belongs to
-those endpoints and to every `[[mock.endpoint]]`.
+A placement with neither a `provider` nor a `provider_host` belongs in no
+request, so any request that holds it is a leak, and the runner says so
+before any flow runs:
+`placement <id> has no provider: any request holding it counts as a leak`.
+A token the mock's OAuth endpoints issue belongs to those endpoints and to
+every `[[mock.endpoint]]`.
 
 **Credential fields.** Before any of these handles a request, the mock
 inspects its credential fields: the whole `Authorization` and
@@ -298,10 +302,12 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
 ## Output
 
-- **stderr:** each flow's status and its own stdout and stderr, relayed
-  after the run with every encoded form of every canary replaced by
-  `<canary:PLACEMENT-ID>`; whether the network was isolated, and each
-  blocked direct attempt; refused egress and unmocked requests by count.
+- **stderr:** first, one line for each placement with neither a
+  `provider` nor a `provider_host`; then each flow's status and its own
+  stdout and stderr, relayed after the run with every encoded form of
+  every canary replaced by `<canary:PLACEMENT-ID>`; whether the network
+  was isolated, and each blocked direct attempt; refused egress and
+  unmocked requests by count.
 - **stdout:** the judge's text report: one `LEAK` line per hit, the
   not-exercised placements, the blocked destinations, the incomplete
   reasons, the coverage line, the network line and the result. It names

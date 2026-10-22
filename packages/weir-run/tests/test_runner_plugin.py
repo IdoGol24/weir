@@ -128,6 +128,22 @@ def test_declarations_close_at_the_first_run(tmp_path: Path, judge: list[str]) -
         check.close()
 
 
+def test_a_placement_without_a_provider_is_named_at_the_first_run(
+    tmp_path: Path, judge: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    check = CanaryCheck(judge, tmp_path)
+    try:
+        check.env("OWNED_KEY", provider="model")
+        check.env("LOOSE_KEY")
+        assert capsys.readouterr().err == ""
+        check.mock_url  # noqa: B018 - starts the run
+        assert capsys.readouterr().err == (
+            "placement env.LOOSE_KEY has no provider: any request holding it counts as a leak\n"
+        )
+    finally:
+        check.close()
+
+
 def test_a_bad_declaration_is_refused_at_once(tmp_path: Path, judge: list[str]) -> None:
     check = CanaryCheck(judge, tmp_path)
     check.env("APP_KEY")

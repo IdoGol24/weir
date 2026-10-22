@@ -1,7 +1,7 @@
 [project]
 name = "weir-run"
 version = "0.1.0"
-description = "Leak tests for AI agents: plant fake credentials, run your agent against a local fake model, and capture what it exports."
+description = "Leak tests for AI agents: plant fake credentials, run your agent in an isolated rig, and capture everything it sends out."
 license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.12"
