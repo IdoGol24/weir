@@ -35,7 +35,7 @@ PROBE = Path(__file__).parent / "_anthropic_flow.py"
 REQUESTS_FILE = "capture/requests.jsonl"
 PLACEMENT = "env.ANTHROPIC_API_KEY"
 REPLY = "The project's .env sets LOG_LEVEL to info."
-# The contract's printing rule, in the captain's words: never a value or a
+# The contract's printing rule: never a value or a
 # fragment of 6 or more characters of one.
 FRAGMENT = 6
 

@@ -1,6 +1,6 @@
 """A Claude-shaped probe flow for the Anthropic Messages tests: plain
-urllib against ANTHROPIC_BASE_URL, the way the Anthropic SDKs and Claude
-Code reach the API, with ANTHROPIC_API_KEY in the `x-api-key` header.
+urllib against ANTHROPIC_BASE_URL, the way the Anthropic SDKs reach the
+API, with ANTHROPIC_API_KEY in the `x-api-key` header.
 
 Every mode runs one coding-task turn. The first request offers a
 `read_file` tool, which the scripted model calls; the flow answers with a
