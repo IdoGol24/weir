@@ -79,7 +79,10 @@ not hold, a value not fully read) is listed as **not checkable**, with its
 ## Files and formats
 
 Each file is read in full, and its format is recognised from its bytes and
-its path, never guessed from its name alone:
+its path, never guessed from its name alone. The path rules below read the
+path made absolute (without following symbolic links), so a relative path
+such as `memory/MEMORY.md` is recognised as its absolute path would be; the
+report still prints the path as given:
 
 | format | recognised when | read as |
 | --- | --- | --- |
