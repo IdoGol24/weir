@@ -128,9 +128,7 @@ def _load_input_or_exit(
         except OSError as exc:
             click.echo(f"error: cannot read trace file {trace_path!r}: {exc}", err=True)
             raise SystemExit(2) from exc
-    use_otlp = input_format == "otlp" or (
-        input_format == "auto" and _looks_like_otlp(data)
-    )
+    use_otlp = input_format == "otlp" or (input_format == "auto" and _looks_like_otlp(data))
     if use_otlp:
         try:
             wire = decode_input(data)
@@ -138,9 +136,7 @@ def _load_input_or_exit(
             click.echo(f"error: invalid OTLP input: {exc}", err=True)
             raise SystemExit(2) from exc
         result = map_wire(wire)
-        remediations = list(
-            dict.fromkeys(REMEDIATION[d.reason] for d in result.degradations)
-        )
+        remediations = list(dict.fromkeys(REMEDIATION[d.reason] for d in result.degradations))
         exposure = classify_exposure(scan_surface(wire), DEFAULT_CATALOG)
         return result.trace, remediations, exposure
     try:
@@ -181,9 +177,9 @@ def gauge_command(
 ) -> None:
     """Standalone (R3.5): no rules, no catalog customization needed."""
     if sample:
-        sample_bytes = importlib.resources.files("weir.data").joinpath(
-            "sample-export.json"
-        ).read_bytes()
+        sample_bytes = (
+            importlib.resources.files("weir.data").joinpath("sample-export.json").read_bytes()
+        )
         trace, remediations, exposure = _load_input_or_exit(None, input_format, data=sample_bytes)
     elif trace_path:
         trace, remediations, exposure = _load_input_or_exit(trace_path, input_format)
@@ -282,7 +278,8 @@ def scan_command(
 
     verdict_grade_findings = [f for f in findings if f.is_verdict_grade]
     failing = [f for f in verdict_grade_findings if _fails(f.rule_id)] + [
-        f for f in exposure_findings
+        f
+        for f in exposure_findings
         if f.is_verdict_grade and _severity_at_or_above(f.severity, fail_on)
     ]
 
@@ -393,9 +390,7 @@ def _write_output(path: Path, data: bytes) -> None:
     help="Write keyed fingerprints plus offsets here (never values).",
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit the weir-inventory/1 JSON report.")
-@click.option(
-    "--strict", is_flag=True, help="Exit 1 when any environment variable is unknown."
-)
+@click.option("--strict", is_flag=True, help="Exit 1 when any environment variable is unknown.")
 def inventory_command(
     home: Path,
     project: Path,

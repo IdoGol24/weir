@@ -5,8 +5,9 @@ the judge"):
    any flow starts;
 2. start the mock on 127.0.0.1 and run each flow against it, inside a
    loopback-only network namespace where one can be made (`isolation`),
-   recording one `flow` record per flow (the mock records minted values,
-   credential-field evidence and unexpected credentials as they happen);
+   recording one `flow` record per flow (the mock records minted values
+   and unexpected credentials as they happen, and every request it
+   receives in the request capture);
 3. stop the mock, record whether the run was isolated and each direct
    connection attempt the namespace blocked, relay each flow's output with
    every needle replaced;
