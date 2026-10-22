@@ -603,6 +603,42 @@ def test_a_value_in_a_memory_or_claude_md_file_is_in_context(tmp_path: Path, nam
     assert run.exit_code == 1
 
 
+def test_memory_and_tool_results_files_are_recognised_from_a_relative_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = fx.build(tmp_path)
+    files = _memory_tree(setup, tmp_path)
+    project = files["index"].parent.parent
+    spill = project / fx.SESSION_ID / "tool-results" / "toolu_01.txt"
+    spill.parent.mkdir(parents=True)
+    cfx.write(spill, "line one\n")
+    cfx.write(files["index"], files["index"].read_text() + f"token: {setup.values[fx.ACME]}\n")
+
+    monkeypatch.chdir(project.parent)
+    run = setup.audit(["."])
+    formats = {f["file"]: f["format"] for f in run.report["files"]}  # type: ignore[union-attr,index]
+    given = {
+        os.path.join(".", os.path.relpath(path, project.parent)): path
+        for path in (files["session"], files["index"], files["topic"], spill)
+    }
+    assert formats == {
+        name: {spill: "claude-code-tool-results", files["session"]: "claude-code"}.get(
+            path, "claude-code-memory"
+        )
+        for name, path in given.items()
+    }
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["file"]) == (
+        "context", os.path.join(".", os.path.relpath(files["index"], project.parent)),
+    )
+    assert run.report["unknown"] == []
+
+    monkeypatch.chdir(spill.parent)
+    assert setup.audit([spill.name]).report["files"][0]["format"] == (  # type: ignore[index]
+        "claude-code-tool-results"
+    )
+
+
 @pytest.mark.parametrize("where", ["projects/p/notes.md", "work/memory/MEMORY.md",
                                    "projects/p/memory/MEMORY.txt"])
 def test_a_markdown_file_outside_the_memory_layout_is_unrecognised(
