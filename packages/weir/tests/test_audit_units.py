@@ -1022,3 +1022,28 @@ def test_an_error_never_prints_a_value_in_a_path(tmp_path: Path) -> None:
     assert (run.exit_code, run.stdout) == (2, "")
     assert "not a regular file" in run.stderr
     _value_free(run, setup)
+
+
+@pytest.mark.parametrize(
+    ("record", "location"),
+    [
+        ({"message": "note {v}"}, "message"),
+        ({"message": {"role": "user", "content": {"text": "note {v}"}}}, "message.content.text"),
+    ],
+    ids=["message-is-a-string", "content-is-an-object"],
+)
+def test_a_message_record_of_an_unnamed_shape_is_unknown_not_stored(
+    tmp_path: Path, record: dict[str, object], location: str
+) -> None:
+    """docs/audit.md: a `message` that is not an object, or a `message.content`
+    that is neither a string nor a list of blocks, is unknown: a shape the
+    contract does not name is never filed as stored."""
+    setup = fx.build(tmp_path)
+    session = fx.Session()
+    session.prompt("hello")
+    filled = json.loads(json.dumps(record).replace("{v}", setup.values[fx.ACME]))
+    line = session.record({"type": "user", "sessionId": fx.SESSION_ID, **filled})
+    run = setup.audit([session.write(tmp_path / "s.jsonl")])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["line"], hit["location"]) == ("unknown", line, location)
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)

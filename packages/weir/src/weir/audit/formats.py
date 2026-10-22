@@ -273,7 +273,11 @@ def _content_place(
 ) -> Place:
     if isinstance(content, str):
         return _CONTEXT
-    if len(path) < 3 or not isinstance(path[2], int) or not isinstance(content, list):
+    if not isinstance(content, list):
+        # Content that is neither a string nor a list of blocks is a shape the
+        # contract does not name: the agent may still see it.
+        return _UNKNOWN
+    if len(path) < 3 or not isinstance(path[2], int):
         return _STORED
     block = content[path[2]]
     btype = _str(block.get("type")) if isinstance(block, dict) else None
@@ -308,14 +312,16 @@ def claude_code_place(record: dict[str, Json], path: Path_, tools: dict[str, str
     message = record.get("message")
     if path[:2] == ("message", "content") and isinstance(message, dict) and len(path) >= 2:
         content = message.get("content")
-        if len(path) == 2 and not isinstance(content, str):
+        if len(path) == 2 and isinstance(content, list):
             return _STORED
         return _content_place(record_type, content, path, tools)
     # Anything else in a message record is bookkeeping only under a field the
     # contract names; an unnamed field may carry text the agent sees.
     field = path[0] if path else None
     if field == "message":
-        known = len(path) < 2 or path[1] in _MESSAGE_FIELDS
+        # Bookkeeping only inside a `message` object; a `message` of any other
+        # shape is unknown.
+        known = isinstance(message, dict) and (len(path) < 2 or path[1] in _MESSAGE_FIELDS)
     else:
         known = field in _RECORD_FIELDS
     return _STORED if known else _UNKNOWN

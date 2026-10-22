@@ -218,6 +218,7 @@ A record's kind is decided by its `type` and the hit's location:
 | `user`, `assistant` | `message.<field>` and below, for `role`, `model`, `id`, `type`, `stop_reason`, `stop_sequence`, `stop_details`, `usage`, `container`, `diagnostics` or `context_management` | `stored` |
 | `user`, `assistant` | `<field>` and below, for a bookkeeping field: `parentUuid`, `logicalParentUuid`, `isSidechain`, `type`, `uuid`, `timestamp`, `cwd`, `sessionId`, `version`, `gitBranch`, `userType`, `entrypoint`, `toolUseResult`, `requestId`, `isMeta`, `isCompactSummary`, `isVisibleInTranscriptOnly`, `isApiErrorMessage`, `error`, `promptId`, `permissionMode`, `promptSource`, `turnOrigin`, `turnPosition`, `perTurnEffort`, `sourceToolAssistantUUID`, `sourceToolUseID`, `agentId` or `slug` | `stored` |
 | `user`, `assistant` | any other field, in the record or its `message` | `unknown`: a field the contract does not name may carry text the agent sees |
+| `user`, `assistant` | `message` when it is not an object, and `message.content` and below when it is neither a string nor a list of blocks | `unknown`: a shape the contract does not name is never `stored` |
 | `attachment`, `summary` | anything else | `stored` |
 | `queue-operation`, `last-prompt`, `cost-state`, `atis-latch`, `file-history-snapshot`, `custom-title`, `agent-name`, `tag`, `permission-mode`, `pr-link`, `worktree-state` | anything | `stored` |
 | any other `type`, or none | anything | `unknown` |
