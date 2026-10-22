@@ -103,7 +103,9 @@ The audit searches **strings**:
 - in OTLP: what `weir canary judge`'s structured walk reads
   ([docs/canary.md](canary.md), "The capture"), a `bytesValue` after base64
   decoding included, with the same locations;
-- in a text file or an unparsed line: each line, with no location.
+- in a text file or an unparsed line: each line, with no location; a line
+  that is itself a JSON object or array is walked as one, with locations
+  as in a record.
 
 ## Matching
 
@@ -230,9 +232,10 @@ a span, a span event or a log record, the attribute it sits under decides:
 
 An attribute whose value is a string holding a JSON document is walked as
 that document, so `argument` is the location within the arguments (for
-example `command`) and a message part's `type` can be read. The location of
-a hit inside it is the attribute's location followed by the location within
-the document.
+example `command`) and a message part's `type` can be read. A `tool_call`
+part's `arguments` that is itself a string holding a JSON document is walked
+the same way. The location of a hit inside it is the attribute's location
+followed by the location within the document.
 
 #### Unknown formats and unparsed lines
 
@@ -289,13 +292,23 @@ credentials do not change the result.
 A credential is printed by its inventory name, location and scope:
 `<name> (<display>)` or `<name> (<display> <scope>)`. Every string the
 audit prints that came from an input (a name, a display, a scope, a file
-path, a record type, a location, a tool name, an argument) is flattened to
-one line, cut to 200 characters (a file path is never cut: a report names
-its file in full), and replaced entirely by `[withheld]` if
-it holds any encoded form (as the judge builds them) or any run of 6
-consecutive characters of any value the audit found, or has a credential
-shape (the inventory's `looks_secret_shaped`). No output holds a value, a
-fragment of one, a masked form, a hash or a fingerprint.
+path, a record type, a location segment, a tool name) is flattened to
+one line, cut to 200 characters (a file path is never cut), and replaced
+entirely by `[withheld]` if it holds any encoded form (as the judge builds
+them) or any run of 6 consecutive characters of any value the audit found,
+or has a credential shape (the inventory's `looks_secret_shaped`). A
+location or an argument is printed key by key under this rule, so a key
+that holds a value reads `[withheld]` in its place
+(`at=message.content[0].input.[withheld]`). A file whose path holds a
+found value is printed as `[withheld]`: open the files given to find it.
+
+So no output holds a value the audit found, an encoded form of one or a run
+of 6 of its characters, and no output holds a hash, a fingerprint or a
+masked form of any value. **What the rule cannot promise:** the audit holds
+fingerprints, not values, so it cannot recognise a piece of a credential
+that never appears whole in the files. A tool name or a key that holds, say,
+8 characters of a credential found nowhere else, with no credential shape,
+is printed as it is.
 
 ### The text report
 
@@ -312,7 +325,7 @@ aws_secret_access_key (~/.aws/credentials default): in_context (0 tool calls, 1 
 not found: GH_TOKEN (launch env)
 not checkable: id_ed25519 (~/.ssh/id_ed25519) absent
 unknown: unrecognised_format notes.log
-coverage: 4 credentials (3 checkable), 2 files (1 claude-code, 1 unknown), 12 records (0 unrecognised), 0 unparsed lines, 0 not scanned, 230 strings
+coverage: 4 credentials (3 checkable), 2 files (1 claude-code, 1 unknown), 12 records (0 unrecognised), 0 unparsed lines, 230 strings
 result: exposed
 ```
 
@@ -321,8 +334,9 @@ Precisely:
 - a hit: `<KIND> <credential> file=<file>:<line>`, then `record=<type>` for
   a `claude-code` record, or `signal=<signal>` and `span=<quoted name>`,
   `log=<index>` or `metric=<quoted name>` for an OTLP record, or
-  `format=<format>` for a text line (an `unknown` or
-  `claude-code-tool-results` file, or an unparsed line), then
+  `signal=<signal>` alone for an OTLP string outside any record (a
+  resource or scope attribute), or `format=<format>` for a text line (an
+  `unknown` or `claude-code-tool-results` file, or an unparsed line), then
   `tool=<quoted name>` and
   `argument=<location>` when there is one, then `at=<location>` when there
   is one, then `form=<form>`; `<KIND>` is `TOOL_CALL`, `CONTEXT`, `UNKNOWN`
@@ -332,10 +346,13 @@ Precisely:
   for each credential with a hit, `tool call` when `<T>` is 1;
 - `not found: <credential>`, `not checkable: <credential> <value_state>`,
   `not scanned: <file> (<reason>)` and `unknown: <reason> <subject>`;
-- `coverage: <N> credentials (<K> checkable), <F> files (<per format>), <R> records (<U> unrecognised), <P> unparsed lines, <X> not scanned, <S> strings`,
-  `<per format>` the count of each format present, in the order
-  `claude-code`, `claude-code-tool-results`, `otlp`, `unknown`, joined by
-  `, ` (`0 files ()` when there are none);
+- `coverage: <N> credentials (<K> checkable), <F> files (<groups>), <R> records (<U> unrecognised), <P> unparsed lines, <S> strings`,
+  `<groups>` the count of each format present, in the order
+  `claude-code`, `claude-code-tool-results`, `otlp`, `unknown`, then
+  `<X> not scanned` when files were not scanned, joined by `, ` (so the
+  groups add up to `<F>`; `0 files ()` when there are none). A count of 1
+  takes the singular: `1 credential`, `1 file`, `1 record`,
+  `1 unparsed line`, `1 string`;
 - `result: clean|exposed|unknown`.
 
 Hits sort by kind (as above), credential, file, line, location and form;
@@ -380,11 +397,11 @@ A hit:
 | `line` | integer | 1-based line of the record or text line |
 | `format` | string | the file's format |
 | `record` | string or null | a Claude Code record's `type` |
-| `signal` | string or null | `traces`, `logs` or `metrics` for an OTLP record |
+| `signal` | string or null | `traces`, `logs` or `metrics` for any OTLP string, a resource or scope attribute included |
 | `span`, `span_id`, `log_record`, `metric` | string, string, integer, string, or null | the OTLP record, as in the canary report |
 | `tool` | string or null | the tool's name |
 | `argument` | string or null | the location within the tool call's arguments |
-| `location` | string or null | the location within the record; null for a text line |
+| `location` | string or null | the location within the record, or within a JSON line of a text file; null for any other text line |
 | `form` | string | the first form whose decoded text held the value |
 
 ## What the audit does not claim

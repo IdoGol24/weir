@@ -83,14 +83,13 @@ def report_lines(report: Report) -> Iterator[str]:
     for unknown in report.unknown:
         yield f"unknown: {unknown.reason.value} {unknown.subject}"
     c = report.coverage
-    formats = ", ".join(
-        f"{getattr(c, field)} {fmt.value}" for fmt, field in _FORMATS if getattr(c, field)
-    )
+    groups = [f"{getattr(c, field)} {fmt.value}" for fmt, field in _FORMATS if getattr(c, field)]
+    if c.not_scanned:
+        groups.append(f"{c.not_scanned} not scanned")
     yield (
         f"coverage: {plural(c.credentials, 'credential')} ({c.checkable} checkable),"
-        f" {plural(c.files, 'file')} ({formats}),"
+        f" {plural(c.files, 'file')} ({', '.join(groups)}),"
         f" {plural(c.records, 'record')} ({c.unrecognised_records} unrecognised),"
-        f" {plural(c.unparsed_lines, 'unparsed line')}, {c.not_scanned} not scanned,"
-        f" {plural(c.strings, 'string')}"
+        f" {plural(c.unparsed_lines, 'unparsed line')}, {plural(c.strings, 'string')}"
     )
     yield f"result: {report.result.value}"
