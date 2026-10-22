@@ -334,8 +334,16 @@ them) or any run of 6 consecutive characters of any value the audit found,
 or has a credential shape (the inventory's `looks_secret_shaped`). A
 location or an argument is printed key by key under this rule, so a key
 that holds a value reads `[withheld]` in its place
-(`at=message.content[0].input.[withheld]`). A file whose path holds a
-found value is printed as `[withheld]`: open the files given to find it.
+(`at=message.content[0].input.[withheld]`).
+
+Every path is checked against the store before it is printed or named in an
+error, whether or not its value also appears in a file: the path's own
+candidates, and every span of a path segment between characters that are
+not letters or digits (so `dump-<value>.txt` and `gone_<value>_x` are
+caught). A path that holds a credential is printed as `[withheld]`, in a hit,
+an unknown reason, a not-scanned line, the JSON `files[].file` and an error
+alike: open the files given to find it. The three inventory inputs are
+named as given in their own errors, which come before the store is read.
 
 So no output holds a value the audit found, an encoded form of one or a run
 of 6 of its characters, and no output holds a hash, a fingerprint or a

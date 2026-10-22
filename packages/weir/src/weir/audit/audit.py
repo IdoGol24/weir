@@ -252,14 +252,21 @@ def audit_files(
     # A given path that does not exist was not read: it is not scanned, and
     # never an error, so a missing sessions directory reads as unknown.
     missing = [path for path in paths if not os.path.lexists(path)]
+    matcher = Matcher(key, set(by_fingerprint))
+
+    def error_path(path: str) -> str:
+        # An error names its path, never a value: a path holding a stored
+        # credential is withheld before any file is read.
+        return WITHHELD if matcher.path_holds_value(path) else path
+
     try:
         capture = collect_capture(
-            [], [path for path in paths if path not in missing], lambda path: path
+            [], [path for path in paths if path not in missing], error_path
         )
     except CaptureError as exc:
         raise AuditInputError(str(exc).replace("capture ", "file ", 1)) from None
     projects_dirs = [PurePath(os.path.abspath(d), "projects") for d in claude_config_dirs]
-    auditor = _Auditor(Matcher(key, set(by_fingerprint)), by_fingerprint)
+    auditor = _Auditor(matcher, by_fingerprint)
     files: list[_File] = []
     not_scanned: dict[str, NotScannedReason] = {
         path: NotScannedReason.MISSING for path in missing
@@ -288,6 +295,10 @@ def audit_files(
         else:
             auditor.unknown(file, lines)
 
+    # Every path the report prints is checked against the store first, so a
+    # value that is only in a file name is withheld like a found one.
+    for file in files:
+        matcher.path_holds_value(file.path)
     shown = _Printer(auditor.matcher.found)
     labels = {
         c.id: (shown(c.name), shown(c.display), shown(c.scope) if c.scope else "", c.id)

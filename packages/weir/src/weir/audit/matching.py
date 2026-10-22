@@ -47,6 +47,10 @@ _PUNCTUATION_ENDS = re.compile(r"^[^\w-]+|[^\w-]+$")
 _BREAK = re.compile(r"[^\w-]")
 _BLOB = re.compile(r"[A-Za-z0-9+/=_-]+")
 _LINE_BREAK = re.compile(r"\r\n|\r|\n")
+# A path is split into segments, and a segment is cut at every character that
+# is not a letter or a digit: file names glue words with `-`, `_` and `.`.
+_PATH_SEPARATOR = re.compile(r"[\\/]")
+_PATH_BREAK = re.compile(r"[\W_]")
 _LINE_PREFIX = re.compile(r"^\s*\d+(?:\u2192|\t)")
 _ASSIGNMENT = re.compile(
     r"^\s*(?:\d+(?:\u2192|\t))?\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_.-]*\s*[=:](.*)$"
@@ -282,6 +286,25 @@ class Matcher:
         for word in set(_WORD.findall(text)):
             out.update(self._word(word))
         return out
+
+    def path_holds_value(self, path: str) -> bool:
+        """Does a path hold a stored credential? (docs/audit.md, "Printing").
+        Every rule a string has, plus each span of a path segment between
+        characters that are not letters or digits. A value found here is
+        remembered like any other, so the printing rule withholds it."""
+        held = bool(self.find(path))
+        out: dict[bytes, str] = {}
+        for segment in _PATH_SEPARATOR.split(path):
+            cuts = {0, len(segment)}
+            for found in _PATH_BREAK.finditer(segment):
+                cuts.add(found.start())
+                cuts.add(found.end())
+            points = sorted(cuts)
+            for i, start in enumerate(points):
+                for end in points[i + 1 : i + 1 + CUT_WINDOW]:
+                    self._check(segment[start:end], out)
+        self.found.update(out.values())
+        return held or bool(out)
 
     def find(self, string: str) -> dict[bytes, Form]:
         """Every stored fingerprint the string holds, under the first form

@@ -991,3 +991,34 @@ def test_a_claude_md_anywhere_is_context(tmp_path: Path) -> None:
     run = setup.audit([path])
     hit = _only_hit(run, setup)
     assert (hit["kind"], hit["format"], run.exit_code) == ("context", "claude-code-memory", 1)
+
+
+def _value_free(run: fx.Run, setup: fx.Setup) -> None:
+    cfx.assert_value_free(run.stdout + "\n" + run.stderr, setup.values.values())
+
+
+@pytest.mark.parametrize("as_json", [True, False])
+def test_a_value_only_in_a_file_name_is_never_printed(tmp_path: Path, as_json: bool) -> None:
+    """docs/audit.md, "Printing": a path is checked against the store before it is
+    printed, so a value glued into a file name with `-` or `_` is withheld."""
+    setup = fx.build(tmp_path)
+    dump = tmp_path / "dumps" / f"dump-{setup.values[fx.ACME]}.txt"
+    dump.parent.mkdir()
+    cfx.write(dump, "build finished\n")
+    gone = tmp_path / f"gone_{setup.values[fx.GH]}_x"
+    run = setup.audit([dump.parent, gone], as_json=as_json)
+    assert run.exit_code == 3
+    _value_free(run, setup)
+    assert "[withheld]" in run.stdout
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs a FIFO")
+def test_an_error_never_prints_a_value_in_a_path(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    folder = tmp_path / "scan"
+    folder.mkdir()
+    os.mkfifo(folder / f"pipe-{setup.values[fx.GH]}")
+    run = setup.audit([folder])
+    assert (run.exit_code, run.stdout) == (2, "")
+    assert "not a regular file" in run.stderr
+    _value_free(run, setup)
