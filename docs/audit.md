@@ -290,7 +290,8 @@ A credential is printed by its inventory name, location and scope:
 `<name> (<display>)` or `<name> (<display> <scope>)`. Every string the
 audit prints that came from an input (a name, a display, a scope, a file
 path, a record type, a location, a tool name, an argument) is flattened to
-one line, cut to 200 characters, and replaced entirely by `[withheld]` if
+one line, cut to 200 characters (a file path is never cut: a report names
+its file in full), and replaced entirely by `[withheld]` if
 it holds any encoded form (as the judge builds them) or any run of 6
 consecutive characters of any value the audit found, or has a credential
 shape (the inventory's `looks_secret_shaped`). No output holds a value, a

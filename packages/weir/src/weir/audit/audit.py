@@ -14,6 +14,7 @@ from pathlib import Path
 
 import msgspec
 
+from weir._text_safety import flatten_untrusted
 from weir.audit._types import (
     AUDIT_SCHEMA,
     EXIT_CODES,
@@ -137,19 +138,27 @@ class _Auditor:
                 self.search(file, line.number, site)
 
 
-def _printer(found_values: set[str]) -> Callable[[str], str]:
-    """docs/audit.md, "Printing": every input-derived string."""
-    display = Display(
-        [needle for value in found_values for needle, _ in needles(value)], found_values
-    )
+class _Printer:
+    """docs/audit.md, "Printing": every input-derived string. A name, a
+    location segment or a tool is cut to 200 characters; a file path is
+    never cut, since a report must name its file."""
 
-    def shown(text: str) -> str:
-        out = display(text)
+    def __init__(self, found_values: set[str]) -> None:
+        self._display = Display(
+            [needle for value in found_values for needle, _ in needles(value)], found_values
+        )
+
+    def __call__(self, text: str) -> str:
+        out = self._display(text)
         if out != WITHHELD and looks_secret_shaped(text):
             return WITHHELD
         return out
 
-    return shown
+    def path(self, text: str) -> str:
+        flat = flatten_untrusted(text)
+        if self._display.holds_value(text) or self._display.holds_value(flat):
+            return WITHHELD
+        return WITHHELD if looks_secret_shaped(text) else flat
 
 
 def _location(segments: Sequence[Segment], shown: Callable[[str], str]) -> str:
@@ -162,13 +171,13 @@ def _location(segments: Sequence[Segment], shown: Callable[[str], str]) -> str:
     return out
 
 
-def _hit(found: _Found, credential: str, shown: Callable[[str], str]) -> Hit:
+def _hit(found: _Found, credential: str, shown: _Printer) -> Hit:
     site = found.site
     record = site.otlp
     return Hit(
         credential=credential,
         kind=site.place.kind,
-        file=shown(found.file),
+        file=shown.path(found.file),
         line=found.line,
         format=found.format,
         record=None if site.record_type is None else shown(site.record_type),
@@ -247,7 +256,7 @@ def audit_files(
         else:
             auditor.unknown(file, lines)
 
-    shown = _printer(auditor.matcher.found)
+    shown = _Printer(auditor.matcher.found)
     labels = {
         c.id: (shown(c.name), shown(c.display), shown(c.scope) if c.scope else "", c.id)
         for c in credentials
@@ -277,11 +286,11 @@ def audit_files(
     reasons: list[tuple[UnknownReason, str, int]] = []
     for file in files:
         if file.format is Format.UNKNOWN:
-            reasons.append((UnknownReason.UNRECOGNISED_FORMAT, shown(file.path), 0))
+            reasons.append((UnknownReason.UNRECOGNISED_FORMAT, shown.path(file.path), 0))
         for number in file.unparsed:
-            reasons.append((UnknownReason.UNPARSED_LINE, shown(file.path), number))
+            reasons.append((UnknownReason.UNPARSED_LINE, shown.path(file.path), number))
     for path in not_scanned:
-        reasons.append((UnknownReason.NOT_SCANNED, shown(path), 0))
+        reasons.append((UnknownReason.NOT_SCANNED, shown.path(path), 0))
     for hit in hits:
         if hit.kind is Kind.UNKNOWN:
             reasons.append((UnknownReason.UNKNOWN_KIND, hit.file, hit.line))
@@ -297,7 +306,7 @@ def audit_files(
     file_rows = sorted(
         (
             FileResult(
-                file=shown(f.path), format=f.format, records=f.records,
+                file=shown.path(f.path), format=f.format, records=f.records,
                 unrecognised_records=f.unrecognised, unparsed_lines=len(f.unparsed),
                 strings=f.strings, bytes=f.size,
                 not_scanned=not_scanned.get(f.path),

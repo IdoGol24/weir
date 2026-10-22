@@ -419,3 +419,16 @@ def test_the_report_depends_on_where_values_are_not_what_they_are(tmp_path: Path
         report = setup.audit([path]).stdout
         outputs.append((text, report))
     assert outputs[0] == outputs[1]
+
+
+def test_a_long_file_path_is_printed_in_full(tmp_path: Path) -> None:
+    """A subagent transcript under a long home sits deep; the report must
+    still name the file it found a credential in."""
+    setup = fx.build(tmp_path)
+    deep = tmp_path.joinpath(*(["a-rather-long-directory-name"] * 8))
+    session = fx.Session()
+    line, _ = session.tool_result("toolu_1", f"token {setup.values[fx.ACME]}")
+    path = session.write(deep / "subagents" / "agent-a1b2c3.jsonl")
+    assert len(str(path)) > 200
+    run = setup.audit([path], as_json=False)
+    assert run.lines[0].split(" file=")[1].startswith(f"{path}:{line} ")
