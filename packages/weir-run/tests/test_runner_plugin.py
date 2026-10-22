@@ -154,7 +154,7 @@ def test_a_repeated_flow_id_is_refused_before_the_flow_starts(
 def test_the_isolation_option_reaches_the_check(tmp_path: Path) -> None:
     (tmp_path / "conftest.py").write_text(UNAVAILABLE, encoding="utf-8")
     done = _inner(tmp_path, "--canary-require-isolation", "-k", "test_clean")
-    assert "FAILED test_inner.py::test_clean" in done.stdout, done.stdout
+    assert "ERROR test_inner.py::test_clean" in done.stdout, done.stdout
     assert "canary check exited 3" in done.stdout
     assert "incomplete: network_not_isolated" in done.stdout
     assert "network: not isolated (user namespaces are disabled)" in done.stdout
