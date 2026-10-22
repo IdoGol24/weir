@@ -99,6 +99,7 @@ name = "inventory reaches only the catalog"
 type = "forbidden"
 source_modules = ["weir.inventory"]
 forbidden_modules = [
+    "weir.audit",
     "weir.cli",
     "weir.adapters",
     "weir.graph",
@@ -121,6 +122,7 @@ name = "canary judge is pure: no network, process, clock or pipeline"
 type = "forbidden"
 source_modules = ["weir.canary"]
 forbidden_modules = [
+    "weir.audit",
     "socket",
     "ssl",
     "http",
@@ -150,6 +152,50 @@ forbidden_modules = [
     "weir.report",
     "weir.rules_commons",
     "weir.catalog",
+    "weir_tracegen",
+]
+
+[[tool.importlinter.contracts]]
+# docs/audit.md: the audit is a pure function of its inputs, its flags and
+# `CLAUDE_CONFIG_DIR`, which the command line reads and hands in. It reads
+# the files it is given and nothing else: no socket, no process, no clock,
+# no randomness (`secrets` included: it never makes a key), and none of the
+# trace pipeline. It reuses the canary
+# judge's OTLP walk, file collection and printing rule, and the inventory's
+# record types and name rule.
+name = "audit is pure: no network, process, clock, randomness or pipeline"
+type = "forbidden"
+source_modules = ["weir.audit"]
+forbidden_modules = [
+    "socket",
+    "ssl",
+    "http",
+    "urllib",
+    "ftplib",
+    "smtplib",
+    "xmlrpc",
+    "socketserver",
+    "asyncio",
+    "selectors",
+    "subprocess",
+    "multiprocessing",
+    "concurrent",
+    "time",
+    "datetime",
+    "random",
+    "secrets",
+    "weir.cli",
+    "weir.adapters",
+    "weir.inventory.core",
+    "weir.inventory.fingerprint",
+    "weir.graph",
+    "weir.gauge",
+    "weir.label",
+    "weir.taint",
+    "weir.evaluate",
+    "weir.exposure",
+    "weir.report",
+    "weir.rules_commons",
     "weir_tracegen",
 ]
 

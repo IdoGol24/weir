@@ -1,5 +1,5 @@
-"""Minimal CLI surface (L18): `weir gauge`, `weir scan`, `weir inventory` and
-`weir canary judge`.
+"""Minimal CLI surface (L18): `weir gauge`, `weir scan`, `weir inventory`,
+`weir audit` and `weir canary judge`.
 
 Thin argument parsing over the pure pipeline functions - no logic of its
 own. `weir test`/`validate`/`verify`/`feedback`/`rules list`/`events import`
@@ -26,6 +26,9 @@ import msgspec
 
 from weir.adapters.otel import REMEDIATION, OtlpRejectError, decode_input, map_wire
 from weir.adapters.otel.exposure import scan_surface
+from weir.audit import AuditInputError, audit_paths
+from weir.audit import encode_report as encode_audit_report
+from weir.audit import report_lines as audit_report_lines
 from weir.canary import (
     CaptureError,
     CaptureFile,
@@ -433,6 +436,58 @@ def inventory_command(
         for line in inventory_lines(report, unknown_list_path=unknown_path.as_posix()):
             click.echo(line)
     raise SystemExit(1 if strict and report.counts.env_unknown else 0)
+
+
+@main.command("audit")
+@click.option(
+    "--inventory",
+    "report_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    required=True,
+    help="The weir-inventory/1 report (weir inventory --json).",
+)
+@click.option(
+    "--store",
+    "store_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    required=True,
+    help="The fingerprint store from the same weir inventory run (--store).",
+)
+@click.option(
+    "--key",
+    "key_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    required=True,
+    help="The fingerprint key that run used. Never created: a new key matches nothing.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the weir-audit/1 JSON report.")
+@click.argument("paths", metavar="PATH...", nargs=-1, required=True)
+def audit_command(
+    report_path: Path, store_path: Path, key_path: Path, as_json: bool, paths: tuple[str, ...]
+) -> None:
+    """(experimental) Report which inventoried credentials entered an agent's
+    context or were sent out in a tool call, in Claude Code session files or
+    OTLP telemetry (PATH: files or directories). Never prints a value.
+    CLAUDE_CONFIG_DIR, when set, names a Claude config directory whose
+    projects folder counts like ~/.claude/projects.
+
+    Exit 0 clean, 1 exposed, 2 unusable input, 3 unknown."""
+    try:
+        # The command line reads the one variable the audit honours and hands
+        # it in, so weir.audit itself stays a function of its arguments.
+        config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+        report = audit_paths(
+            report_path, store_path, key_path, paths, (config_dir,) if config_dir else ()
+        )
+    except AuditInputError as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(2) from exc
+    if as_json:
+        click.echo(encode_audit_report(report).decode(), nl=False)
+    else:
+        for line in audit_report_lines(report):
+            click.echo(line)
+    raise SystemExit(report.exit_code)
 
 
 @main.group("canary")

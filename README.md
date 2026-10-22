@@ -77,7 +77,7 @@ command = ["{python}", "examples/quickstart.py"]
 
 The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
 
-## Also included: the flow scan and `weir inventory` (experimental)
+## Also included: the flow scan, `weir inventory` and `weir audit` (experimental)
 
 ### The flow scan
 
@@ -97,6 +97,17 @@ Each check is a rule, and a rule is a short JSON file naming a source, a destina
 ### `weir inventory` (experimental)
 
 `weir inventory --home DIR` lists the credentials an agent could reach: standard credential files, project files (with imported gitleaks or trufflehog results), the launch environment and shell startup files, and the approved map `.weir/reach.yml`. It reports them by name, source and location only. It never prints, logs or stores a value; what it can store is a keyed fingerprint plus offsets ([contract](https://github.com/IdoGol24/weir/blob/main/docs/inventory.md)). Its output and JSON schema may change without notice.
+
+### `weir audit` (experimental)
+
+`weir audit` checks your own credentials against your own coding agent sessions. Given the report, the fingerprint store and the key from one `weir inventory --store` run, it reads saved Claude Code session files or exported OTLP telemetry offline and reports which credentials entered the agent's context and which were sent out in a tool call, with counts, files, lines and fields. It matches by keyed fingerprint, never by pattern, and never prints a value. A file or record it cannot read is reported as unknown (exit 3), never as clean ([contract](https://github.com/IdoGol24/weir/blob/main/docs/audit.md)). Its output and JSON schema may change without notice.
+
+```sh
+weir inventory --home ~ --json --store store.json > inventory.json
+weir audit --inventory inventory.json --store store.json --key ~/.weir/fingerprint.key ~/.claude/projects/
+```
+
+If you set `CLAUDE_CONFIG_DIR` to move Claude Code's config directory, pass `"$CLAUDE_CONFIG_DIR/projects"` instead; with the variable set, the audit reads that projects folder the way it reads `~/.claude/projects`.
 
 ## Why you can trust it
 

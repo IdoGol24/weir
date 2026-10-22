@@ -296,6 +296,10 @@ class StoredRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
 class Store(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     schema: str
+    # HMAC-SHA256 under the key of a fixed message (fingerprint.key_check):
+    # derived from the key alone, it lets a reader tell the store's key from
+    # another one, which would otherwise match nothing and read as clean.
+    key_check: str
     records: list[StoredRecord]
 
 

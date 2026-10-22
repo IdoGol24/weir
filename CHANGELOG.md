@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Added
+- **weir-scan: `weir audit` checks your own credentials against your own
+  agent sessions (experimental).** Given the `weir-inventory/1` report, the
+  fingerprint store and the key from one `weir inventory --store` run, it
+  reads Claude Code session files (main transcripts, subagent transcripts
+  and their sidecars, and saved tool outputs), `CLAUDE.md` and auto-memory files, and OTLP/JSON
+  telemetry (GenAI attributes and Claude Code's own log events) offline,
+  and reports per
+  credential, by inventory name and never by value, whether it entered the
+  agent's context or was sent out in a tool call, with counts and the file,
+  line, field, tool and argument of each sighting. Strings are matched by
+  keyed fingerprint in every form the canary judge matches (raw, JSON, double
+  JSON, URL, base64, base64url, hex). An unrecognised file format, a line
+  that is not a record, a file not scanned or a sighting whose place it
+  cannot classify makes the result `unknown`, exit 3, never a false clean,
+  and so does an empty input: a missing or empty directory, or paths whose
+  files were all skipped.
+  When `CLAUDE_CONFIG_DIR` is set, the projects folder of the Claude config
+  directory it names counts like `~/.claude/projects`.
+  Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
+  schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
+- **weir-scan: the inventory store carries a key check.**
+  `weir-inventory-store/1` gains `key_check`, an HMAC of a fixed message
+  under the fingerprint key, so a reader can tell the store's key from
+  another one. `weir audit` refuses a store without it: run
+  `weir inventory --store` again.
+
 ## [0.6.0] - 2026-10-22
 
 ### Added
