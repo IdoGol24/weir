@@ -12,6 +12,9 @@
         "claude_code_files": {
           "type": "integer"
         },
+        "claude_code_memory_files": {
+          "type": "integer"
+        },
         "claude_code_tool_results_files": {
           "type": "integer"
         },
@@ -53,6 +56,7 @@
         "files",
         "claude_code_files",
         "claude_code_tool_results_files",
+        "claude_code_memory_files",
         "otlp_files",
         "unknown_files",
         "not_scanned",
@@ -197,6 +201,7 @@
       "description": "A file's format (docs/audit.md, \"Files and formats\"), in report order.",
       "enum": [
         "claude-code",
+        "claude-code-memory",
         "claude-code-tool-results",
         "otlp",
         "unknown"

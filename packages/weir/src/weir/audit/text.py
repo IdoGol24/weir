@@ -15,6 +15,7 @@ from weir.audit._types import CredentialResult, Format, Hit, Report, State
 _FORMATS = (
     (Format.CLAUDE_CODE, "claude_code_files"),
     (Format.CLAUDE_CODE_TOOL_RESULTS, "claude_code_tool_results_files"),
+    (Format.CLAUDE_CODE_MEMORY, "claude_code_memory_files"),
     (Format.OTLP, "otlp_files"),
     (Format.UNKNOWN, "unknown_files"),
 )

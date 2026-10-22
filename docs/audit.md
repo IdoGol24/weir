@@ -85,6 +85,7 @@ its path, never guessed from its name alone:
 | --- | --- | --- |
 | `claude-code` | a JSON Lines file whose parsed lines are JSON objects, at least one with `type` `user` or `assistant` and a string `sessionId` | a Claude Code session file: the main transcript or a subagent's (`<session>/subagents/*.jsonl`) |
 | `claude-code-tool-results` | a file whose parent directory is named `tool-results` | a large tool output Claude Code saved beside a session (`<session>/tool-results/`): text |
+| `claude-code-memory` | a file named `CLAUDE.md`, or a `.md` file in a directory named `memory` two levels below a directory named `projects` (`projects/<project>/memory/*.md`, `MEMORY.md` included) | a file Claude Code loads into the agent's context: a `CLAUDE.md` or an auto-memory file. Text |
 | `otlp` | a JSON Lines file whose parsed lines are OTLP/JSON export requests (an object holding `resourceSpans`, `resourceLogs` or `resourceMetrics`), or a whole file that is one such request | exported telemetry |
 | `unknown` | anything else | searched as text, line by line; a line that is a JSON value is walked as one |
 
@@ -217,25 +218,40 @@ A `claude-code-tool-results` file is `stored`: Claude Code shows the agent
 a preview of a large tool output and saves the whole output there, and the
 preview's own copy is in the transcript's `tool_result`.
 
+A `claude-code-memory` file is `context`: Claude Code loads `CLAUDE.md` and
+its auto-memory files into the agent's context. Each line is a string, with
+no location.
+
 #### OTLP telemetry
 
-Kinds follow the OpenTelemetry GenAI semantic conventions. For a string in
-a span, a span event or a log record, the attribute it sits under decides:
+Kinds follow the OpenTelemetry GenAI semantic conventions, and, in a log
+record, the attributes of Claude Code's own log events. For a string in a
+span, a span event or a log record, the attribute it sits under decides:
 
-| attribute | kind |
-| --- | --- |
-| `gen_ai.tool.call.arguments` | `tool_call`; `tool` is the record's `gen_ai.tool.name` |
-| `gen_ai.tool.call.result` | `context`; `tool` is the record's `gen_ai.tool.name` |
-| `gen_ai.input.messages`, `gen_ai.system_instructions` | `context` |
-| `gen_ai.output.messages` | `context`, except in a message part whose `type` is `tool_call`: there, below `arguments`, `tool_call`, with `tool` the part's `name` |
-| anything else | `unknown` |
+| attribute | in | kind |
+| --- | --- | --- |
+| `gen_ai.tool.call.arguments` | any record | `tool_call`; `tool` is the record's `gen_ai.tool.name`, `argument` the location below the attribute |
+| `gen_ai.tool.call.result` | any record | `context`; `tool` is the record's `gen_ai.tool.name` |
+| `gen_ai.input.messages`, `gen_ai.system_instructions` | any record | `context` |
+| `gen_ai.output.messages` | any record | `context`, except in a message part whose `type` is `tool_call`: there, below `arguments`, `tool_call`, with `tool` the part's `name` and `argument` the location below `arguments` |
+| `tool_parameters` | a log record | `tool_call` (Claude Code's `claude_code.tool_result` event); `tool` is the record's `tool_name`, `argument` the location below the attribute |
+| `prompt` | a log record | `context` (Claude Code's `claude_code.user_prompt` event) |
+| anything else | | `unknown` |
 
-An attribute whose value is a string holding a JSON document is walked as
-that document, so `argument` is the location within the arguments (for
-example `command`) and a message part's `type` can be read. A `tool_call`
-part's `arguments` that is itself a string holding a JSON document is walked
-the same way. The location of a hit inside it is the attribute's location
-followed by the location within the document.
+An attribute's value is read the same way whether it is a string holding a
+JSON document or a structured value (an `arrayValue` or `kvlistValue`): a
+string holding a JSON document is walked as that document, so `argument`
+is the location within the arguments (for example `command`) and a message
+part's `type` and `name` can be read; a structured value is read as the
+canary judge's walk reads it, an `arrayValue` element as `[i]` and a
+`kvlistValue` entry as `.key`. A `tool_call` part's `arguments` that is
+itself a string holding a JSON document is walked the same way. The
+location of a hit inside it is the attribute's location followed by the
+location within the document or value.
+
+The structured walk reads `resourceSpans`, `resourceLogs` and
+`resourceMetrics`. Every other member of an export request is searched as
+well, with its location, and a hit there is `unknown`.
 
 #### Unknown formats and unparsed lines
 
@@ -336,7 +352,8 @@ Precisely:
   `log=<index>` or `metric=<quoted name>` for an OTLP record, or
   `signal=<signal>` alone for an OTLP string outside any record (a
   resource or scope attribute), or `format=<format>` for a text line (an
-  `unknown` or `claude-code-tool-results` file, or an unparsed line), then
+  `unknown`, `claude-code-tool-results` or `claude-code-memory` file, or an
+  unparsed line) or an export request member outside the signals, then
   `tool=<quoted name>` and
   `argument=<location>` when there is one, then `at=<location>` when there
   is one, then `form=<form>`; `<KIND>` is `TOOL_CALL`, `CONTEXT`, `UNKNOWN`
@@ -348,7 +365,8 @@ Precisely:
   `not scanned: <file> (<reason>)` and `unknown: <reason> <subject>`;
 - `coverage: <N> credentials (<K> checkable), <F> files (<groups>), <R> records (<U> unrecognised), <P> unparsed lines, <S> strings`,
   `<groups>` the count of each format present, in the order
-  `claude-code`, `claude-code-tool-results`, `otlp`, `unknown`, then
+  `claude-code`, `claude-code-tool-results`, `claude-code-memory`, `otlp`,
+  `unknown`, then
   `<X> not scanned` when files were not scanned, joined by `, ` (so the
   groups add up to `<F>`; `0 files ()` when there are none). A count of 1
   takes the singular: `1 credential`, `1 file`, `1 record`,
@@ -375,7 +393,7 @@ drift-tested: [`packages/weir/schema_artifacts/audit.v1.schema.json`](../package
 | `hits` | array | one per hit and credential (below) |
 | `files` | array | `{file, format, records, unrecognised_records, unparsed_lines, strings, bytes, not_scanned}`, sorted by file; `not_scanned` is `compressed`, `symlink` or null, and `format` is null for a file not scanned |
 | `unknown` | array | `{reason, subject}` |
-| `coverage` | object | `credentials`, `checkable`, `not_checkable`, `files`, `claude_code_files`, `claude_code_tool_results_files`, `otlp_files`, `unknown_files`, `not_scanned`, `records`, `unrecognised_records`, `unparsed_lines`, `strings`, `bytes` |
+| `coverage` | object | `credentials`, `checkable`, `not_checkable`, `files`, `claude_code_files`, `claude_code_tool_results_files`, `claude_code_memory_files`, `otlp_files`, `unknown_files`, `not_scanned`, `records`, `unrecognised_records`, `unparsed_lines`, `strings`, `bytes` |
 
 A credential:
 
@@ -423,6 +441,15 @@ credentials and the matching rules above. The audit does not find:
 
 The kinds are a reading of the file formats, not of the agent's memory: a
 `context` value was in the record the format says the agent receives.
+
+### Known limit: speed
+
+The audit searches every candidate of every string in every form, and
+prints nothing until it is done. Measured on fake data: about 3 seconds per
+MB of tool output text with little repetition (10 MB took 30 seconds), and
+about 10 seconds for one 3 MB base64 image block, which is decoded and
+searched from each of its four offsets. A whole `~/.claude/projects/` of
+hundreds of MB can take tens of minutes or more.
 
 ## Testing against this contract
 

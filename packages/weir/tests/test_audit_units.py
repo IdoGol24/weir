@@ -471,3 +471,147 @@ def test_tool_call_part_arguments_written_as_a_json_string_are_walked(tmp_path: 
     assert hit["location"] == (
         "attributes.gen_ai.output.messages[0].parts[0].arguments.headers.authorization"
     )
+
+
+@pytest.mark.parametrize("arguments_as", ["structured", "json_string"])
+def test_a_tool_call_part_in_structured_output_messages_is_a_tool_call(
+    tmp_path: Path, arguments_as: str
+) -> None:
+    setup = fx.build(tmp_path)
+    arguments: object = {"command": f"curl -H 'x: {setup.values[fx.ACME]}'"}
+    if arguments_as == "json_string":
+        arguments = json.dumps(arguments)
+    messages = [{"role": "assistant", "parts": [
+        {"type": "text", "content": f"token {setup.values[fx.GH]}"},
+        {"type": "tool_call", "id": "call_1", "name": "Bash", "arguments": arguments}]}]
+    span = cfx.span("chat fake-model", attributes=[
+        {"key": "gen_ai.output.messages", "value": fx.any_value(messages)},
+    ])
+    run = setup.audit([fx.write_otlp(tmp_path / "otlp.jsonl", span)])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["tool"], hit["argument"], hit["location"]) == (
+        "tool_call", "Bash", "command",
+        "attributes.gen_ai.output.messages[0].parts[1].arguments.command",
+    )
+    text = _only_hit(run, setup, fx.GH)
+    assert (text["kind"], text["tool"], text["location"]) == (
+        "context", None, "attributes.gen_ai.output.messages[0].parts[0].content",
+    )
+    assert fx.credential(run.report, setup.ids[fx.ACME])["state"] == "in_tool_call"
+
+
+def test_claude_code_log_events_are_classified(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    parameters = json.dumps({"bash_command": f"curl -H 'x: {setup.values[fx.ACME]}'"})
+    request = cfx.logs(
+        fx.claude_code_event("user_prompt", prompt=f"use {setup.values[fx.GH]}"),
+        fx.claude_code_event("tool_result", tool_name="Bash", tool_parameters=parameters),
+        fx.claude_code_event("api_request", model=setup.values[fx.AWS_ID]),
+    )
+    path = tmp_path / "otlp.jsonl"
+    cfx.write(path, request + "\n")
+    run = setup.audit([path])
+    call = _only_hit(run, setup)
+    assert (call["kind"], call["signal"], call["log_record"], call["tool"], call["argument"]) == (
+        "tool_call", "logs", 1, "Bash", "bash_command",
+    )
+    assert call["location"] == "attributes.tool_parameters.bash_command"
+    prompt = _only_hit(run, setup, fx.GH)
+    assert (prompt["kind"], prompt["log_record"], prompt["location"]) == (
+        "context", 0, "attributes.prompt",
+    )
+    other = _only_hit(run, setup, fx.AWS_ID)
+    assert (other["kind"], other["location"]) == ("unknown", "attributes.model")
+    assert run.exit_code == 1
+
+
+def test_claude_code_log_attributes_in_a_span_are_unknown(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    span = cfx.span("tool", attributes=[
+        cfx.kv("tool_name", "Bash"),
+        cfx.kv("tool_parameters", json.dumps({"bash_command": setup.values[fx.ACME]})),
+        cfx.kv("prompt", setup.values[fx.GH]),
+    ])
+    run = setup.audit([fx.write_otlp(tmp_path / "otlp.jsonl", span)])
+    assert [h["kind"] for h in fx.hits(run.report, setup.ids[fx.ACME])] == ["unknown"]
+    assert [h["kind"] for h in fx.hits(run.report, setup.ids[fx.GH])] == ["unknown"]
+    assert run.exit_code == 3
+
+
+@pytest.mark.parametrize("layout", ["json_lines", "whole_file"])
+def test_an_export_request_member_outside_the_signals_is_searched(
+    tmp_path: Path, layout: str
+) -> None:
+    setup = fx.build(tmp_path)
+    request = json.loads(cfx.traces(cfx.span("op")))
+    request["extra"] = {"note": setup.values[fx.ACME]}
+    path = tmp_path / "otlp.json"
+    cfx.write(path, json.dumps(request) + "\n" if layout == "json_lines" else
+              json.dumps(request, indent=2))
+    run = setup.audit([path])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["format"], hit["signal"], hit["location"], hit["line"]) == (
+        "unknown", "otlp", None, "extra.note", 1,
+    )
+    assert ("unknown_kind", f"{path}:1") in [
+        (u["reason"], u["subject"]) for u in run.report["unknown"]  # type: ignore[union-attr,index]
+    ]
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+
+
+def _memory_tree(setup: fx.Setup, tmp_path: Path) -> dict[str, Path]:
+    project = tmp_path / "claude" / "projects" / "-fake-home-work-proj"
+    files = {
+        "session": _session(setup, project / f"{fx.SESSION_ID}.jsonl"),
+        "index": project / "memory" / "MEMORY.md",
+        "topic": project / "memory" / "deploy.md",
+        "claude_md": tmp_path / "claude" / "CLAUDE.md",
+    }
+    files["index"].parent.mkdir(parents=True)
+    cfx.write(files["index"], "# Memory\n- [Deploy](deploy.md) - how to deploy\n")
+    cfx.write(files["topic"], "# Deploy\nrun the deploy script\n")
+    cfx.write(files["claude_md"], "# Rules\nUse plain dashes.\n")
+    return files
+
+
+def test_clean_claude_code_memory_and_claude_md_files_are_clean(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    files = _memory_tree(setup, tmp_path)
+    run = setup.audit([tmp_path / "claude"])
+    formats = {f["file"]: f["format"] for f in run.report["files"]}  # type: ignore[union-attr,index]
+    assert formats == {
+        str(files["session"]): "claude-code",
+        str(files["index"]): "claude-code-memory",
+        str(files["topic"]): "claude-code-memory",
+        str(files["claude_md"]): "claude-code-memory",
+    }
+    assert (run.report["result"], run.exit_code, run.report["unknown"]) == ("clean", 0, [])
+
+
+@pytest.mark.parametrize("name", ["index", "topic", "claude_md"])
+def test_a_value_in_a_memory_or_claude_md_file_is_in_context(tmp_path: Path, name: str) -> None:
+    setup = fx.build(tmp_path)
+    path = _memory_tree(setup, tmp_path)[name]
+    before = path.read_text()
+    cfx.write(path, before + f"token: {setup.values[fx.ACME]}\n")
+    run = setup.audit([tmp_path / "claude"])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["file"], hit["line"], hit["format"], hit["location"]) == (
+        "context", str(path), before.count("\n") + 1, "claude-code-memory", None,
+    )
+    assert fx.credential(run.report, setup.ids[fx.ACME])["state"] == "in_context"
+    assert run.exit_code == 1
+
+
+@pytest.mark.parametrize("where", ["projects/p/notes.md", "work/memory/MEMORY.md",
+                                   "projects/p/memory/MEMORY.txt"])
+def test_a_markdown_file_outside_the_memory_layout_is_unrecognised(
+    tmp_path: Path, where: str
+) -> None:
+    setup = fx.build(tmp_path)
+    path = tmp_path / "claude" / where
+    path.parent.mkdir(parents=True)
+    cfx.write(path, "# Notes\nnothing here\n")
+    run = setup.audit([path])
+    assert run.report["files"][0]["format"] == "unknown"  # type: ignore[index]
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
