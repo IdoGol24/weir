@@ -269,7 +269,7 @@ one line each.
 | | `required` | boolean | optional, default `false`: the run is incomplete unless `isolated` |
 | `direct` | `flow` | string | the id of the flow that made the attempt, defined by a `flow` record on any line |
 | | `protocol` | string | `tcp` (a connection opened to an address), `udp` (a datagram sent to an address) or `dns` (a name looked up) |
-| | `target` | string | `<address>:<port>` (an IPv6 address in brackets) for `tcp` and `udp`, the name asked for for `dns`; 1 to 260 characters from `[A-Za-z0-9._:[]-]` |
+| | `target` | string | `<address>:<port>` (an IPv6 address in brackets) for `tcp` and `udp`, the name asked for for `dns`; 1 to 260 characters from `[A-Za-z0-9._:[]_-]` |
 | | `attempts` | integer | how many times, at least 1 |
 
 A ledger has at most one `network` record. Without one, nothing says the
@@ -442,17 +442,16 @@ a swept capture file, so a canary in it is a hit like any other.
 Where the runner cannot make the namespace (not Linux; user namespaces
 disabled, as `kernel.unprivileged_userns_clone=0` or
 `user.max_user_namespaces=0` do; or restricted, as Ubuntu's
-`kernel.apparmor_restrict_unprivileged_userns=1` does), or isolation is
-turned off, the flows run on the host's network as before, the runner's
-output names why, and the `network` record says not `isolated`. The report
-then says direct connections were not observed. A run that must not pass
+`kernel.apparmor_restrict_unprivileged_userns=1` does), the flows run on
+the host's network as before, the runner's output names why, and the
+`network` record says not `isolated`. The report then says direct
+connections were not observed. A run that must not pass
 unisolated says `required`: `weir-run run --require-isolation`, or
 `pytest --canary-require-isolation`.
 
 A flow that needs the host's network, such as one that installs packages
 or uses a database on the host's loopback, cannot work isolated: install
-first, mock the service, or turn isolation off (`--no-isolation`,
-`--canary-no-isolation`) and accept a report that says so.
+first, or mock the service.
 
 ## Exit codes
 

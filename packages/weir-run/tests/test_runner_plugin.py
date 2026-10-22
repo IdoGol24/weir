@@ -47,6 +47,17 @@ def test_explicit_judge(canary_check, tmp_path):
     assert "LEAK env.APP_KEY" in result.report
 """
 
+# An inner conftest that makes isolation unavailable, as on a host without
+# user namespaces.
+UNAVAILABLE = """
+from weir_run import isolation
+
+def _unavailable():
+    raise isolation.Unavailable("user namespaces are disabled")
+
+isolation.jail = _unavailable
+"""
+
 
 def _inner(root: Path, *options: str) -> subprocess.CompletedProcess[str]:
     (root / "test_inner.py").write_text(INNER_TESTS, encoding="utf-8")
@@ -140,14 +151,10 @@ def test_a_repeated_flow_id_is_refused_before_the_flow_starts(
         check.close()
 
 
-def test_the_isolation_options_reach_the_check(tmp_path: Path) -> None:
-    done = _inner(tmp_path, "--canary-no-isolation", "-k", "test_clean")
-    assert "PASSED test_inner.py::test_clean" in done.stdout, done.stdout
-    assert "network: not isolated (isolation turned off)" in done.stdout
-    assert "network not isolated: direct connections were not observed" in done.stdout
-
-
-def test_the_isolation_options_cannot_contradict(tmp_path: Path) -> None:
-    done = _inner(tmp_path, "--canary-no-isolation", "--canary-require-isolation")
-    assert done.returncode == pytest.ExitCode.USAGE_ERROR
-    assert "contradict each other" in done.stderr
+def test_the_isolation_option_reaches_the_check(tmp_path: Path) -> None:
+    (tmp_path / "conftest.py").write_text(UNAVAILABLE, encoding="utf-8")
+    done = _inner(tmp_path, "--canary-require-isolation", "-k", "test_clean")
+    assert "FAILED test_inner.py::test_clean" in done.stdout, done.stdout
+    assert "canary check exited 3" in done.stdout
+    assert "incomplete: network_not_isolated" in done.stdout
+    assert "network: not isolated (user namespaces are disabled)" in done.stdout

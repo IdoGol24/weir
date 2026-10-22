@@ -170,8 +170,9 @@ def test_isolated_a_clean_run_passes_with_require_isolation(
 def test_without_isolation_the_coverage_line_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
 ) -> None:
+    _unavailable(monkeypatch)
     config, _ = _config(tmp_path, bypass=False)
-    result, report = _run(monkeypatch, judge, config, "--no-isolation")
+    result, report = _run(monkeypatch, judge, config)
     assert result.exit_code == 0, result.output
     lines = result.stdout.splitlines()
     assert NOT_ISOLATED_LINE in lines

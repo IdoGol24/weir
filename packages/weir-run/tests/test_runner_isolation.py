@@ -316,13 +316,49 @@ def test_a_canary_in_a_blocked_datagram_is_a_leak(
     )
 
 
-def test_a_run_cannot_both_require_and_turn_off_isolation(
+@pytest.mark.usefixtures("isolated")
+def test_a_lookup_of_an_underscore_name_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
 ) -> None:
-    result = _cli(monkeypatch, judge, tmp_path, "", "--require-isolation", "--no-isolation")
-    assert result.exit_code == 2
-    assert "contradict each other" in result.stderr
-    assert result.stdout == ""
+    # Service and policy names, as SRV and DMARC lookups ask for.
+    clean = DATAGRAMS.split("# A metrics client")[0]
+    body = clean + """
+query = struct.pack("!HHHHHH", 7, 0x0100, 1, 0, 0, 0)
+query += b"\\x06_dmarc\\x07example\\x03com\\x00\\x00\\x10\\x00\\x01"
+socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(query, ("192.0.2.53", 53))
+"""
+    result = _cli(monkeypatch, judge, tmp_path, body)
+    assert result.exit_code == 3, result.output
+    direct = [line for line in result.stdout.splitlines() if "direct_connection" in line]
+    assert direct == ["incomplete: direct_connection main=dns:_dmarc.example.com"]
+    assert "blocked direct dns lookup of _dmarc.example.com from flow main (1x)" in result.stderr
+
+
+@pytest.mark.usefixtures("isolated")
+def test_flows_whose_ids_share_a_file_name_keep_their_own_datagrams(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    # `agent:a` and `agent/a` both become `agent_a` in a file name; only the
+    # first flow's datagram carries the key.
+    clean = DATAGRAMS.split("# A metrics client")[0]
+    send = """
+socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(%s, ("198.51.100.9", 8125))
+"""
+    (tmp_path / "first.py").write_text(clean + send % '("k:" + key).encode()', encoding="utf-8")
+    (tmp_path / "second.py").write_text("import socket\n" + send % 'b"m:1|c"', encoding="utf-8")
+    config = "".join(
+        f"""
+[[flow]]
+id = "{flow_id}"
+command = ["{{python}}", {json.dumps((tmp_path / name).as_posix())}]
+"""
+        for flow_id, name in (("agent:a", "first.py"), ("agent/a", "second.py"))
+    )
+    placement = CONFIG.split("[[flow]]")[0]
+    result = _cli(monkeypatch, judge, tmp_path, "", config=placement + config)
+    assert result.exit_code == 1, result.output
+    lines = result.stdout.splitlines()
+    assert "LEAK env.APP_KEY file=capture/swept/direct-agent_a-1.udp:1 signal=raw form=raw" in lines
 
 
 def test_the_plugin_requires_isolation_when_asked(

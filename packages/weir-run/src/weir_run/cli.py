@@ -62,18 +62,12 @@ def main() -> None:
     is_flag=True,
     help="Make a run whose flows could not be isolated from the network incomplete (exit 3).",
 )
-@click.option(
-    "--no-isolation",
-    is_flag=True,
-    help="Run flows on the host's network, as a run where isolation is unavailable does.",
-)
 def run_command(
     config_path: Path,
     report: Path | None,
     seed: int | None,
     weir_path: str | None,
     require_isolation: bool,
-    no_isolation: bool,
 ) -> None:
     """Plant canaries, run every flow against the loopback mock, judge the capture.
 
@@ -84,8 +78,6 @@ def run_command(
     # the flow's processes are stopped and the ledger and capture deleted.
     previous = signal.signal(signal.SIGTERM, _terminate)
     try:
-        if require_isolation and no_isolation:
-            raise SpecError("--require-isolation and --no-isolation contradict each other")
         if report is not None and not report.parent.is_dir():
             raise SpecError(f"--report {report}: no such directory {report.parent}")
         spec = config.load(config_path)
@@ -98,7 +90,6 @@ def run_command(
             err=sys.stderr,
             seed=seed,
             json_report=report,
-            isolate=not no_isolation,
             require_isolation=require_isolation,
         )
     except (SpecError, LedgerError, OSError, subprocess.SubprocessError, RuntimeError) as exc:

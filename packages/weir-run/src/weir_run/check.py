@@ -54,7 +54,6 @@ class CheckRun:
         seed: int | None = None,
         python: str = sys.executable,
         validate_spec: bool = True,
-        isolate: bool = True,
         require_isolation: bool = False,
     ) -> None:
         if validate_spec:
@@ -75,13 +74,10 @@ class CheckRun:
         self.run_dir = Path(tempfile.mkdtemp(prefix="canary-run-"))
         self._flow_dirs = Path(tempfile.mkdtemp(prefix="canary-flows-"))
         try:
-            if isolate:
-                try:
-                    self.jail = isolation.jail()
-                except isolation.Unavailable as exc:
-                    self.not_isolated = str(exc)
-            else:
-                self.not_isolated = "isolation turned off"
+            try:
+                self.jail = isolation.jail()
+            except isolation.Unavailable as exc:
+                self.not_isolated = str(exc)
             self.ledger = Ledger(self.run_dir / judge_cli.LEDGER, self.source, spec.reserved_ids())
             self.ledger.network(isolated=self.jail is not None, required=require_isolation)
             self.capture = Capture(self.run_dir / "capture")
@@ -221,13 +217,10 @@ def run_spec(
     seed: int | None = None,
     json_report: Path | None = None,
     python: str = sys.executable,
-    isolate: bool = True,
     require_isolation: bool = False,
 ) -> int:
     """Run every flow of spec, judge, clean up. Returns the exit code."""
-    run = CheckRun(
-        spec, judge, seed=seed, python=python, isolate=isolate, require_isolation=require_isolation
-    )
+    run = CheckRun(spec, judge, seed=seed, python=python, require_isolation=require_isolation)
     try:
         for flow in spec.flows:
             run.run_flow(flow)

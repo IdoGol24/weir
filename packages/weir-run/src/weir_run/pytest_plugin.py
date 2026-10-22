@@ -18,8 +18,7 @@ The judge is `weir` beside this interpreter or on PATH; override the
 
 Flows run in a loopback-only network namespace where one can be made, as
 under `weir-run run`. `pytest --canary-require-isolation` makes a check
-whose flows could not be isolated incomplete; `--canary-no-isolation` runs
-them on the host's network.
+whose flows could not be isolated incomplete.
 """
 
 from __future__ import annotations
@@ -65,12 +64,10 @@ class CanaryCheck:
         judge_command: Sequence[str],
         cwd: Path,
         *,
-        isolate: bool = True,
         require_isolation: bool = False,
     ) -> None:
         self._judge_command = list(judge_command)
         self._cwd = cwd
-        self._isolate = isolate
         self._require_isolation = require_isolation
         self._placements: list[PlacementSpec] = []
         self._mock = MockSpec()
@@ -173,7 +170,6 @@ class CanaryCheck:
                 spec,
                 self._judge_command,
                 validate_spec=False,
-                isolate=self._isolate,
                 require_isolation=self._require_isolation,
             )
         return self._run
@@ -240,18 +236,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         help="Make a canary check whose flows could not be isolated from the network incomplete.",
     )
-    group.addoption(
-        "--canary-no-isolation",
-        action="store_true",
-        help="Run canary check flows on the host's network.",
-    )
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    if config.getoption("canary_require_isolation") and config.getoption("canary_no_isolation"):
-        raise pytest.UsageError(
-            "--canary-require-isolation and --canary-no-isolation contradict each other"
-        )
 
 
 @pytest.fixture
@@ -267,7 +251,6 @@ def canary_check(
     check = CanaryCheck(
         canary_judge_command,
         Path(str(request.path)).parent,
-        isolate=not request.config.getoption("canary_no_isolation"),
         require_isolation=bool(request.config.getoption("canary_require_isolation")),
     )
     try:

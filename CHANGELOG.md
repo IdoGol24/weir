@@ -13,7 +13,8 @@
   Linux, user namespaces disabled or restricted), the run goes ahead
   unisolated and says why. `--require-isolation`
   (`--canary-require-isolation`) makes an unisolated run incomplete, exit
-  3; `--no-isolation` (`--canary-no-isolation`) turns isolation off.
+  3. weir-run now requires `weir-scan>=0.6.0`, whose judge reads the new
+  ledger records.
 - **weir-scan: the judge reports whether the network was isolated.**
   `canary-ledger/1` gains a `network` record (`isolated`, `required`) and a
   `direct` record (`flow`, `protocol`, `target`, `attempts`) for each

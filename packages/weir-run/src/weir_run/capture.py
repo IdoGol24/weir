@@ -40,10 +40,11 @@ class Capture:
 
     def swept_file(self, stem: str, data: bytes, suffix: str = ".body") -> str:
         """Write one swept file and return its name under capture/swept."""
+        safe = safe_name(stem)
         with self._lock:
-            n = self._counts.get(stem, 0) + 1
-            self._counts[stem] = n
-            name = f"{safe_name(stem)}-{n}{suffix}"
+            n = self._counts.get(safe, 0) + 1
+            self._counts[safe] = n
+            name = f"{safe}-{n}{suffix}"
             (self.swept / name).write_bytes(data)
         return name
 

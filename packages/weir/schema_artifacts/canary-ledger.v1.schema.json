@@ -24,7 +24,7 @@
         "target": {
           "maxLength": 260,
           "minLength": 1,
-          "pattern": "^[A-Za-z0-9._:\\[\\]-]{1,260}$",
+          "pattern": "^[A-Za-z0-9._:\\[\\]_-]{1,260}$",
           "type": "string"
         },
         "type": {

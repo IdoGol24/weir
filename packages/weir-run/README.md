@@ -31,8 +31,9 @@ exit 0 clean and complete | 1 a canary reached the capture | 2 usage, input or r
 - **The judge is weir-scan's**, called only through its command line. The
   runner never imports weir, and weir never imports the runner (both are
   import-linter contracts in the repository's `pyproject.toml`). The runner
-  requires weir-scan 0.5.0 or later, the first release that ships
-  `weir canary judge`; without a judge it exits 2 before running anything.
+  requires weir-scan 0.6.0 or later, the first release whose
+  `weir canary judge` reads the ledger's `network` and `direct` records;
+  without a judge it exits 2 before running anything.
 - **Local and offline.** The mock binds `127.0.0.1` on a port the OS picks;
   there is no option to bind anything else. Every flow gets the mock as its
   HTTP and HTTPS proxy, and the mock refuses every proxied request: a
@@ -256,13 +257,12 @@ network not isolated: direct connections were not observed
 | option | `weir-run run` | pytest |
 | --- | --- | --- |
 | an unisolated run is incomplete (exit 3, `incomplete: network_not_isolated`) | `--require-isolation` | `--canary-require-isolation` |
-| run flows on the host's network | `--no-isolation` | `--canary-no-isolation` |
 
 Use `--require-isolation` in CI on Linux. A found leak still exits 1. A
 flow that needs the host's network (installing packages, a database on the
-host's loopback) does not work isolated: install first, mock the service,
-or turn isolation off and accept a report that says so. On a GitHub-hosted
-Ubuntu runner, allow unprivileged user namespaces first:
+host's loopback) does not work isolated: install first, or mock the
+service. On a GitHub-hosted Ubuntu runner, allow unprivileged user
+namespaces first:
 
 ```sh
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -308,9 +308,8 @@ capture, and fails the test unless the result is clean. To assert on the
 result yourself, call `result = canary_check.judge()` (`result.code`,
 `result.report`). The judge is the `weir` beside the interpreter or on
 `PATH`; override the `canary_judge_command` fixture to use another. Flows
-run isolated as under `weir-run run`; `--canary-require-isolation` and
-`--canary-no-isolation` are the pytest options (see
-[Network isolation](#network-isolation)).
+run isolated as under `weir-run run`; `--canary-require-isolation` is the
+pytest option (see [Network isolation](#network-isolation)).
 
 ## Limits of this release
 
