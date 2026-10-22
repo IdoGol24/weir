@@ -313,10 +313,11 @@ def claude_code_place(record: dict[str, Json], path: Path_, tools: dict[str, str
         return _content_place(record_type, content, path, tools)
     # Anything else in a message record is bookkeeping only under a field the
     # contract names; an unnamed field may carry text the agent sees.
-    if path[:1] == ("message",):
-        known = len(path) == 1 or path[1] in _MESSAGE_FIELDS
+    field = path[0] if path else None
+    if field == "message":
+        known = len(path) < 2 or path[1] in _MESSAGE_FIELDS
     else:
-        known = path[0] in _RECORD_FIELDS
+        known = field in _RECORD_FIELDS
     return _STORED if known else _UNKNOWN
 
 
