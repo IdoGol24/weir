@@ -22,6 +22,7 @@ import base64
 import binascii
 import gzip
 import json
+import socket
 import threading
 import zlib
 from collections import Counter
@@ -96,15 +97,28 @@ class Mock:
     def url(self) -> str:
         return f"http://{HOST}:{self.port}"
 
-    def start(self) -> None:
+    def start(self, listener: socket.socket | None = None) -> None:
+        """Serve on a fresh 127.0.0.1 port, or on listener: a socket already
+        listening on 127.0.0.1 inside the isolated network."""
         mock = self
 
         class Handler(_Handler):
             owner = mock
 
-        # Port 0: the OS picks a free loopback port. The address is fixed to
-        # 127.0.0.1; there is no option to bind anything else.
-        self._server = ThreadingHTTPServer((HOST, 0), Handler)
+        if listener is None:
+            # Port 0: the OS picks a free loopback port. The address is fixed
+            # to 127.0.0.1; there is no option to bind anything else.
+            self._server = ThreadingHTTPServer((HOST, 0), Handler)
+        else:
+            if listener.getsockname()[0] != HOST:
+                raise ValueError("the mock listens on 127.0.0.1 only")
+            self._server = ThreadingHTTPServer(
+                listener.getsockname(), Handler, bind_and_activate=False
+            )
+            self._server.socket.close()
+            self._server.socket = listener
+            self._server.server_address = listener.getsockname()
+            self._server.server_name, self._server.server_port = HOST, listener.getsockname()[1]
         self._server.daemon_threads = True
         self._server.block_on_close = False
         if self.oauth is not None:

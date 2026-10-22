@@ -20,11 +20,13 @@ import msgspec
 
 from weir.canary._types import (
     RECORD_TYPES,
+    Direct,
     Exercised,
     Flow,
     Ledger,
     LedgerHeader,
     LedgerRecord,
+    Network,
     Placement,
     Unexpected,
 )
@@ -106,7 +108,9 @@ def _record(obj: dict[str, object], where: str) -> LedgerRecord:
 def _ids(record: LedgerRecord) -> Iterable[str]:
     if isinstance(record, Exercised):
         yield record.placement
-    else:
+    elif isinstance(record, Direct):
+        yield record.flow
+    elif not isinstance(record, Network):
         yield record.id
 
 
@@ -159,7 +163,7 @@ def parse_ledger(data: bytes, name: str) -> Ledger:
                     f"ledger {name} line {number}: an id holds 8 or more consecutive"
                     " characters of a ledger value"
                 )
-        if isinstance(record, Exercised):
+        if isinstance(record, (Exercised, Network, Direct)):
             continue
         ids = unique.setdefault(type(record), set())
         if record.id in ids:
@@ -178,12 +182,41 @@ def parse_ledger(data: bytes, name: str) -> Ledger:
                 f"ledger {name} line {number}: an exercised record names no defined placement"
             )
 
+    network: Network | None = None
+    for number, record in records:
+        if isinstance(record, Network):
+            if network is not None:
+                raise LedgerError(f"ledger {name} line {number}: a second network record")
+            network = record
+    flow_ids = unique.get(Flow, set())
+    directs: set[tuple[str, str, str]] = set()
+    for number, record in records:
+        if not isinstance(record, Direct):
+            continue
+        # A connection can only be blocked by isolation the run had.
+        if network is None or not network.isolated:
+            raise LedgerError(
+                f"ledger {name} line {number}: a direct record in a ledger whose network"
+                " record does not say isolated"
+            )
+        if record.flow not in flow_ids:
+            raise LedgerError(f"ledger {name} line {number}: a direct record names no defined flow")
+        key = (record.flow, record.protocol, record.target)
+        if key in directs:
+            raise LedgerError(
+                f"ledger {name} line {number}: a direct record repeats an earlier one's"
+                " flow, protocol and target"
+            )
+        directs.add(key)
+
     by_type = [r for _, r in records]
     return Ledger(
         placements=tuple(r for r in by_type if isinstance(r, Placement)),
         exercised=tuple(r for r in by_type if isinstance(r, Exercised)),
         flows=tuple(r for r in by_type if isinstance(r, Flow)),
         unexpected=tuple(r for r in by_type if isinstance(r, Unexpected)),
+        network=network,
+        direct=tuple(r for r in by_type if isinstance(r, Direct)),
     )
 
 

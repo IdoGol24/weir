@@ -1,7 +1,8 @@
 """Printing for the canary judge: the capture-text rule and the text report.
 
-A span name, metric name, attribute key, path segment or capture file name
-comes from the program under test and may itself hold a canary. Before any
+A span name, metric name, attribute key, path segment, capture file name or
+direct connection target comes from the program under test and may itself
+hold a canary. Before any
 such string is printed it is flattened to one line, cut to 200 characters,
 and replaced entirely by `[withheld]` if it holds any needle or any run of 8
 consecutive characters of any ledger value (docs/canary.md, "Printing
@@ -90,4 +91,8 @@ def report_lines(report: Report) -> Iterator[str]:
         f" {c.log_records} log records, {c.metric_data_points} metric data points,"
         f" {c.strings} strings, {c.bytes} bytes swept"
     )
+    if report.network.isolated:
+        yield f"network isolated: {len(report.network.direct)} direct connections blocked"
+    else:
+        yield "network not isolated: direct connections were not observed"
     yield f"result: {report.result}"

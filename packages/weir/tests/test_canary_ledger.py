@@ -19,6 +19,19 @@ _VALUE = fx.fake_value("ledger-a")
 _OTHER = fx.fake_value("ledger-b")
 _MARK = fx.fake_value("content-marker", 12)  # content that must never be echoed
 _GOOD = fx.placement("env.API_KEY", _VALUE)
+_FLOW = {"type": "flow", "id": "f1", "status": "ok"}
+_ISOLATED = {"type": "network", "isolated": True}
+
+
+def _direct(**fields: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "type": "direct",
+        "flow": "f1",
+        "protocol": "tcp",
+        "target": "203.0.113.7:443",
+        "attempts": 1,
+    }
+    return record | fields
 
 
 def _lines(*records: object) -> str:
@@ -78,6 +91,34 @@ _CASES: list[tuple[str, str, int | None]] = [
         "exercised names no placement",
         _lines(_GOOD, {"type": "exercised", "placement": "env.MISSING", "evidence": "request"}),
         3,
+    ),
+    (
+        "a second network record",
+        _lines(_GOOD, {"type": "network", "isolated": True}, {"type": "network", "isolated": True}),
+        4,
+    ),
+    ("network without isolated", _lines(_GOOD, {"type": "network"}), 3),
+    ("unknown network field", _lines(_GOOD, {"type": "network", "isolated": True, _MARK: 1}), 3),
+    (
+        "direct without a network record",
+        _lines(_GOOD, _FLOW, _direct()),
+        4,
+    ),
+    (
+        "direct in an unisolated ledger",
+        _lines(_GOOD, _FLOW, {"type": "network", "isolated": False}, _direct()),
+        5,
+    ),
+    ("direct names no flow", _lines(_GOOD, _ISOLATED, _direct()), 4),
+    ("direct repeats", _lines(_GOOD, _FLOW, _ISOLATED, _direct(), _direct()), 6),
+    ("direct unknown protocol", _lines(_GOOD, _FLOW, _ISOLATED, _direct(protocol=_MARK)), 5),
+    ("direct target with a space", _lines(_GOOD, _FLOW, _ISOLATED, _direct(target="a b")), 5),
+    ("direct target too long", _lines(_GOOD, _FLOW, _ISOLATED, _direct(target="a" * 261)), 5),
+    ("direct no attempts", _lines(_GOOD, _FLOW, _ISOLATED, _direct(attempts=0)), 5),
+    (
+        "direct flow holding 8 characters of a value",
+        _lines(_GOOD, _ISOLATED, _direct(flow="f." + _VALUE[3:11])),
+        4,
     ),
     ("no placement", _lines({"type": "flow", "id": "f1", "status": "ok"}), None),
     ("duplicate key", _lines(json.dumps(_GOOD)[:-1] + f', "value": "{_OTHER}"}}'), 2),

@@ -31,7 +31,7 @@ matches, the ledger and report schemas, coverage states and exit codes.
 | | the judge (`weir canary judge`, in weir-scan) | the canary runner (`weir-run`, a separate package) |
 | --- | --- | --- |
 | does | reads a ledger and capture files, prints a report | plants canaries, runs the mock and the flows, writes ledger and capture, calls the judge |
-| network | **none**: opens no socket, binds nothing, resolves nothing | a mock bound to `127.0.0.1` only, which flows reach through their proxy settings; every proxied request to another host is refused. It does not sandbox the network |
+| network | **none**: opens no socket, binds nothing, resolves nothing | a mock bound to `127.0.0.1` only, which flows reach through their proxy settings; every proxied request to another host is refused. On Linux, flows and the mock share a network namespace whose only network is loopback ([Network isolation](#network-isolation)) |
 | processes | starts none | runs each flow under `env -i` with an allowlisted environment |
 | writes | nothing but its report on stdout and errors on stderr | the ledger (mode 0600, in the job's temporary directory, deleted after judging), the capture, its own reports |
 | reads | only the ledger and the capture paths it is given, or with `--sample` the bundled sample; no environment variable changes its output | the maintainer's config and the flows' output |
@@ -56,11 +56,13 @@ matches, the ledger and report schemas, coverage states and exit codes.
   issue (see [Runtime values](#runtime-values)). It never holds a real
   credential. Flows reach the mock through their proxy settings: the mock
   answers every API the flow is pointed at and refuses every proxied request
-  to another host. The runner does not sandbox the network, so a client that
-  ignores proxy settings can connect to a real provider directly; run such
-  flows in a container or network namespace with no route out. The judge
-  cannot tell a fake value from a real one, so keeping canaries away from
-  real providers is the runner's obligation and the user's.
+  to another host. On Linux the runner also runs the flows in a network
+  namespace with no route out, so a client that ignores proxy settings
+  reaches nothing ([Network isolation](#network-isolation)). Where it cannot
+  isolate them, such a client can connect to a real provider directly, and
+  the report says the network was not isolated. The judge cannot tell a
+  fake value from a real one, so keeping canaries away from real providers
+  is the runner's obligation and the user's.
 - Ledgers and captures that hold provider-shaped canaries are never
   committed to a public repository. Public secret scanning would report a
   realistic canary to the provider as a leaked key. Fixtures committed to
@@ -241,6 +243,8 @@ The first line is the header; every other line is a record with a `type`:
 {"type": "exercised", "placement": "runtime.oauth.access_token#1", "evidence": "minted"}
 {"type": "unexpected", "id": "unexpected.search.authorization#1"}
 {"type": "flow", "id": "quickstart", "status": "ok"}
+{"type": "network", "isolated": true}
+{"type": "direct", "flow": "quickstart", "protocol": "tcp", "target": "203.0.113.7:443", "attempts": 1}
 ```
 
 Every **id** (a placement, flow or unexpected id) is 1 to 128 characters
@@ -261,6 +265,19 @@ one line each.
 | `flow` | `id` | string | the flow's id, an id |
 | | `status` | string | `ok`, `failed` (crashed or exited non-zero), `timeout` or `skipped` |
 | `unexpected` | `id` | string | an id, `unexpected.<endpoint>.<field>#<n>`: a credential field the mock received that held no needle of any ledger value. The record never carries the value |
+| `network` | `isolated` | boolean | the flows ran in a network with no route out but loopback ([Network isolation](#network-isolation)) |
+| | `required` | boolean | optional, default `false`: the run is incomplete unless `isolated` |
+| `direct` | `flow` | string | the id of the flow that made the attempt, defined by a `flow` record on any line |
+| | `protocol` | string | `tcp` (a connection opened to an address), `udp` (a datagram sent to an address) or `dns` (a name looked up) |
+| | `target` | string | `<address>:<port>` (an IPv6 address in brackets) for `tcp` and `udp`, the name asked for for `dns`; 1 to 260 characters from `[A-Za-z0-9._:[]-]` |
+| | `attempts` | integer | how many times, at least 1 |
+
+A ledger has at most one `network` record. Without one, nothing says the
+flows were isolated, so the judge reports them as not isolated. A `direct`
+record is a connection attempt that isolation blocked, so it needs a
+`network` record that says `isolated`, and its flow, protocol and target
+are unique among `direct` records. A `direct` record never carries what the
+attempt would have sent.
 
 The ledger is strict. The judge exits 2, naming the ledger and the line
 number, never content, when: the file cannot be read; it is readable by
@@ -269,7 +286,10 @@ schema; a line is not a JSON object or does not end in a newline; a record
 has an unknown `type`, an unknown field, a wrong type or an unknown
 `kind`, `evidence` or `status`; an id breaks the id rule; a value repeats
 or is shorter than 16 characters; an `exercised` record names no defined
-placement; or the ledger defines no placement. A ledger the judge cannot
+placement; a second `network` record; a `direct` record that names no
+defined flow, repeats another's flow, protocol and target, or appears
+without a `network` record that says `isolated`; or the ledger defines no
+placement. A ledger the judge cannot
 read in full would leave a value unsearched, so it is never read in part.
 
 ## The capture
@@ -334,7 +354,8 @@ version, schema URLs) are reported with no record and a location starting
 `attributes.app.config.headers[0]`.
 
 **Printing capture-derived text.** A span name, metric name, attribute key,
-path segment or capture file name comes from the program under test and may
+path segment, capture file name or `direct` target comes from the program
+under test and may
 itself hold a canary. Before any such string is printed it is flattened to
 one line (control characters shown as `\xNN`), cut to 200 characters with
 `...`, and replaced entirely by `[withheld]` if it contains any needle or
@@ -367,14 +388,71 @@ one reason:
 | `not_scanned` | the file | a capture file was not scanned (`compressed`, or a `symlink` inside a capture directory) |
 | `unparsed_record` | `<file>:<line>` | a line of a telemetry file is not an OTLP export request |
 | `empty_capture` | none | the telemetry files hold no span, log record or metric data point. Swept files never count, whatever they hold |
+| `network_not_isolated` | none | the `network` record says `required` and not `isolated`: the run required isolation and did not have it |
+| `direct_connection` | `<flow>=<protocol>:<target>`, such as `quickstart=tcp:203.0.113.7:443` | a `direct` record: a flow tried to reach a host around the mock. Isolation blocked it, so nothing left, but what it would have sent was never seen |
 
 Silence is never a clean result: an empty capture, a crashed flow, an
-unaccounted credential or an untouched required placement fails visibly
-instead of passing quietly.
+unaccounted credential, an untouched required placement or a connection
+around the mock fails visibly instead of passing quietly.
 
 The **result** is `leak` when there is any hit, otherwise `incomplete`
 when any reason above holds, otherwise `clean`. A found leak outranks
 incompleteness, and the incomplete reasons are still listed.
+
+## Network isolation
+
+A canary check sees what passes through its mock and what the program
+writes to its capture. A client that ignores the proxy settings and
+connects to a host directly passes through neither, so the runner takes
+that path away instead of trusting every client to honour the settings.
+
+On Linux, the runner makes an unprivileged user and network namespace (what
+`unshare --user --net` makes) whose only interface is loopback, starts the
+mock listening on `127.0.0.1` inside it and starts every flow inside it.
+Nothing in it has a route to any other host. The runner routes every other
+address to the namespace's own loopback, so a direct connection is refused
+at once instead of hanging, and watches that loopback for attempts. It
+records each distinct attempt as a `direct` record, with its flow, and
+writes the payload of every blocked UDP datagram, a DNS query included, to
+a swept capture file, so a canary in it is a hit like any other.
+
+**Observed** (each one a `direct` record, and the run incomplete):
+
+- a TCP connection opened to any address but loopback: `tcp`, the address
+  and port;
+- a UDP datagram sent to any address but loopback: `udp`, the address and
+  port;
+- a DNS query sent to any address, loopback included: `dns`, the name.
+
+**Not observed:**
+
+- the flow's traffic with the mock and with anything else on loopback,
+  which never leaves the namespace;
+- name lookups a flow makes through a host service over a Unix socket
+  (systemd-resolved's NSS module, nscd): such a lookup happens outside the
+  namespace, so the name reaches the host's resolver and is not reported.
+  The connection that follows is still blocked and reported as `tcp`;
+- an attempt over IPv6 where the kernel has IPv6 disabled: it fails with no
+  packet;
+- Unix-socket traffic to services on the host, such as a Docker or D-Bus
+  socket: a network namespace does not separate filesystem sockets;
+- anything a process the flow started and detached into its own session
+  does after the run.
+
+Where the runner cannot make the namespace (not Linux; user namespaces
+disabled, as `kernel.unprivileged_userns_clone=0` or
+`user.max_user_namespaces=0` do; or restricted, as Ubuntu's
+`kernel.apparmor_restrict_unprivileged_userns=1` does), or isolation is
+turned off, the flows run on the host's network as before, the runner's
+output names why, and the `network` record says not `isolated`. The report
+then says direct connections were not observed. A run that must not pass
+unisolated says `required`: `weir-run run --require-isolation`, or
+`pytest --canary-require-isolation`.
+
+A flow that needs the host's network, such as one that installs packages
+or uses a database on the host's loopback, cannot work isolated: install
+first, mock the service, or turn isolation off (`--no-isolation`,
+`--canary-no-isolation`) and accept a report that says so.
 
 ## Exit codes
 
@@ -393,9 +471,9 @@ failure of the run, so a runner fault never reads as a leak.
 ## The text report
 
 One line per hit, then one line per not-exercised placement, per file not
-scanned and per incomplete reason, then the coverage line and the result.
-Every output that reaches a verdict carries the coverage line, the clean
-one included.
+scanned and per incomplete reason, then the coverage line, the network line
+and the result. Every output that reaches a verdict carries the coverage
+and network lines, the clean one included.
 
 ```text
 LEAK code.search_client.api_key file=capture/otlp.jsonl:4 signal=traces span="execute_tool fetch" at=events[0].attributes.http.request.header.authorization form=base64
@@ -403,6 +481,7 @@ LEAK env.SEARCH_API_KEY file=capture/otlp.jsonl:3 signal=traces span="invoke_age
 LEAK runtime.oauth.access_token#1 file=capture/flow-quickstart.stderr:41 signal=raw form=raw
 not exercised: env.BACKUP_API_KEY
 coverage: 4 placements (3 leaked, 0 exercised, 1 not exercised, 1 required), 1 flows (1 ok), 3 files, 12 spans, 0 log records, 6 metric data points, 214 strings, 48210 bytes swept
+network not isolated: direct connections were not observed
 result: leak
 ```
 
@@ -417,6 +496,8 @@ Precisely:
 - `not scanned: <path> (<reason>)` for each file not scanned.
 - `incomplete: <reason> <subject>` for each incomplete reason.
 - `coverage: <P> placements (<L> leaked, <E> exercised, <N> not exercised, <R> required), <F> flows (<K> ok), <files> files, <S> spans, <G> log records, <M> metric data points, <T> strings, <B> bytes swept`
+- `network isolated: <D> direct connections blocked`, `<D>` the number of
+  `direct` records, or `network not isolated: direct connections were not observed`.
 - `result: clean|leak|incomplete`
 
 Lines are sorted (hits by placement, file, line, signal, record, location,
@@ -441,6 +522,7 @@ the text report:
 | `not_scanned` | array | `{file, reason}`; reason `compressed` or `symlink` |
 | `incomplete` | array | `{reason, subject}`; `subject` is null for `empty_capture` |
 | `coverage` | object | `placements`, `leaked`, `exercised`, `not_exercised`, `required`, `flows`, `flows_ok`, `files`, `files_not_scanned`, `spans`, `log_records`, `metric_data_points`, `unparsed_records`, `strings`, `bytes` |
+| `network` | object | `isolated`, `required`, `direct`: the `network` record's two flags, `false` without one, and one `{flow, protocol, target, attempts}` per `direct` record, sorted by flow, protocol and target; `target` printed under the capture-text rule |
 
 A hit:
 
@@ -488,7 +570,10 @@ contract:
    swept `PATH`;
 4. relays a flow's own output only after replacing every needle with
    `<canary:PLACEMENT-ID>`;
-5. exits with the judge's code, and deletes the ledger and the capture when
+5. writes one `network` record saying whether the flows ran isolated, and
+   whether the run requires it, and one `direct` record per distinct
+   connection attempt isolation blocked;
+6. exits with the judge's code, and deletes the ledger and the capture when
    the run ends.
 
 ## Testing against this contract

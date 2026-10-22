@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from weir_run.isolation import Jail
 from weir_run.spec import FlowSpec
 
 PYTHON_TOKEN = "{python}"
@@ -68,10 +69,19 @@ def command_line(flow: FlowSpec, python: str) -> list[str]:
     return [python if part == PYTHON_TOKEN else part for part in flow.command]
 
 
-def run(flow: FlowSpec, env: Mapping[str, str], stdout: Path, stderr: Path, python: str) -> str:
-    """Run a flow to completion; return its ledger status."""
+def run(
+    flow: FlowSpec,
+    env: Mapping[str, str],
+    stdout: Path,
+    stderr: Path,
+    python: str,
+    jail: Jail | None = None,
+) -> str:
+    """Run a flow to completion, inside jail when there is one; return its
+    ledger status."""
     if flow.skip is not None:
         return "skipped"
+    command = command_line(flow, python)
     with stdout.open("wb") as out, stderr.open("wb") as err:
         # Its own process group, so a timeout or the end of the flow can
         # stop everything it started.
@@ -80,8 +90,11 @@ def run(flow: FlowSpec, env: Mapping[str, str], stdout: Path, stderr: Path, pyth
             options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             options["start_new_session"] = True
+        if jail is not None:
+            command = jail.command(command)
+            options["pass_fds"] = jail.fds
         try:
-            proc = subprocess.Popen(command_line(flow, python), stdin=subprocess.DEVNULL, **options)
+            proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, **options)
         except OSError as exc:
             err.write(f"weir-run: could not start the flow: {exc.strerror}\n".encode())
             return "failed"

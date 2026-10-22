@@ -48,9 +48,7 @@ def test_explicit_judge(canary_check, tmp_path):
 """
 
 
-@pytest.fixture(scope="module")
-def inner(tmp_path_factory: pytest.TempPathFactory) -> subprocess.CompletedProcess[str]:
-    root = tmp_path_factory.mktemp("inner")
+def _inner(root: Path, *options: str) -> subprocess.CompletedProcess[str]:
     (root / "test_inner.py").write_text(INNER_TESTS, encoding="utf-8")
     # Only what an interpreter needs to start; not the test process's environment.
     env = {"PATH": os.environ.get("PATH", os.defpath), "HOME": str(root), "TMP": str(root)}
@@ -59,7 +57,7 @@ def inner(tmp_path_factory: pytest.TempPathFactory) -> subprocess.CompletedProce
         env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", "")
         env["USERPROFILE"] = str(root)
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-rA", "-p", "no:cacheprovider", str(root)],
+        [sys.executable, "-m", "pytest", "-rA", "-p", "no:cacheprovider", *options, str(root)],
         cwd=root,
         env=env,
         capture_output=True,
@@ -67,6 +65,11 @@ def inner(tmp_path_factory: pytest.TempPathFactory) -> subprocess.CompletedProce
         timeout=300,
         check=False,
     )
+
+
+@pytest.fixture(scope="module")
+def inner(tmp_path_factory: pytest.TempPathFactory) -> subprocess.CompletedProcess[str]:
+    return _inner(tmp_path_factory.mktemp("inner"))
 
 
 def test_the_plugin_loads_through_its_entry_point(inner: subprocess.CompletedProcess[str]) -> None:
@@ -135,3 +138,16 @@ def test_a_repeated_flow_id_is_refused_before_the_flow_starts(
         assert check.judge().clean
     finally:
         check.close()
+
+
+def test_the_isolation_options_reach_the_check(tmp_path: Path) -> None:
+    done = _inner(tmp_path, "--canary-no-isolation", "-k", "test_clean")
+    assert "PASSED test_inner.py::test_clean" in done.stdout, done.stdout
+    assert "network: not isolated (isolation turned off)" in done.stdout
+    assert "network not isolated: direct connections were not observed" in done.stdout
+
+
+def test_the_isolation_options_cannot_contradict(tmp_path: Path) -> None:
+    done = _inner(tmp_path, "--canary-no-isolation", "--canary-require-isolation")
+    assert done.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "contradict each other" in done.stderr

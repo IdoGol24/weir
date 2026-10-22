@@ -49,6 +49,11 @@ def _incomplete(run: fx.Run) -> list[str]:
     return [line for line in run.lines if line.startswith("incomplete: ")]
 
 
+def _coverage(run: fx.Run) -> str:
+    (line,) = (line for line in run.lines if line.startswith("coverage: "))
+    return line
+
+
 def test_a_clean_complete_run_exits_0_with_its_coverage_line(tmp_path: Path) -> None:
     ledger, otlp = _clean_setup(tmp_path)
     run = fx.judge(ledger, [otlp])
@@ -59,6 +64,7 @@ def test_a_clean_complete_run_exits_0_with_its_coverage_line(tmp_path: Path) -> 
         "coverage: 1 placements (0 leaked, 1 exercised, 0 not exercised, 1 required),"
         f" 1 flows (1 ok), 1 files, 1 spans, 0 log records, 0 metric data points,"
         f" 6 strings, {otlp.stat().st_size} bytes swept",
+        "network not isolated: direct connections were not observed",
         "result: clean",
     ]
 
@@ -107,7 +113,7 @@ def test_a_compressed_capture_file_is_not_scanned(tmp_path: Path) -> None:
     assert run.exit_code == 3
     assert f"not scanned: {packed} (compressed)" in run.lines
     assert _incomplete(run) == [f"incomplete: not_scanned {packed}"]
-    assert ", 1 files," in run.lines[-2]
+    assert ", 1 files," in _coverage(run)
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="needs symbolic links")
@@ -169,7 +175,7 @@ def test_telemetry_only_in_a_swept_file_is_an_empty_capture(tmp_path: Path) -> N
     run = fx.judge(ledger, [otlp], [swept])
     assert run.exit_code == 3
     assert _incomplete(run) == ["incomplete: empty_capture"]
-    assert ", 0 spans," in run.lines[-2]
+    assert ", 0 spans," in _coverage(run)
 
 
 def test_logs_and_metrics_count_toward_completeness(tmp_path: Path) -> None:
@@ -180,7 +186,7 @@ def test_logs_and_metrics_count_toward_completeness(tmp_path: Path) -> None:
     )
     run = fx.judge(ledger, [otlp])
     assert run.exit_code == 0
-    assert ", 0 spans, 1 log records, 2 metric data points," in run.lines[-2]
+    assert ", 0 spans, 1 log records, 2 metric data points," in _coverage(run)
 
 
 def test_states_take_precedence_leaked_then_exercised(tmp_path: Path) -> None:
@@ -268,7 +274,120 @@ def test_directories_are_read_recursively_with_found_paths(tmp_path: Path) -> No
     assert fx.leak_lines(run) == [
         f'LEAK env.A file={capture}/b/c.jsonl:1 signal=traces span="op" at=attributes.k form=raw'
     ]
-    assert ", 2 files, 2 spans," in run.lines[-2]
+    assert ", 2 files, 2 spans," in _coverage(run)
+
+
+# --- network isolation ----------------------------------------------------------
+
+_NOT_ISOLATED = "network not isolated: direct connections were not observed"
+
+
+def _network(isolated: bool, required: bool = False) -> dict[str, object]:
+    record: dict[str, object] = {"type": "network", "isolated": isolated}
+    if required:
+        record["required"] = True
+    return record
+
+
+def _direct(protocol: str, target: str, attempts: int = 1) -> dict[str, object]:
+    return {
+        "type": "direct",
+        "flow": "quickstart",
+        "protocol": protocol,
+        "target": target,
+        "attempts": attempts,
+    }
+
+
+def test_a_ledger_without_a_network_record_reports_the_network_not_isolated(
+    tmp_path: Path,
+) -> None:
+    ledger, otlp = _clean_setup(tmp_path)
+    run = fx.judge(ledger, [otlp])
+    assert run.exit_code == 0
+    assert run.lines[-2:] == [_NOT_ISOLATED, "result: clean"]
+    report = fx.judge(ledger, [otlp], as_json=True).report
+    assert report["network"] == {"isolated": False, "required": False, "direct": []}
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_an_isolated_run_with_no_direct_attempt_is_clean(tmp_path: Path, required: bool) -> None:
+    ledger, otlp = _clean_setup(tmp_path, _network(True, required))
+    run = fx.judge(ledger, [otlp])
+    assert run.exit_code == 0
+    assert run.lines[-2:] == ["network isolated: 0 direct connections blocked", "result: clean"]
+
+
+def test_an_unisolated_run_is_complete_unless_isolation_is_required(tmp_path: Path) -> None:
+    ledger, otlp = _clean_setup(tmp_path, _network(False))
+    run = fx.judge(ledger, [otlp])
+    assert run.exit_code == 0
+    assert _NOT_ISOLATED in run.lines
+
+
+def test_required_isolation_missing_makes_the_run_incomplete(tmp_path: Path) -> None:
+    ledger, otlp = _clean_setup(tmp_path, _network(False, required=True))
+    run = fx.judge(ledger, [otlp])
+    assert run.exit_code == 3
+    assert _incomplete(run) == ["incomplete: network_not_isolated"]
+    assert run.lines[-2:] == [_NOT_ISOLATED, "result: incomplete"]
+    report = fx.judge(ledger, [otlp], as_json=True).report
+    assert report["incomplete"] == [{"reason": "network_not_isolated", "subject": None}]
+    assert report["network"] == {"isolated": False, "required": True, "direct": []}
+
+
+def test_a_blocked_direct_attempt_makes_the_run_incomplete(tmp_path: Path) -> None:
+    attempts = [
+        _direct("tcp", "203.0.113.7:443"),
+        _direct("dns", "api.provider.example", 4),
+        _direct("udp", "[2001:db8::7]:8125", 2),
+    ]
+    ledger, otlp = _clean_setup(tmp_path, _network(True), *attempts)
+    run = fx.judge(ledger, [otlp])
+    assert run.exit_code == 3
+    # Sorted by reason, then subject: <flow>=<protocol>:<target>.
+    assert _incomplete(run) == [
+        "incomplete: direct_connection quickstart=dns:api.provider.example",
+        "incomplete: direct_connection quickstart=tcp:203.0.113.7:443",
+        "incomplete: direct_connection quickstart=udp:[2001:db8::7]:8125",
+    ]
+    assert run.lines[-2:] == [
+        "network isolated: 3 direct connections blocked",
+        "result: incomplete",
+    ]
+    report = fx.judge(ledger, [otlp], as_json=True).report
+    assert report["network"] == {
+        "isolated": True,
+        "required": False,
+        "direct": [
+            {k: v for k, v in d.items() if k != "type"}
+            for d in sorted(attempts, key=lambda d: (str(d["protocol"]), str(d["target"])))
+        ],
+    }
+
+
+def test_a_leak_outranks_a_direct_attempt(tmp_path: Path) -> None:
+    ledger, otlp = _clean_setup(tmp_path, _network(True), _direct("tcp", "203.0.113.7:443"))
+    fx.write(otlp, fx.traces(fx.span("op", attributes=[fx.kv("k", _A)])) + "\n")
+    run = fx.judge(ledger, [otlp])
+    assert run.exit_code == 1
+    assert "incomplete: direct_connection quickstart=tcp:203.0.113.7:443" in run.lines
+    assert run.lines[-1] == "result: leak"
+
+
+def test_a_direct_target_holding_a_value_is_withheld(tmp_path: Path) -> None:
+    # A DNS name can carry a canary out: the target is capture-derived text.
+    ledger, otlp = _clean_setup(tmp_path, _network(True), _direct("dns", f"{_A}.collector.example"))
+    run = fx.judge(ledger, [otlp])
+    assert "incomplete: direct_connection quickstart=dns:[withheld]" in run.lines
+    report = fx.judge(ledger, [otlp], as_json=True)
+    assert (
+        typing.cast(dict[str, list[dict[str, object]]], report.report["network"])["direct"][0][
+            "target"
+        ]
+        == "[withheld]"
+    )
+    fx.assert_value_free(run.stdout + report.stdout, [_A])
 
 
 # --- exit 2 for the capture ---------------------------------------------------

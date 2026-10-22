@@ -31,6 +31,13 @@ Id = Annotated[str, msgspec.Meta(min_length=1, max_length=128, pattern=ID_PATTER
 Kind = Literal["env", "code", "mock-oauth"]
 Evidence = Literal["request", "minted", "egress"]
 FlowStatus = Literal["ok", "failed", "timeout", "skipped"]
+DirectProtocol = Literal["tcp", "udp", "dns"]
+
+# A direct record's target: an address and port, or a DNS name. The runner
+# writes only these characters, so a target can neither break a line nor
+# quote anything; the judge still prints it under the capture-text rule.
+TARGET_PATTERN = r"^[A-Za-z0-9._:\[\]-]{1,260}$"
+Target = Annotated[str, msgspec.Meta(min_length=1, max_length=260, pattern=TARGET_PATTERN)]
 
 
 class LedgerHeader(msgspec.Struct, forbid_unknown_fields=True):
@@ -64,8 +71,32 @@ class Unexpected(msgspec.Struct, tag_field="type", tag="unexpected", forbid_unkn
     id: Id
 
 
-LedgerRecord = Placement | Exercised | Flow | Unexpected
-RECORD_TYPES: tuple[type[LedgerRecord], ...] = (Placement, Exercised, Flow, Unexpected)
+class Network(msgspec.Struct, tag_field="type", tag="network", forbid_unknown_fields=True):
+    """Whether the flows ran with no route out but loopback. At most one."""
+
+    isolated: bool
+    required: bool = False
+
+
+class Direct(msgspec.Struct, tag_field="type", tag="direct", forbid_unknown_fields=True):
+    """A connection a flow tried to open around the mock, blocked by
+    isolation. Never content: a protocol, a target and a count."""
+
+    flow: Id
+    protocol: DirectProtocol
+    target: Target
+    attempts: Annotated[int, msgspec.Meta(ge=1)]
+
+
+LedgerRecord = Placement | Exercised | Flow | Unexpected | Network | Direct
+RECORD_TYPES: tuple[type[LedgerRecord], ...] = (
+    Placement,
+    Exercised,
+    Flow,
+    Unexpected,
+    Network,
+    Direct,
+)
 
 
 class Ledger(msgspec.Struct, frozen=True):
@@ -75,6 +106,10 @@ class Ledger(msgspec.Struct, frozen=True):
     exercised: tuple[Exercised, ...]
     flows: tuple[Flow, ...]
     unexpected: tuple[Unexpected, ...]
+    # None when the ledger has no network record: nothing says the flows
+    # were isolated, so they were not.
+    network: Network | None
+    direct: tuple[Direct, ...]
 
 
 class Form(enum.StrEnum):
@@ -124,6 +159,8 @@ class IncompleteReason(enum.StrEnum):
     NOT_SCANNED = "not_scanned"
     UNPARSED_RECORD = "unparsed_record"
     EMPTY_CAPTURE = "empty_capture"
+    NETWORK_NOT_ISOLATED = "network_not_isolated"
+    DIRECT_CONNECTION = "direct_connection"
 
 
 class Hit(msgspec.Struct, frozen=True):
@@ -182,6 +219,19 @@ class Coverage(msgspec.Struct, frozen=True):
     bytes: int
 
 
+class DirectEntry(msgspec.Struct, frozen=True):
+    flow: str
+    protocol: str
+    target: str
+    attempts: int
+
+
+class NetworkState(msgspec.Struct, frozen=True):
+    isolated: bool
+    required: bool
+    direct: list[DirectEntry]
+
+
 class Report(msgspec.Struct, frozen=True):
     """canary-report/1: what `weir canary judge --json` prints."""
 
@@ -194,6 +244,7 @@ class Report(msgspec.Struct, frozen=True):
     not_scanned: list[NotScanned]
     incomplete: list[Incomplete]
     coverage: Coverage
+    network: NetworkState
 
 
 def ledger_json_schema() -> dict[str, object]:
