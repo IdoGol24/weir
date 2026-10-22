@@ -16,7 +16,9 @@
   keyed fingerprint in every form the canary judge matches (raw, JSON, double
   JSON, URL, base64, base64url, hex). An unrecognised file format, a line
   that is not a record, a file not scanned or a sighting whose place it
-  cannot classify makes the result `unknown`, exit 3, never a false clean.
+  cannot classify makes the result `unknown`, exit 3, never a false clean,
+  and so does an empty input: a missing or empty directory, or paths whose
+  files were all skipped.
   `--claude-config-dir PATH` names a Claude config directory other than
   `~/.claude`; no environment variable changes the output.
   Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report

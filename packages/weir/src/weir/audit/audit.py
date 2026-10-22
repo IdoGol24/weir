@@ -26,6 +26,7 @@ from weir.audit._types import (
     Format,
     Hit,
     Kind,
+    NotScannedReason,
     Report,
     Result,
     State,
@@ -49,7 +50,7 @@ from weir.audit.formats import (
 )
 from weir.audit.inputs import AuditInputError, Credential, load_inputs
 from weir.audit.matching import Matcher
-from weir.canary import CaptureError, Form, NotScannedReason, collect_capture, needles
+from weir.canary import CaptureError, Form, collect_capture, needles
 from weir.canary.text import WITHHELD, Display
 from weir.canary.walk import Segment
 from weir.inventory.classify import looks_secret_shaped
@@ -235,18 +236,27 @@ def audit_files(
     paths: Sequence[str],
     claude_config_dirs: Sequence[str] = (),
 ) -> Report:
+    # A given path that does not exist was not read: it is not scanned, and
+    # never an error, so a missing sessions directory reads as unknown.
+    missing = [path for path in paths if not os.path.lexists(path)]
     try:
-        capture = collect_capture([], paths, lambda path: path)
+        capture = collect_capture(
+            [], [path for path in paths if path not in missing], lambda path: path
+        )
     except CaptureError as exc:
         raise AuditInputError(str(exc).replace("capture ", "file ", 1)) from None
     projects_dirs = [PurePath(os.path.abspath(d), "projects") for d in claude_config_dirs]
     auditor = _Auditor(Matcher(key, set(by_fingerprint)), by_fingerprint)
     files: list[_File] = []
-    not_scanned: dict[str, NotScannedReason] = {}
+    not_scanned: dict[str, NotScannedReason] = {
+        path: NotScannedReason.MISSING for path in missing
+    }
+    files.extend(_File(path, None, 0) for path in missing)
     for item in capture:
         if item.data is None or item.not_scanned is not None:
             files.append(_File(item.path, None, 0))
-            not_scanned[item.path] = item.not_scanned or NotScannedReason.COMPRESSED
+            reason = item.not_scanned.value if item.not_scanned is not None else "compressed"
+            not_scanned[item.path] = NotScannedReason(reason)
             continue
         data = item.data
         lines = json_lines(data)
@@ -291,6 +301,8 @@ def audit_files(
     rows.sort(key=lambda r: labels[r.id])
 
     reasons: list[tuple[UnknownReason, str, int]] = []
+    if all(file.format is None for file in files):
+        reasons.append((UnknownReason.NO_FILES_READ, "", 0))
     for file in files:
         if file.format is Format.UNKNOWN:
             reasons.append((UnknownReason.UNRECOGNISED_FORMAT, shown.path(file.path), 0))
@@ -302,7 +314,7 @@ def audit_files(
         if hit.kind is Kind.UNKNOWN:
             reasons.append((UnknownReason.UNKNOWN_KIND, hit.file, hit.line))
     unknown = [
-        Unknown(reason=reason, subject=f"{subject}:{line}" if line else subject)
+        Unknown(reason=reason, subject=f"{subject}:{line}" if line else subject or None)
         for reason, subject, line in sorted(
             set(reasons), key=lambda r: (_REASON_ORDER[r[0]], r[1], r[2])
         )
@@ -326,7 +338,7 @@ def audit_files(
     scanned = [f for f in files if f.format is not None]
     coverage = Coverage(
         credentials=len(credentials), checkable=checkable,
-        not_checkable=len(credentials) - checkable, files=len(files),
+        not_checkable=len(credentials) - checkable, files=len(scanned),
         claude_code_files=sum(f.format is Format.CLAUDE_CODE for f in scanned),
         claude_code_tool_results_files=sum(
             f.format is Format.CLAUDE_CODE_TOOL_RESULTS for f in scanned

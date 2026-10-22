@@ -351,8 +351,10 @@
       "title": "Kind"
     },
     "NotScannedReason": {
+      "description": "Why a file was not scanned (docs/audit.md, \"Running it\").",
       "enum": [
         "compressed",
+        "missing",
         "symlink"
       ],
       "title": "NotScannedReason"
@@ -447,7 +449,14 @@
           "$ref": "#/$defs/UnknownReason"
         },
         "subject": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -460,6 +469,7 @@
     "UnknownReason": {
       "description": "Why the audit is incomplete, in report order.",
       "enum": [
+        "no_files_read",
         "not_scanned",
         "unknown_kind",
         "unparsed_line",

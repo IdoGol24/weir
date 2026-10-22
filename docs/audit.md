@@ -46,11 +46,13 @@ There is no default for any input, so a run never reads a real home by
 accident.
 
 A directory entry that is a symbolic link is not followed and is reported
-as not scanned. Every other entry, and every given path, must be a readable
-regular file or directory: one that cannot be read in full, or is a FIFO,
-socket or device, is exit 2 naming the path, and so is a file reached
-through two given paths. A file that starts with the gzip magic bytes is
-not scanned.
+as not scanned (`symlink`). A given path that does not exist is not scanned
+(`missing`), never an error, so a sessions directory that is not there
+reads as unknown. Every other entry, and every given path that exists, must
+be a readable regular file or directory: one that cannot be read in full,
+or is a FIFO, socket or device, is exit 2 naming the path, and so is a file
+reached through two given paths. A file that starts with the gzip magic
+bytes is not scanned (`compressed`).
 
 ### The three inventory inputs
 
@@ -283,9 +285,10 @@ The audit is **incomplete**, and lists each reason, when:
 
 | reason | subject | when |
 | --- | --- | --- |
+| `no_files_read` | none | no file was read: the paths given are empty directories, do not exist, or hold only files not scanned. An empty input is never clean |
 | `unrecognised_format` | the file | a file's format is `unknown` |
 | `unparsed_line` | `<file>:<line>` | a line of a `claude-code` or `otlp` file is not a record |
-| `not_scanned` | the file | a file was not scanned (`compressed`, or a `symlink` inside a directory) |
+| `not_scanned` | the file | a file was not scanned (`compressed`, a `symlink` inside a directory, or a given path that is `missing`) |
 | `unknown_kind` | `<file>:<line>` | a hit whose kind is `unknown` |
 
 An unrecognised record is walked in full and counted in the coverage, and
@@ -345,7 +348,7 @@ aws_secret_access_key (~/.aws/credentials default): in_context (0 tool calls, 1 
 not found: GH_TOKEN (launch env)
 not checkable: id_ed25519 (~/.ssh/id_ed25519) absent
 unknown: unrecognised_format notes.log
-coverage: 4 credentials (3 checkable), 2 files (1 claude-code, 1 unknown), 12 records (0 unrecognised), 0 unparsed lines, 230 strings
+coverage: 4 credentials (3 checkable), 2 files (1 claude-code, 1 unknown), 0 not scanned, 12 records (0 unrecognised), 0 unparsed lines, 230 strings
 result: exposed
 ```
 
@@ -366,13 +369,14 @@ Precisely:
 - `<credential>: <state> (<T> tool calls, <C> context, <S> stored, <U> unknown)`
   for each credential with a hit, `tool call` when `<T>` is 1;
 - `not found: <credential>`, `not checkable: <credential> <value_state>`,
-  `not scanned: <file> (<reason>)` and `unknown: <reason> <subject>`;
-- `coverage: <N> credentials (<K> checkable), <F> files (<groups>), <R> records (<U> unrecognised), <P> unparsed lines, <S> strings`,
-  `<groups>` the count of each format present, in the order
-  `claude-code`, `claude-code-tool-results`, `claude-code-memory`, `otlp`,
-  `unknown`, then
-  `<X> not scanned` when files were not scanned, joined by `, ` (so the
-  groups add up to `<F>`; `0 files ()` when there are none). A count of 1
+  `not scanned: <file> (<reason>)` and `unknown: <reason> <subject>`
+  (`unknown: no_files_read`, with no subject);
+- `coverage: <N> credentials (<K> checkable), <F> files (<groups>), <X> not scanned, <R> records (<U> unrecognised), <P> unparsed lines, <S> strings`,
+  `<F>` the files read and `<groups>` the count of each format among them,
+  in the order `claude-code`, `claude-code-tool-results`,
+  `claude-code-memory`, `otlp`, `unknown`,
+  joined by `, ` (so the groups add up to `<F>`; `0 files` with no groups
+  when none was read), and `<X>` the files not scanned. A count of 1
   takes the singular: `1 credential`, `1 file`, `1 record`,
   `1 unparsed line`, `1 string`;
 - `result: clean|exposed|unknown`.
@@ -395,9 +399,9 @@ drift-tested: [`packages/weir/schema_artifacts/audit.v1.schema.json`](../package
 | `exit_code` | integer | `0`, `1` or `3` |
 | `credentials` | array | one per credential in the report (below), sorted by name, display, scope and id |
 | `hits` | array | one per hit and credential (below) |
-| `files` | array | `{file, format, records, unrecognised_records, unparsed_lines, strings, bytes, not_scanned}`, sorted by file; `not_scanned` is `compressed`, `symlink` or null, and `format` is null for a file not scanned |
-| `unknown` | array | `{reason, subject}` |
-| `coverage` | object | `credentials`, `checkable`, `not_checkable`, `files`, `claude_code_files`, `claude_code_tool_results_files`, `claude_code_memory_files`, `otlp_files`, `unknown_files`, `not_scanned`, `records`, `unrecognised_records`, `unparsed_lines`, `strings`, `bytes` |
+| `files` | array | `{file, format, records, unrecognised_records, unparsed_lines, strings, bytes, not_scanned}`, sorted by file; `not_scanned` is `compressed`, `symlink`, `missing` or null, and `format` is null for a file not scanned |
+| `unknown` | array | `{reason, subject}`; `subject` is null for `no_files_read` |
+| `coverage` | object | `credentials`, `checkable`, `not_checkable`, `files` (files read), `claude_code_files`, `claude_code_tool_results_files`, `claude_code_memory_files`, `otlp_files`, `unknown_files`, `not_scanned`, `records`, `unrecognised_records`, `unparsed_lines`, `strings`, `bytes` |
 
 A credential:
 

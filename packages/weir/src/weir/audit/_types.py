@@ -14,7 +14,7 @@ import enum
 
 import msgspec
 
-from weir.canary import Form, NotScannedReason, Signal
+from weir.canary import Form, Signal
 
 AUDIT_SCHEMA = "weir-audit/1"
 
@@ -77,10 +77,19 @@ class Result(enum.Enum):
 class UnknownReason(enum.Enum):
     """Why the audit is incomplete, in report order."""
 
+    NO_FILES_READ = "no_files_read"
     UNRECOGNISED_FORMAT = "unrecognised_format"
     UNPARSED_LINE = "unparsed_line"
     NOT_SCANNED = "not_scanned"
     UNKNOWN_KIND = "unknown_kind"
+
+
+class NotScannedReason(enum.Enum):
+    """Why a file was not scanned (docs/audit.md, "Running it")."""
+
+    COMPRESSED = "compressed"
+    SYMLINK = "symlink"
+    MISSING = "missing"
 
 
 EXIT_CODES = {Result.CLEAN: 0, Result.EXPOSED: 1, Result.UNKNOWN: 3}
@@ -131,7 +140,8 @@ class FileResult(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
 class Unknown(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     reason: UnknownReason
-    subject: str
+    # None for `no_files_read`, which is about the whole audit
+    subject: str | None
 
 
 class Coverage(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

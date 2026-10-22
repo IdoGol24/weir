@@ -102,12 +102,58 @@ def test_a_key_that_is_not_64_hex_characters_is_refused(tmp_path: Path, text: st
     _error(setup.audit([_session(setup, tmp_path / "s.jsonl")], key=bad), setup, str(bad))
 
 
-def test_a_missing_input_is_refused_and_the_key_is_never_created(tmp_path: Path) -> None:
+def test_a_missing_key_is_refused_and_never_created(tmp_path: Path) -> None:
     setup = fx.build(tmp_path)
     missing = tmp_path / "no.key"
     _error(setup.audit([_session(setup, tmp_path / "s.jsonl")], key=missing), setup, str(missing))
     assert not missing.exists()
-    _error(setup.audit([tmp_path / "nothing.jsonl"]), setup, "nothing.jsonl")
+
+
+def _reasons(run: fx.Run) -> list[tuple[str, str | None]]:
+    return [(u["reason"], u["subject"]) for u in run.report["unknown"]]  # type: ignore[index,union-attr]
+
+
+def test_an_empty_directory_is_never_clean(tmp_path: Path) -> None:
+    """docs/audit.md: when no file was read, the audit is incomplete."""
+    setup = fx.build(tmp_path)
+    empty = tmp_path / "projects"
+    empty.mkdir()
+    run = setup.audit([empty])
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+    assert _reasons(run) == [("no_files_read", None)]
+    assert run.report["coverage"]["files"] == 0  # type: ignore[index]
+    text = setup.audit([empty], as_json=False)
+    assert "unknown: no_files_read" in text.lines
+    assert " 0 files, 0 not scanned, " in text.lines[-2]
+
+
+def test_a_missing_path_is_not_scanned_and_never_clean(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    gone = tmp_path / "no-such-config" / "projects"
+    run = setup.audit([gone])
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+    assert _reasons(run) == [("no_files_read", None), ("not_scanned", str(gone))]
+    (row,) = run.report["files"]  # type: ignore[misc]
+    assert (row["file"], row["format"], row["not_scanned"]) == (str(gone), None, "missing")
+    assert f"not scanned: {gone} (missing)" in setup.audit([gone], as_json=False).lines
+
+
+def test_a_missing_path_beside_a_read_file_is_only_not_scanned(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    gone = tmp_path / "gone.jsonl"
+    run = setup.audit([_session(setup, tmp_path / "s.jsonl"), gone])
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+    assert _reasons(run) == [("not_scanned", str(gone))]
+
+
+def test_every_path_skipped_is_no_files_read(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    packed = tmp_path / "old.jsonl.gz"
+    packed.write_bytes(b"\x1f\x8b" + b"\x00" * 16)
+    run = setup.audit([packed])
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+    assert _reasons(run) == [("no_files_read", None), ("not_scanned", str(packed))]
+    assert run.report["coverage"]["files"] == 0  # type: ignore[index]
 
 
 def test_a_report_that_is_not_an_inventory_report_is_refused(tmp_path: Path) -> None:
@@ -407,7 +453,8 @@ def test_the_text_report_lays_out_hits_summaries_and_coverage(tmp_path: Path) ->
     assert f"unknown: unrecognised_format {notes}" in run.lines
     assert run.lines[-2].startswith(
         f"coverage: {len(setup.values)} credentials ({len(setup.values)} checkable), 2 files"
-        " (1 claude-code, 1 unknown), 1 record (0 unrecognised), 0 unparsed lines, "
+        " (1 claude-code, 1 unknown), 0 not scanned, 1 record (0 unrecognised),"
+        " 0 unparsed lines, "
     )
     assert run.lines[-1] == "result: exposed"
 
@@ -442,14 +489,14 @@ def test_a_long_file_path_is_printed_in_full(tmp_path: Path) -> None:
     assert run.lines[0].split(" file=")[1].startswith(f"{path}:{line} ")
 
 
-def test_a_file_not_scanned_is_its_own_group_in_the_coverage_line(tmp_path: Path) -> None:
+def test_a_file_not_scanned_is_counted_beside_the_files_read(tmp_path: Path) -> None:
     setup = fx.build(tmp_path)
     packed = tmp_path / "old.jsonl.gz"
     packed.write_bytes(b"\x1f\x8b" + b"\x00" * 16)
     session = _session(setup, tmp_path / "s.jsonl")
     run = setup.audit([session, packed], as_json=False)
     assert f"not scanned: {packed} (compressed)" in run.lines
-    assert " 2 files (1 claude-code, 1 not scanned), " in run.lines[-2]
+    assert " 1 file (1 claude-code), 1 not scanned, " in run.lines[-2]
     assert run.exit_code == 3
 
 
