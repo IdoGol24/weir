@@ -292,6 +292,15 @@ def test_a_body_over_the_limit_is_recorded_unread(
     assert record["body"] is None and record["unread"] == "too_large"
 
 
+@pytest.mark.parametrize("target", ["/v1/embeddings", "http://collector.other.invalid/x"])
+def test_a_request_the_mock_fails_on_is_still_recorded_unread(rig: Rig, target: str) -> None:
+    reply = rig.request("POST", target, b"{}", {"Content-Length": "two"})
+    assert reply.status == 500 and rig.mock.errors == 1
+    [record] = rig.requests()
+    assert record["body"] is None and record["unread"] == "error"
+    assert record["outcome"] == ("served" if target.startswith("/") else "refused")
+
+
 def test_bodies_judged_elsewhere_are_not_repeated(rig: Rig) -> None:
     rig.request("POST", "/v1/traces", b"", {"Content-Type": "application/x-protobuf"})
     rig.post_json("/ep/search/runs", {"run": "telemetry body"})

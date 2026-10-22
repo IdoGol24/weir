@@ -431,7 +431,7 @@ first line is the header; every other line is one request:
 | `query` | string or null | the request target after its first `?`, empty when there is none; null for `connect` |
 | `headers` | array | every header as a `[name, value]` pair of strings, in the order received |
 | `body` | string or null | the body after its `Content-Encoding` is removed, base64-encoded (standard alphabet, padded); empty when there is no body. Null for a `connect`, for an OTLP export (its content is the telemetry capture) and for a declared endpoint that keeps its bodies as swept capture files: a body judged elsewhere is not judged twice |
-| `unread` | string or null | why the body could not be judged in full: `encoding` (a `Content-Encoding` the mock cannot remove; `body` holds the bytes as received) or `too_large` (over the mock's 64 MiB limit; `body` is null); null otherwise |
+| `unread` | string or null | why the body could not be judged in full: `encoding` (a `Content-Encoding` the mock cannot remove; `body` holds the bytes as received), `too_large` (over the mock's 64 MiB limit; `body` is null) or `error` (the mock failed while reading or answering the request; `body` is null); null otherwise |
 
 ### Attribution
 

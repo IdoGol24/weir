@@ -212,8 +212,12 @@ def _found(parts: Sequence[Part], table: Sequence[_Needle]) -> set[tuple[str, st
     fine: set[tuple[str, str, Form]] = set()
     whole: set[tuple[str, str, Form, str | None]] = set()
     grouped: set[tuple[str, str | None]] = set()
+    # One search per needle over the whole request first: a needle in no
+    # part is in no part's bytes, and most needles are in no request.
+    joined = b"\0".join(part.data for part in parts)
+    present = [needle for needle in table if needle.data in joined]
     for part in parts:
-        for needle in table:
+        for needle in present:
             if needle.data in part.data:
                 pid = needle.placement.id
                 if part.whole:

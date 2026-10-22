@@ -297,6 +297,7 @@ class _Handler(BaseHTTPRequestHandler):
         capture"), written before the request is answered. The request
         target is recorded as received, split at its `?`: for an
         absolute-form request it keeps its scheme, userinfo and host."""
+        self._recorded = True
         path: str | None = None
         query: str | None = None
         if outcome != "connect":
@@ -331,6 +332,10 @@ class _Handler(BaseHTTPRequestHandler):
         self._refuse(host)
 
     def _dispatch(self) -> None:
+        # What is known of the request so far, so that a request the mock
+        # fails on is still recorded, as unread, and never silently lost.
+        self._recorded = False
+        self._known: tuple[str, str | None, str, int] = ("served", None, HOST, self.owner.port)
         try:
             target = self.path
             parts = urlsplit(target)
@@ -342,6 +347,7 @@ class _Handler(BaseHTTPRequestHandler):
                 target = parts.path + (f"?{parts.query}" if parts.query else "")
                 parts = urlsplit(target)
             endpoint = self.owner.endpoint_of(self.command, parts.path)
+            self._known = ("served", endpoint, HOST, self.owner.port)
             port = self.owner.port
             try:
                 raw = self._read_body()
@@ -354,12 +360,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(self._route(target, raw))
         except Exception:  # noqa: BLE001 - never echo a request; count and fail it
             self.owner.note_error()
+            if not self._recorded:
+                self._record(*self._known, None, "error")
             self._send((500, b"canary mock error\n", "text/plain", {}), close=True)
 
     def _refuse_absolute(self, parts: SplitResult) -> None:
         """A plain-HTTP request for another host: recorded with its body,
         then refused. Nothing is forwarded, opened or resolved."""
         host, port = _authority(parts.netloc, DEFAULT_PORTS.get(parts.scheme.lower(), 0))
+        self._known = ("refused", None, host, port)
         try:
             body, unread = self._body(self._read_body(), None)
         except _TooLarge:

@@ -282,10 +282,10 @@ def test_a_truncated_last_line_is_unparsed(tmp_path: Path) -> None:
     assert f"incomplete: unparsed_record {requests}:2" in run.lines
 
 
-@pytest.mark.parametrize("unread", ["encoding", "too_large"])
+@pytest.mark.parametrize("unread", ["encoding", "too_large", "error"])
 def test_an_unread_body_is_judged_as_given_and_incomplete(tmp_path: Path, unread: str) -> None:
     value = fx.fake_value("unread")
-    body = None if unread == "too_large" else b"\x0bopaque"
+    body = b"\x0bopaque" if unread == "encoding" else None
     record = fx.request(headers=[("X-Key", value)], body=body, unread=unread)
     run = _run(tmp_path, [record], [fx.placement(SINK_PLACEMENT, value)])
     assert _hits(run) == [(SINK_PLACEMENT, "requests", "model", "headers.x-key", "raw")]

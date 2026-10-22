@@ -546,8 +546,12 @@ def test_request_record_fields_match_the_contract_table() -> None:
     assert set(_ticked(meaning["outcome"])) >= outcomes
     unread_hint = typing.get_type_hints(Request)["unread"]
     reasons = {a for arg in typing.get_args(unread_hint) for a in typing.get_args(arg)}
-    assert [t for t in _ticked(meaning["unread"]) if t in reasons] == ["encoding", "too_large"]
-    assert reasons == {"encoding", "too_large"}
+    assert [t for t in _ticked(meaning["unread"]) if t in reasons] == [
+        "encoding",
+        "too_large",
+        "error",
+    ]
+    assert reasons == {"encoding", "too_large", "error"}
 
 
 def test_blocked_entries_match_the_contract_table() -> None:

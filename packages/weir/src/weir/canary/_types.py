@@ -134,7 +134,7 @@ class Request(msgspec.Struct, forbid_unknown_fields=True):
     query: str | None
     headers: list[tuple[str, str]]
     body: str | None
-    unread: Literal["encoding", "too_large"] | None
+    unread: Literal["encoding", "too_large", "error"] | None
 
 
 class Ledger(msgspec.Struct, frozen=True):

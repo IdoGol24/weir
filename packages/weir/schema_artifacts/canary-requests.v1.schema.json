@@ -87,6 +87,7 @@
             {
               "enum": [
                 "encoding",
+                "error",
                 "too_large"
               ]
             },
