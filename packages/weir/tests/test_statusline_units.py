@@ -15,6 +15,7 @@ import pytest
 import statusline_fixtures as sx
 
 from weir.audit import Chunk, Form, audit_chunks, audit_files, load_inputs
+from weir.audit.matching import Matcher
 from weir.canary import Form as CanaryForm
 from weir.statusline.compose import run_beside
 from weir.statusline.segment import tally
@@ -145,6 +146,31 @@ def test_a_cache_from_another_inventory_is_not_used(tmp_path: Path) -> None:
 
     assert first.stdout != second.stdout
     assert second.stdout == sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
+
+
+def test_the_cache_holds_no_value_or_file_name_in_any_encoding(tmp_path: Path) -> None:
+    claude = sx.build(tmp_path)
+    v = claude.setup.values
+    _session(claude).write(claude.transcript())
+    named = claude.session_dir() / "tool-results" / f"{v[fx.ACME]}.txt"
+    named.parent.mkdir(parents=True)
+    cfx.write(named, f"x {v[fx.GH]}\n")
+    claude.statusline()
+    claude.statusline(extra=["--budget-ms", "0"])
+
+    s = claude.setup
+    inputs = load_inputs(s.report, s.store, s.key)
+    matcher = Matcher(inputs.key, set(inputs.by_fingerprint))
+    names = [p.name.encode() for p in claude.session_dir().rglob("*") if p.is_file()]
+    names.append(claude.transcript().name.encode())
+    cached = [p for p in claude.state.rglob("*") if p.is_file()]
+    assert cached
+    for path in cached:
+        data = path.read_bytes()
+        # The audit's own matcher, every form it decodes, finds no value.
+        assert not matcher.find(data.decode()), path
+        for name in names:
+            assert name not in data and name.hex().encode() not in data, (path, name)
 
 
 # --- beside an existing status line ----------------------------------------------
