@@ -43,6 +43,8 @@ def flow_environment(
         "CANARY_MOCK_URL": mock_url,
         "OPENAI_BASE_URL": f"{mock_url}/v1",
         "OPENAI_API_BASE": f"{mock_url}/v1",
+        # The Anthropic SDKs append /v1/messages themselves.
+        "ANTHROPIC_BASE_URL": mock_url,
         "OTEL_EXPORTER_OTLP_ENDPOINT": mock_url,
         "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
     }

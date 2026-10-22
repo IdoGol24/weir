@@ -1,11 +1,12 @@
-"""The mock's OpenAI-compatible model API, scripted.
+"""The mock's model API, scripted.
 
-Chat Completions (plain and streaming), Responses (plain and streaming),
-Embeddings and Models, served under `{mock}/v1`. No model decides anything:
-with `tool_calls = "each-offered-tool-once"` the first turn calls every
-offered tool once with a minimal schema-valid argument, so the program
-exercises each tool's credentials, and once tool results are in the
-conversation the reply is the configured text. Timestamps are fixed
+OpenAI-compatible Chat Completions (plain and streaming), Responses (plain
+and streaming), Embeddings and Models, and the Anthropic Messages API
+(plain and streaming), served under `{mock}/v1`. No model decides
+anything: with `tool_calls = "each-offered-tool-once"` the first turn
+calls every offered tool once with a minimal schema-valid argument, so the
+program exercises each tool's credentials, and once tool results are in
+the conversation the reply is the configured text. Timestamps are fixed
 constants; the runner never reads the wall clock.
 """
 
@@ -89,10 +90,14 @@ def minimal(schema: object, defs: Json, depth: int = 0) -> object:
     return "a" * (length if isinstance(length, int) and length > 0 else 1)
 
 
-def _arguments(parameters: object) -> str:
+def _input(parameters: object) -> object:
     schema = _obj(parameters)
     defs = {**_obj(schema.get("definitions")), **_obj(schema.get("$defs"))}
-    return json.dumps(minimal(schema, defs) if schema else {})
+    return minimal(schema, defs) if schema else {}
+
+
+def _arguments(parameters: object) -> str:
+    return json.dumps(_input(parameters))
 
 
 def _sse(events: list[tuple[str | None, object]]) -> bytes:
@@ -268,6 +273,83 @@ class ModelApi:
                 emit("response.content_part.done", **ids, part={**part, "text": self.reply})
             emit("response.output_item.done", output_index=index, item=item)
         emit("response.completed", response=response)
+        return _sse(events), "text/event-stream"
+
+    # -- Anthropic Messages --------------------------------------------
+
+    def messages(self, request: Json) -> tuple[bytes, str]:
+        n = self._next()
+        model = request.get("model") if isinstance(request.get("model"), str) else MODEL
+        messages = [_obj(m) for m in _list(request.get("messages"))]
+
+        def answers(message: Json) -> bool:
+            return any(_obj(b).get("type") == "tool_result" for b in _list(message.get("content")))
+
+        # Tool results come back in a user message, so a turn starts at the
+        # last user message that answers no tool call.
+        last_user = max(
+            (i for i, m in enumerate(messages) if m.get("role") == "user" and not answers(m)),
+            default=-1,
+        )
+        answered = any(answers(m) for m in messages[last_user + 1 :])
+        # Only the program's own tools: a server tool has a versioned type.
+        tools = [
+            _obj(t)
+            for t in _list(request.get("tools"))
+            if _obj(t).get("type", "custom") == "custom"
+        ]
+        choice = _obj(request.get("tool_choice")).get("type")
+        content: list[Json]
+        if self.call_tools and tools and not answered and choice != "none":
+            content = []
+            for i, t in enumerate(tools):
+                value = _input(t.get("input_schema"))
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": f"toolu_mock_{n}_{i}",
+                        "name": str(t.get("name", "")),
+                        "input": value if isinstance(value, dict) else {},
+                    }
+                )
+        else:
+            content = [{"type": "text", "text": self.reply}]
+        stop = "tool_use" if content[0]["type"] == "tool_use" else "end_turn"
+        usage = {"input_tokens": 1, "output_tokens": 1}
+        message: Json = {
+            "id": f"msg_mock_{n}",
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": content,
+            "stop_reason": stop,
+            "stop_sequence": None,
+            "usage": usage,
+        }
+        if not request.get("stream"):
+            return json.dumps(message).encode(), "application/json"
+        events: list[tuple[str | None, object]] = []
+
+        def emit(kind: str, **fields: object) -> None:
+            events.append((kind, {"type": kind, **fields}))
+
+        emit("message_start", message={**message, "content": [], "stop_reason": None})
+        emit("ping")
+        for index, block in enumerate(content):
+            if block["type"] == "tool_use":
+                start: Json = {**block, "input": {}}
+                delta: Json = {
+                    "type": "input_json_delta",
+                    "partial_json": json.dumps(block["input"]),
+                }
+            else:
+                start = {"type": "text", "text": ""}
+                delta = {"type": "text_delta", "text": block["text"]}
+            emit("content_block_start", index=index, content_block=start)
+            emit("content_block_delta", index=index, delta=delta)
+            emit("content_block_stop", index=index)
+        emit("message_delta", delta={"stop_reason": stop, "stop_sequence": None}, usage=usage)
+        emit("message_stop")
         return _sse(events), "text/event-stream"
 
     # -- Embeddings and Models -----------------------------------------
