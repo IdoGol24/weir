@@ -17,7 +17,7 @@ weir canary judge --sample
 
 Weir is two packages that work together, in CI or on your laptop:
 
-- **weir-run is the test rig.** It plants a unique fake credential wherever a real one would live and runs your agent's own flows against a local mock on 127.0.0.1: an OpenAI-compatible fake model, OAuth endpoints, a telemetry receiver and stand-ins for your own APIs. It captures everything the agent sends out: its telemetry, its console output, and every request the mock receives, refused ones included. On Linux the flows run in a network namespace whose only network is loopback, so a client that ignores the proxy settings reaches nothing, and the attempt is reported.
+- **weir-run is the test rig.** It plants a unique fake credential wherever a real one would live and runs your agent's own flows against a local mock on 127.0.0.1: an OpenAI-compatible fake model, OAuth endpoints, a telemetry receiver and stand-ins for your own APIs. It captures everything the agent sends out: its telemetry, its console output, and every request the mock receives, refused ones included. On Linux, where it can make an unprivileged network namespace, the flows run in one whose only network is loopback, so a client that ignores the proxy settings reaches nothing, and the attempt is reported.
 - **weir-scan is the inspector.** `weir canary judge` searches that capture for every planted value and gives the verdict: leak, clean or incomplete. Each placement names its own provider: a key in a credential field of a request to its own provider is the key being used, and the same key anywhere else is a leak that names where it went, such as `sink="model"` for a key in a prompt. weir-scan also works on its own, on traces you already have.
 
 ```sh

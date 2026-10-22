@@ -301,11 +301,12 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
 ## Output
 
-- **stderr:** first, one line for each placement with no `provider`;
-  then each flow's status and its own stdout and stderr, relayed after
-  the run with every encoded form of every canary replaced by
-  `<canary:PLACEMENT-ID>`; whether the network was isolated, and each
-  blocked direct attempt; refused egress and unmocked requests by count.
+- **stderr:** first, one line for each placement with neither a
+  `provider` nor a `provider_host`; then each flow's status and its own
+  stdout and stderr, relayed after the run with every encoded form of
+  every canary replaced by `<canary:PLACEMENT-ID>`; whether the network
+  was isolated, and each blocked direct attempt; refused egress and
+  unmocked requests by count.
 - **stdout:** the judge's text report: one `LEAK` line per hit, the
   not-exercised placements, the blocked destinations, the incomplete
   reasons, the coverage line, the network line and the result. It names
