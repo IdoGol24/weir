@@ -15,11 +15,18 @@ from __future__ import annotations
 import base64
 import itertools
 import json
+import re
 import struct
 import threading
+from collections.abc import Sequence
 from typing import Any, cast
 
+from weir_run.spec import ScriptStep
+
 CREATED = 1_700_000_000
+# A scripted step's tool_use id names its step, so the script needs no
+# state between requests: the conversation says how far it has got.
+_STEP_ID = re.compile(r"toolu_mock_step(\d+)_\d+")
 MODEL = "mock-model"
 EMBEDDING_DIMENSIONS = 8
 
@@ -111,9 +118,10 @@ def _sse(events: list[tuple[str | None, object]]) -> bytes:
 
 
 class ModelApi:
-    def __init__(self, reply: str, tool_calls: str) -> None:
+    def __init__(self, reply: str, tool_calls: str, script: Sequence[ScriptStep] = ()) -> None:
         self.reply = reply
         self.call_tools = tool_calls == "each-offered-tool-once"
+        self.script = tuple(script)
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
 
@@ -300,7 +308,21 @@ class ModelApi:
         ]
         choice = _obj(request.get("tool_choice")).get("type")
         content: list[Json]
-        if self.call_tools and tools and not answered and choice != "none":
+        if self.script:
+            step = self._next_step(messages, tools) if choice != "none" else None
+            if step is None:
+                content = [{"type": "text", "text": self.reply}]
+            else:
+                index, chosen = step
+                content = [
+                    {
+                        "type": "tool_use",
+                        "id": f"toolu_mock_step{index}_{n}",
+                        "name": chosen.tool,
+                        "input": dict(chosen.input),
+                    }
+                ]
+        elif self.call_tools and tools and not answered and choice != "none":
             content = []
             for i, t in enumerate(tools):
                 value = _input(t.get("input_schema"))
@@ -351,6 +373,24 @@ class ModelApi:
         emit("message_delta", delta={"stop_reason": stop, "stop_sequence": None}, usage=usage)
         emit("message_stop")
         return _sse(events), "text/event-stream"
+
+    def _next_step(self, messages: list[Json], tools: list[Json]) -> tuple[int, ScriptStep] | None:
+        """The first step after the last one the conversation already asked
+        for whose tool is offered. A step whose tool is not offered is
+        skipped: the program does not have it, so it is never asked."""
+        asked = -1
+        for message in messages:
+            if message.get("role") != "assistant":
+                continue
+            for block in _list(message.get("content")):
+                match = _STEP_ID.fullmatch(str(_obj(block).get("id", "")))
+                if _obj(block).get("type") == "tool_use" and match:
+                    asked = max(asked, int(match.group(1)))
+        offered = {str(t.get("name", "")) for t in tools}
+        for index in range(asked + 1, len(self.script)):
+            if self.script[index].tool in offered:
+                return index, self.script[index]
+        return None
 
     # -- Embeddings and Models -----------------------------------------
 

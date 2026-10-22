@@ -50,6 +50,53 @@
   between releases, where the recorded weir-run needs a newer weir-scan
   than the one recorded, it stops with an error instead of installing
   older code. Its README is `action/README.md`.
+- **weir-scan: the canary judge reads the Claude Code check's ledger.**
+  `canary-ledger/1` gains the placement kind `file` (a file the runner
+  wrote where a program usually finds secrets, in a scratch project or
+  home), the evidence type `tool_call` (the mock's model asked the program
+  for the place a placement lives, in a tool call, and the program
+  answered it, with a result or a refusal) and the optional `flow` field
+  `telemetry` (default `true`). When every flow record says `telemetry` is
+  `false`, an empty telemetry capture no longer makes the run incomplete
+  (`empty_capture`). docs/canary.md also defines the runner's name and TLS
+  stub: a request a flow sends to another host is decrypted and recorded as
+  `refused`, and a TLS connection it does not complete as `connect`, with
+  method `TLS`. The ledger schema artifact gains the three values.
+- **weir-run: the Claude Code check, "does my Claude Code setup keep my
+  keys out?"** It needs the weir-scan release that ships the `file` kind
+  and the `tool_call` evidence above.
+  A `[claude_code]` config runs the installed Claude Code headless
+  (`claude -p`) once, in a scratch project and a scratch home, inside
+  bubblewrap where the real home is not mounted, and inside the isolated
+  network. It plants fake secrets in the project's `.env`, a project
+  config file, a credentials file in the scratch home and an environment
+  variable, and a fake model key with `ANTHROPIC_BASE_URL` at the mock;
+  copies in the project's `.claude/settings.json` and `CLAUDE.md`, and
+  applies `user_settings` as the user's own settings; and lets the mock's
+  model ask for ordinary coding actions (read the files, run `cat` and
+  `env`). The verdict reads as a check of the user's controls, before the
+  judge's report: `kept out: 3 of 4`, then where each other secret went
+  and how (`reached the model: .env through a file read (Read .env)`),
+  which secrets no action reached (`not exercised`, never kept out) and
+  which Claude Code wrote to disk, its session transcript included
+  (`stored locally`, apart from what was sent out). A setting that would
+  move the model API, the key or the traffic away from the mock
+  (`apiKeyHelper`, the base URL, key and provider variables, proxies, OTLP
+  endpoints) is overridden and each override reported. The config must
+  say whose key the model key is: `key_owner = "anthropic"`
+  (`api.anthropic.com` is its own host) or `"gateway"` (any other host is
+  a leak); without it the run starts nothing and exits 3
+  (`incomplete: key_owner_not_declared`). The project is marked trusted
+  for the run unless `trust_project = false`, and the verdict says which.
+- **weir-run: a name and TLS stub in the isolated network.** For the Claude Code
+  check, every name lookup is answered with the loopback address and
+  HTTPS to any host is decrypted under a certificate authority made for
+  the run, so connections to hosts other than the configured ones are
+  reported by host and what they carried is judged like any request.
+  weir-run now depends on `cryptography` to sign the stub's certificates.
+- **weir-run: the Messages API mock can follow a script.** Given steps, it asks for
+  one tool call per turn, in order, skipping a step whose tool the program
+  does not offer, and answers `model_reply` once no step is left.
 
 ## [0.6.0] - 2026-10-22
 

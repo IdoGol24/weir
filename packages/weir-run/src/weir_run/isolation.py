@@ -21,6 +21,11 @@ mock's listening socket, the packet socket and handles on the namespace;
 each flow starts through the same helper, which joins the namespace before
 it execs the flow, and never runs the flow if it cannot.
 
+With `stub`, the namespace also holds the name and TLS stub's sockets
+(`weir_run.mock.intercept`): a DNS query sent to 127.0.0.1:53 is answered
+there, so it is `answered`, and what the flow does with the answer reaches
+the stub's TLS and HTTP listeners on loopback.
+
 Where namespaces are unavailable (not Linux, user namespaces disabled or
 restricted), `jail()` raises `Unavailable` naming why, and the run goes
 ahead unisolated: the report says direct connections were not observed.
@@ -65,6 +70,8 @@ class Attempt:
     protocol: str  # tcp | udp | dns
     target: str  # address:port, or the DNS name asked for
     payload: bytes = field(default=b"", repr=False)
+    # A DNS query the name stub answered: not a direct connection.
+    answered: bool = False
 
 
 def _address(raw: bytes) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
@@ -103,9 +110,13 @@ def dns_name(payload: bytes) -> str | None:
     return None
 
 
-def parse(packet: bytes) -> Attempt | None:
+STUB_DNS = ipaddress.IPv4Address("127.0.0.1")
+
+
+def parse(packet: bytes, stub: bool = False) -> Attempt | None:
     """The attempt an outgoing IP packet is, if any. The packet socket's
-    filter passes only TCP SYNs and UDP datagrams."""
+    filter passes only TCP SYNs and UDP datagrams. With stub, a DNS query
+    to 127.0.0.1:53 is one the name stub answers."""
     if not packet:
         return None
     version = packet[0] >> 4
@@ -127,7 +138,8 @@ def parse(packet: bytes) -> Attempt | None:
         if port == DNS_PORT:
             name = dns_name(payload)
             if name is not None:
-                return Attempt("dns", name, payload)
+                answered = stub and destination == STUB_DNS
+                return Attempt("dns", name, payload, answered)
         if not _loopback(destination):
             return Attempt("udp", _target(destination, port), payload)
     return None
@@ -136,10 +148,19 @@ def parse(packet: bytes) -> Attempt | None:
 class Jail:
     """A loopback-only network namespace, alive for one check run."""
 
-    def __init__(self, user_ns: int, net_ns: int, listener: socket.socket, packets: socket.socket):
+    def __init__(
+        self,
+        user_ns: int,
+        net_ns: int,
+        listener: socket.socket,
+        packets: socket.socket,
+        stub: Sequence[socket.socket] = (),
+    ):
         self._user_ns = user_ns
         self._net_ns = net_ns
         self.listener = listener
+        # The name and TLS stub's sockets: DNS, TLS and HTTP, or none.
+        self.stub = tuple(stub)
         self._packets = packets
         self._packets.setblocking(False)
         self._lock = threading.Lock()
@@ -167,7 +188,7 @@ class Jail:
                 packet = self._packets.recv(MAX_PACKET)
             except (BlockingIOError, InterruptedError):
                 break
-            attempt = parse(packet)
+            attempt = parse(packet, bool(self.stub))
             if attempt is not None:
                 self._attempts.append(attempt)
         stats = self._packets.getsockopt(SOL_PACKET, PACKET_STATISTICS, 8)
@@ -202,10 +223,16 @@ class Jail:
             os.close(fd)
         self._packets.close()
         self.listener.close()
+        for s in self.stub:
+            s.close()
 
 
-def jail() -> Jail:
-    """A new loopback-only namespace, or `Unavailable` saying why not."""
+STUB_SOCKETS = 3
+
+
+def jail(stub: bool = False) -> Jail:
+    """A new loopback-only namespace, or `Unavailable` saying why not. With
+    stub, it also holds the name and TLS stub's sockets."""
     if sys.platform != "linux":
         raise Unavailable("network isolation needs Linux")
     ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -213,7 +240,15 @@ def jail() -> Jail:
         with ours:
             try:
                 done = subprocess.run(
-                    [sys.executable, "-I", "-S", str(HELPER), "create", str(theirs.fileno())],
+                    [
+                        sys.executable,
+                        "-I",
+                        "-S",
+                        str(HELPER),
+                        "create",
+                        str(theirs.fileno()),
+                        *(["stub"] if stub else []),
+                    ],
                     pass_fds=(theirs.fileno(),),
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
@@ -224,15 +259,21 @@ def jail() -> Jail:
             except (OSError, subprocess.SubprocessError) as exc:
                 raise Unavailable(f"the namespace helper did not run ({exc})") from None
             theirs.close()
-            message, fds, _, _ = socket.recv_fds(ours, 4096, 4)
+            message, fds, _, _ = socket.recv_fds(ours, 4096, 4 + STUB_SOCKETS)
     finally:
         theirs.close()
     for fd in fds:
         # Received descriptors are inheritable; only a flow's own may pass.
         os.set_inheritable(fd, False)
-    if message == b"ok" and len(fds) == 4:
-        user, net, listener, packets = fds
-        return Jail(user, net, socket.socket(fileno=listener), socket.socket(fileno=packets))
+    if message == b"ok" and len(fds) == 4 + (STUB_SOCKETS if stub else 0):
+        user, net, listener, packets, *stubs = fds
+        return Jail(
+            user,
+            net,
+            socket.socket(fileno=listener),
+            socket.socket(fileno=packets),
+            [socket.socket(fileno=fd) for fd in stubs],
+        )
     for fd in fds:
         os.close(fd)
     if message.startswith(b"error "):

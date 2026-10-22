@@ -22,7 +22,7 @@ from __future__ import annotations
 import shutil
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
@@ -32,6 +32,7 @@ from weir_run import judge as judge_cli
 from weir_run.capture import Capture
 from weir_run.ledger import Ledger
 from weir_run.mock import Mock
+from weir_run.mock.intercept import Stub
 from weir_run.shapes import ByteSource, shaped
 from weir_run.spec import FlowSpec, RunSpec, SpecError, validate
 
@@ -56,7 +57,10 @@ class CheckRun:
         python: str = sys.executable,
         validate_spec: bool = True,
         require_isolation: bool = False,
+        stub: bool = False,
     ) -> None:
+        """With stub, the flows run with the name and TLS stub, which
+        needs the isolated network: without it the run cannot start."""
         if validate_spec:
             validate(spec)
         self.spec = spec
@@ -68,6 +72,7 @@ class CheckRun:
         self.json_verdict: judge_cli.Verdict | None = None
         self.jail: isolation.Jail | None = None
         self.not_isolated: str | None = None
+        self.stub: Stub | None = None
         # (flow, protocol, target) -> attempts; datagram payloads by flow.
         self.direct: dict[tuple[str, str, str], int] = {}
         self._direct_payloads: dict[str, list[bytes]] = {}
@@ -76,8 +81,10 @@ class CheckRun:
         self._flow_dirs = Path(tempfile.mkdtemp(prefix="canary-flows-"))
         try:
             try:
-                self.jail = isolation.jail()
+                self.jail = isolation.jail(stub=True) if stub else isolation.jail()
             except isolation.Unavailable as exc:
+                if stub:
+                    raise SpecError(f"this check needs an isolated network: {exc}") from None
                 self.not_isolated = str(exc)
             self.ledger = Ledger(self.run_dir / judge_cli.LEDGER, self.source, spec.reserved_ids())
             self.ledger.network(isolated=self.jail is not None, required=require_isolation)
@@ -89,9 +96,15 @@ class CheckRun:
                 placement = self.ledger.plant(
                     p.id, p.kind, made, p.required, providers, p.provider_host
                 )
-                self.planted[p.variable] = placement.value
+                if p.kind in ("env", "code"):
+                    self.planted[p.variable] = placement.value
             self.mock = Mock(spec.mock, self.ledger, self.capture, self.source)
             self.mock.start(None if self.jail is None else self.jail.listener)
+            if stub and self.jail is not None:
+                directory = self.run_dir / "stub"
+                directory.mkdir()
+                self.stub = Stub(self.mock, self.jail.stub, directory)
+                self.stub.start()
         except BaseException:
             if self.jail is not None:
                 self.jail.close()
@@ -104,7 +117,9 @@ class CheckRun:
     def mock_url(self) -> str:
         return self.mock.url
 
-    def run_flow(self, flow: FlowSpec) -> FlowOutcome:
+    def run_flow(self, flow: FlowSpec, env: Mapping[str, str] | None = None) -> FlowOutcome:
+        """Run flow with the runner's flow environment, or with env as its
+        whole environment when given."""
         if self._stopped:
             raise RuntimeError("the check run has already been judged")
         if any(o.id == flow.id for o in self.outcomes):
@@ -114,10 +129,11 @@ class CheckRun:
         tmp = self._flow_dirs / f"{index:02d}" / "tmp"
         home.mkdir(parents=True)
         tmp.mkdir()
-        env = flows.flow_environment(self.mock_url, self.planted, flow.env, home, tmp)
+        if env is None:
+            env = flows.flow_environment(self.mock_url, self.planted, flow.env, home, tmp)
         stdout, stderr = self.capture.flow_streams(index, flow.id)
         status = flows.run(flow, env, stdout, stderr, self.python, self.jail)
-        self.ledger.flow(flow.id, status)
+        self.ledger.flow(flow.id, status, telemetry=flow.telemetry)
         self._observe(flow.id)
         outcome = FlowOutcome(flow.id, status, stdout, stderr)
         self.outcomes.append(outcome)
@@ -129,16 +145,22 @@ class CheckRun:
         if self.jail is None:
             return
         for attempt in self.jail.collect():
-            key = (flow_id, attempt.protocol, attempt.target)
-            self.direct[key] = self.direct.get(key, 0) + 1
             if attempt.payload:
                 self._direct_payloads.setdefault(flow_id, []).append(attempt.payload)
+            # A lookup the name stub answered is no direct connection: what
+            # the flow did with the answer reached the stub on loopback.
+            if attempt.answered:
+                continue
+            key = (flow_id, attempt.protocol, attempt.target)
+            self.direct[key] = self.direct.get(key, 0) + 1
 
     def stop(self) -> None:
         if self._stopped:
             return
         self._stopped = True
         try:
+            if self.stub is not None:
+                self.stub.stop()
             self.mock.stop()
             if self.jail is not None:
                 try:
@@ -160,11 +182,13 @@ class CheckRun:
         """Program-derived text, printed only if it holds no trace of a value."""
         return "[withheld]" if self.ledger.withheld(text) else text
 
-    def relay(self, out: TextIO) -> None:
+    def relay(self, out: TextIO, streams: Sequence[str] = ("stdout", "stderr")) -> None:
         """Each flow's own output, every needle replaced by `<canary:ID>`."""
         for o in self.outcomes:
             out.write(f"flow {o.id}: {o.status}\n")
             for name, path in (("stdout", o.stdout), ("stderr", o.stderr)):
+                if name not in streams:
+                    continue
                 data = path.read_bytes() if path.exists() else b""
                 if not data:
                     continue
@@ -176,6 +200,11 @@ class CheckRun:
             out.write("network: isolated, loopback only\n")
         else:
             out.write(f"network: not isolated ({self.not_isolated})\n")
+        if self.stub is not None:
+            for name, count in sorted(self.stub.names.items()):
+                out.write(
+                    f"network: name lookup of {self.safe(name)} answered by the stub ({count}x)\n"
+                )
         for (flow_id, protocol, target), count in sorted(self.direct.items()):
             what = _DIRECT_WORDS[protocol]
             out.write(

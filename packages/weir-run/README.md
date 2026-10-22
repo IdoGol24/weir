@@ -13,7 +13,10 @@ pattern guess.
 
 Its contract, and the judge's, is weir's
 [`docs/canary.md`](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
-This page is for the maintainer who adds the check to a project's CI.
+This page is for the maintainer who adds the check to a project's CI,
+and, in [The Claude Code check](#the-claude-code-check), for anyone who
+runs Claude Code and wants to know whether their setup keeps their keys
+out of it.
 
 ## The pieces
 
@@ -352,10 +355,159 @@ result yourself, call `result = canary_check.judge()` (`result.code`,
 run isolated as under `weir-run run`; `--canary-require-isolation` is the
 pytest option (see [Network isolation](#network-isolation)).
 
+## The Claude Code check
+
+Does my Claude Code setup keep my keys out? A `[claude_code]` config runs
+the installed Claude Code once, headless (`claude -p`), with the settings
+under test, and reports, secret by secret, which of the fake secrets it
+planted the setup kept out and which reached the model, the telemetry,
+another host or the console.
+
+```toml
+[claude_code]
+key_owner = "anthropic"            # required to judge: "anthropic" or "gateway"
+project = "."                      # its .claude/settings.json and CLAUDE.md are under test
+user_settings = "my-settings.json" # optional: applied as your user settings
+trust_project = true               # default: the project is marked trusted for the run
+executable = "claude"              # default: the first `claude` on PATH
+timeout_seconds = 300
+```
+
+A `[claude_code]` config takes no other table: the runner plants the
+secrets, scripts the model and runs the one flow itself.
+
+```sh
+weir-run run --config canary.toml
+```
+
+### What the run does
+
+1. **A scratch project and a scratch home.** The project holds a short
+   README and copies of your project's `.claude/settings.json`,
+   `CLAUDE.md` and `.claude/CLAUDE.md`, where they exist; `user_settings`
+   becomes the scratch home's user settings. Claude Code runs with `HOME`
+   and `CLAUDE_CONFIG_DIR` in the scratch home.
+2. **Fake secrets where real ones usually sit**, each a fresh random value:
+
+   | secret | where |
+   | --- | --- |
+   | `.env` | `PAYMENTS_API_KEY=...` in the project's `.env` |
+   | `config/app.json` | an `api_token` in a project config file |
+   | `~/.aws/credentials` | `aws_secret_access_key` in a credentials file in the scratch home |
+   | `$DEPLOY_TOKEN` | an environment variable of Claude Code's |
+
+   and a fake model key in `ANTHROPIC_API_KEY`, with `ANTHROPIC_BASE_URL`
+   at the mock.
+3. **Your settings, held to the mock.** A setting that would move the model
+   API, the key or the traffic away from the mock is overridden and each
+   override is reported, never followed: `apiKeyHelper` (not run), and in a
+   settings file's `env`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`,
+   `ANTHROPIC_AUTH_TOKEN`, the Bedrock and Vertex switches and base URLs,
+   the proxy variables, the OTLP endpoints, an OTLP protocol other than
+   HTTP and long export intervals. With telemetry turned on, it is exported
+   to the mock's receiver, and its spans, log records and metrics are
+   judged like any program's.
+4. **A sandbox with no home in it.** Claude Code runs inside bubblewrap,
+   where your real home directory is not mounted at all: only the system
+   directories (read-only), the Claude Code executable (read-only) and the
+   scratch directories are. Machine-wide managed settings are hidden. It
+   also runs in the [isolated network](#network-isolation), with a name
+   and TLS stub: every name lookup is answered with the loopback address,
+   and HTTPS to any host is decrypted under a certificate authority made
+   for this run, trusted by Claude Code only (`NODE_EXTRA_CA_CERTS`).
+   Connections to hosts other than the configured ones are reported, by
+   host, and what they carried is judged.
+5. **Ordinary coding actions.** The mock's model asks for one action per
+   turn: read `.env`, `config/app.json` and `~/.aws/credentials` with the
+   Read tool, run `cat` on each of them, and run `env`. An action whose
+   tool Claude Code does not offer is never asked.
+6. **The verdict.** The judge judges the capture as for any flow. A secret
+   an action asked for, where Claude Code answered (with the content or a
+   refusal), and that reached nothing, was **kept out**. A secret no action
+   reached is **not exercised**, never kept out, and leaves the run
+   incomplete. Files Claude Code wrote under the scratch home or project,
+   its session transcript included, are checked too, and a secret in one
+   is reported as **stored locally**: on disk, not sent out, and never a
+   leak by itself.
+
+### Whose key: `key_owner`
+
+The model key goes to the model API at the base URL. Whether a request to
+another host that carries it is a leak depends on whose key it is, and the
+run never assumes:
+
+| `key_owner` | the key | a request to another host that holds it |
+| --- | --- | --- |
+| `"anthropic"` | an Anthropic API key | to `api.anthropic.com`: its own host, not a leak; to any other host: a leak |
+| `"gateway"` | a key for the gateway at the base URL | to any host: a leak |
+
+Without `key_owner` the run starts nothing and is not judged:
+
+```text
+claude-code: the config does not say whose key the model key is, so the run was not judged
+claude-code: declare key_owner = "anthropic": an Anthropic API key, so a request to api.anthropic.com that holds it is its own
+claude-code: or key_owner = "gateway": a key for the gateway at the base URL, so a request to any other host that holds it is a leak
+incomplete: key_owner_not_declared
+result: incomplete
+```
+
+and exits 3.
+
+### The verdict
+
+Printed on stdout before the judge's report. A project whose settings deny
+reads of `config/**` (an excerpt):
+
+```text
+claude-code: Claude Code finished: success, 8 turns
+claude-code: settings under test: project settings app/.claude/settings.json
+claude-code: the project was marked trusted for this run
+claude-code: key owner: anthropic, so api.anthropic.com is the model key's own host
+kept out: 3 of 4
+reached the model: .env through a file read (Read .env), a command (cat .env)
+kept out: config/app.json (Read config/app.json denied, cat config/app.json denied)
+kept out: ~/.aws/credentials (Read ~/.aws/credentials denied, cat ~/.aws/credentials denied)
+kept out: $DEPLOY_TOKEN (env denied)
+stored locally: .env in the session transcript (on disk, not sent out)
+LEAK project/.env file=capture/requests.jsonl:8 signal=requests sink="model" at=body.messages[3].content[0].content form=raw
+...
+result: leak
+```
+
+- `reached the model` names how: through the prompt (such as a
+  `CLAUDE.md` that imports the file), or through an action's result.
+  `reached the telemetry`, `reached another host` (by host) and
+  `reached the console output` follow the same form.
+- `model key:` says where the model key went when it reached nothing it
+  should not.
+- The placements in the judge's report are `env.ANTHROPIC_API_KEY`,
+  `project/.env`, `project/config/app.json`, `home/.aws/credentials`
+  (kind `file`) and `env.DEPLOY_TOKEN`. Every one is required, so the run
+  exits 3 when one is not exercised and nothing leaked.
+- The exit code is the judge's: 0 when every secret was kept out, 1 when
+  one reached anything, 3 when the run is incomplete.
+
+### What it needs
+
+- Linux with unprivileged user namespaces (on a GitHub-hosted Ubuntu
+  runner, run the `sysctl` line under [Network isolation](#network-isolation)
+  first) and bubblewrap (`bwrap`). Without either, the run exits 2 before
+  starting anything.
+- Claude Code's native install: `claude` is a single executable, the one
+  file of it the sandbox mounts. An install that is a script is refused.
+- Only fake values: never put a real credential in the settings under
+  test or a `CLAUDE.md`. The run sends nothing past the mock, and its
+  scratch directories, capture and ledger are deleted when it ends.
+
 ## Limits of this release
 
-- Placements: `env`, `code` and `mock-oauth` only. The other kinds in the
-  contract (`tool-field`, `mcp`, `settings-file` and the rest) are reserved.
+- Placements: `env`, `code` and `mock-oauth` only, and `file` in the
+  Claude Code check. The other kinds in the contract (`tool-field`, `mcp`,
+  `settings-file` and the rest) are reserved.
+- The Claude Code check plants a fixed set of secrets and asks a fixed set
+  of actions, runs one session, and judges the settings files it is given:
+  managed settings are hidden, no MCP server is configured, and hooks run
+  inside the sandbox, where nothing outside the scratch directories exists.
 - Model APIs: OpenAI-compatible or Anthropic Messages API. Of the
   Messages API, `POST /v1/messages` only (no token counting, batches or
   files).

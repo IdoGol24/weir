@@ -9,6 +9,7 @@ when the run plants them.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -108,10 +109,23 @@ class EndpointSpec:
 
 
 @dataclass(frozen=True)
+class ScriptStep:
+    """One tool call the mock's model asks for, in order: `tool` is the
+    name of a tool the program offers, `input` its arguments."""
+
+    tool: str
+    input: Mapping[str, object]
+
+
+@dataclass(frozen=True)
 class MockSpec:
     oauth: bool = False
     model_reply: str = "Done."
     tool_calls: str = "each-offered-tool-once"
+    # The Messages API's script: with steps, each turn asks for the next
+    # step whose tool the program offers, one at a time, in place of every
+    # offered tool once; once no step is left it answers model_reply.
+    script: tuple[ScriptStep, ...] = ()
     credential_fields: dict[str, tuple[CredentialField, ...]] = field(
         default_factory=dict[str, tuple[CredentialField, ...]]
     )
@@ -148,6 +162,32 @@ class FlowSpec:
     timeout_seconds: float = 300.0
     env: dict[str, str] = field(default_factory=dict[str, str])
     skip: str | None = None
+    # False when the flow's program has its telemetry off, so an empty
+    # telemetry capture says nothing about it.
+    telemetry: bool = True
+
+
+# Whose key the model key is (docs: the Claude Code check). "anthropic": an
+# Anthropic API key, whose own host is ANTHROPIC_HOST; "gateway": a key for
+# the gateway at the base URL, which has no other host.
+KEY_OWNERS = ("anthropic", "gateway")
+ANTHROPIC_HOST = "api.anthropic.com"
+
+
+@dataclass(frozen=True)
+class ClaudeCodeSpec:
+    """A `[claude_code]` check: Claude Code run headless in a scratch
+    project and home, with the settings under test."""
+
+    # None when the config does not say: the run is then not judged.
+    key_owner: str | None
+    project: Path
+    # A settings file applied as the user's own settings, beside the
+    # project's .claude/settings.json.
+    user_settings: Path | None = None
+    trust_project: bool = True
+    executable: str = "claude"
+    timeout_seconds: float = 300.0
 
 
 @dataclass(frozen=True)
@@ -155,6 +195,7 @@ class RunSpec:
     placements: tuple[PlacementSpec, ...]
     flows: tuple[FlowSpec, ...]
     mock: MockSpec = MockSpec()
+    claude_code: ClaudeCodeSpec | None = None
 
     def reserved_ids(self) -> list[str]:
         """Every id the run will print, or the stem of one it mints later."""

@@ -481,7 +481,8 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
     reasons += [(IncompleteReason.UNEXPECTED_CREDENTIAL, u.id, 0) for u in ledger.unexpected]
     reasons += [(IncompleteReason.NOT_SCANNED, entry.file, 0) for entry in not_scanned]
     reasons += [(IncompleteReason.UNPARSED_RECORD, path, line) for path, line in unparsed]
-    if spans + log_records + data_points == 0:
+    telemetry_expected = not ledger.flows or any(f.telemetry for f in ledger.flows)
+    if telemetry_expected and spans + log_records + data_points == 0:
         reasons.append((IncompleteReason.EMPTY_CAPTURE, None, 0))
     if network.required and not network.isolated:
         reasons.append((IncompleteReason.NETWORK_NOT_ISOLATED, None, 0))

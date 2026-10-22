@@ -38,8 +38,8 @@ Id = Annotated[str, msgspec.Meta(min_length=1, max_length=128, pattern=ID_PATTER
 EndpointId = Annotated[str, msgspec.Meta(min_length=1, max_length=40, pattern=ENDPOINT_PATTERN)]
 Host = Annotated[str, msgspec.Meta(min_length=1, max_length=253, pattern=HOST_PATTERN)]
 
-Kind = Literal["env", "code", "mock-oauth"]
-Evidence = Literal["request", "minted", "egress"]
+Kind = Literal["env", "code", "file", "mock-oauth"]
+Evidence = Literal["request", "minted", "egress", "tool_call"]
 FlowStatus = Literal["ok", "failed", "timeout", "skipped"]
 DirectProtocol = Literal["tcp", "udp", "dns"]
 
@@ -76,6 +76,9 @@ class Exercised(msgspec.Struct, tag_field="type", tag="exercised", forbid_unknow
 class Flow(msgspec.Struct, tag_field="type", tag="flow", forbid_unknown_fields=True):
     id: Id
     status: FlowStatus
+    # False for a flow not expected to export telemetry: when no flow
+    # expects any, an empty telemetry capture is not incomplete.
+    telemetry: bool = True
 
 
 class Unexpected(msgspec.Struct, tag_field="type", tag="unexpected", forbid_unknown_fields=True):

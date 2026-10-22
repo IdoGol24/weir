@@ -22,8 +22,8 @@ from weir_run.needles import needles
 from weir_run.shapes import ByteSource, generate, overlaps
 
 SCHEMA = "canary-ledger/1"
-KINDS = ("env", "code", "mock-oauth")
-EVIDENCE = ("request", "minted", "egress")
+KINDS = ("env", "code", "file", "mock-oauth")
+EVIDENCE = ("request", "minted", "egress", "tool_call")
 FLOW_STATUSES = ("ok", "failed", "timeout", "skipped")
 DIRECT_PROTOCOLS = ("tcp", "udp", "dns")
 MIN_VALUE_LENGTH = 16
@@ -160,12 +160,17 @@ class Ledger:
             self._write({"type": "unexpected", "id": record_id})
             return record_id
 
-    def flow(self, flow_id: str, status: str) -> None:
+    def flow(self, flow_id: str, status: str, *, telemetry: bool = True) -> None:
+        """One flow's status; telemetry False for a flow whose program has
+        its telemetry off, so an empty telemetry capture says nothing."""
         with self._lock:
             if status not in FLOW_STATUSES:
                 raise LedgerError(f"unknown flow status {status}")
             self._claim_id("flow", flow_id)
-            self._write({"type": "flow", "id": flow_id, "status": status})
+            record: dict[str, object] = {"type": "flow", "id": flow_id, "status": status}
+            if not telemetry:
+                record["telemetry"] = False
+            self._write(record)
 
     def network(self, *, isolated: bool, required: bool) -> None:
         """Whether the flows ran isolated, and whether the run requires it."""

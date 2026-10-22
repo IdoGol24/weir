@@ -50,7 +50,8 @@
           "enum": [
             "egress",
             "minted",
-            "request"
+            "request",
+            "tool_call"
           ]
         },
         "placement": {
@@ -89,6 +90,10 @@
             "skipped",
             "timeout"
           ]
+        },
+        "telemetry": {
+          "default": true,
+          "type": "boolean"
         },
         "type": {
           "enum": [
@@ -158,6 +163,7 @@
           "enum": [
             "code",
             "env",
+            "file",
             "mock-oauth"
           ]
         },

@@ -178,6 +178,70 @@ def test_telemetry_only_in_a_swept_file_is_an_empty_capture(tmp_path: Path) -> N
     assert ", 0 spans," in _coverage(run)
 
 
+def _without_telemetry(tmp_path: Path, *flows: dict[str, object]) -> fx.Run:
+    """An exercised file placement, the given flows and an empty telemetry
+    capture."""
+    ledger = fx.write_ledger(
+        tmp_path / "ledger.jsonl",
+        [fx.placement("project/.env", _A, kind="file", required=True)]
+        + [_exercised("project/.env", "tool_call"), *flows],
+    )
+    otlp = tmp_path / "otlp.jsonl"
+    fx.write(otlp, "")
+    return fx.judge(ledger, [otlp])
+
+
+def test_an_empty_capture_is_complete_when_no_flow_exports_telemetry(tmp_path: Path) -> None:
+    flow = {"type": "flow", "id": "agent", "status": "ok", "telemetry": False}
+    run = _without_telemetry(tmp_path, flow)
+    assert run.exit_code == 0, run.lines
+    assert _incomplete(run) == []
+    assert ", 0 spans, 0 log records, 0 metric data points," in _coverage(run)
+
+
+@pytest.mark.parametrize(
+    "flows",
+    [
+        [{"type": "flow", "id": "agent", "status": "ok"}],
+        [
+            {"type": "flow", "id": "agent", "status": "ok", "telemetry": False},
+            {"type": "flow", "id": "app", "status": "ok", "telemetry": True},
+        ],
+        [],
+    ],
+)
+def test_an_empty_capture_is_incomplete_while_any_flow_exports_telemetry(
+    tmp_path: Path, flows: list[dict[str, object]]
+) -> None:
+    run = _without_telemetry(tmp_path, *flows)
+    assert run.exit_code == 3
+    assert _incomplete(run) == ["incomplete: empty_capture"]
+
+
+def test_tool_call_evidence_exercises_a_file_placement(tmp_path: Path) -> None:
+    flow = {"type": "flow", "id": "agent", "status": "ok", "telemetry": False}
+    ledger = fx.write_ledger(
+        tmp_path / "ledger.jsonl",
+        [
+            fx.placement("project/.env", _A, kind="file", required=True),
+            fx.placement("home/.aws/credentials", _B, kind="file"),
+            _exercised("project/.env", "tool_call"),
+            _exercised("home/.aws/credentials", "tool_call"),
+            flow,
+        ],
+    )
+    otlp = tmp_path / "otlp.jsonl"
+    fx.write(otlp, "")
+    swept = tmp_path / "flow.stdout"
+    fx.write(swept, f"read {_B}\n")
+    report = fx.judge(ledger, [otlp], [swept], as_json=True).report
+    states = {p["id"]: (p["kind"], p["state"], p["evidence"]) for p in report["placements"]}
+    assert states == {
+        "project/.env": ("file", "exercised", ["tool_call"]),
+        "home/.aws/credentials": ("file", "leaked", ["tool_call"]),
+    }
+
+
 def test_logs_and_metrics_count_toward_completeness(tmp_path: Path) -> None:
     ledger, otlp = _clean_setup(tmp_path)
     fx.write(

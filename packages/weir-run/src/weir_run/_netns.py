@@ -1,12 +1,14 @@
 """The network namespace helper, run as its own process by `weir_run.isolation`.
 
-    python -I -S _netns.py create FD
+    python -I -S _netns.py create FD [stub]
         Make a user and network namespace whose only interface is loopback,
         route every address to loopback so a direct connection is refused at
         once instead of leaving, and open two sockets inside it: the mock's
         listening socket on 127.0.0.1 and a packet socket that sees each
-        connection attempt. Send them, with handles on the two namespaces,
-        over the Unix socket FD, then exit. The handles keep the namespace.
+        connection attempt. With `stub`, also open the name and TLS stub's
+        sockets: UDP 127.0.0.1:53, and TCP 127.0.0.1:443 and 127.0.0.1:80.
+        Send them, with handles on the two namespaces, over the Unix socket
+        FD, then exit. The handles keep the namespace.
 
     python -I -S _netns.py enter USERFD NETFD COMMAND [ARG]...
         Join that namespace and exec COMMAND. If the namespace cannot be
@@ -144,7 +146,24 @@ def _packet_socket() -> socket.socket:
     return packets
 
 
-def create(channel: socket.socket) -> None:
+# The name and TLS stub's sockets: (type, port), all on 127.0.0.1.
+STUB_SOCKETS = ((socket.SOCK_DGRAM, 53), (socket.SOCK_STREAM, 443), (socket.SOCK_STREAM, 80))
+
+
+def _stub_sockets() -> list[socket.socket]:
+    """Bound inside the namespace, where its user holds every capability,
+    so the privileged ports are open to it."""
+    out: list[socket.socket] = []
+    for kind, port in STUB_SOCKETS:
+        s = socket.socket(socket.AF_INET, kind)
+        s.bind(("127.0.0.1", port))
+        if kind == socket.SOCK_STREAM:
+            s.listen(128)
+        out.append(s)
+    return out
+
+
+def create(channel: socket.socket, stub: bool = False) -> None:
     uid, gid = os.geteuid(), os.getegid()
     try:
         try:
@@ -179,12 +198,17 @@ def create(channel: socket.socket) -> None:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.bind(("127.0.0.1", 0))
         listener.listen(128)
+        try:
+            stubs = _stub_sockets() if stub else []
+        except OSError as exc:
+            raise Failed(f"cannot open the name and TLS stub ({exc.strerror})") from None
         user = os.open("/proc/self/ns/user", os.O_RDONLY | os.O_CLOEXEC)
         net = os.open("/proc/self/ns/net", os.O_RDONLY | os.O_CLOEXEC)
     except Failed as exc:
         channel.sendall(f"error {exc}".encode())
         return
-    socket.send_fds(channel, [b"ok"], [user, net, listener.fileno(), packets.fileno()])
+    fds = [user, net, listener.fileno(), packets.fileno(), *(s.fileno() for s in stubs)]
+    socket.send_fds(channel, [b"ok"], fds)
 
 
 def enter(user: int, net: int, command: list[str]) -> None:
@@ -204,12 +228,14 @@ def enter(user: int, net: int, command: list[str]) -> None:
 
 
 def main(argv: list[str]) -> None:
-    if len(argv) == 2 and argv[0] == "create":
-        create(socket.socket(fileno=int(argv[1])))
+    if len(argv) in (2, 3) and argv[0] == "create" and argv[2:] in ([], ["stub"]):
+        create(socket.socket(fileno=int(argv[1])), stub=argv[2:] == ["stub"])
     elif len(argv) >= 4 and argv[0] == "enter":
         enter(int(argv[1]), int(argv[2]), argv[3:])
     else:
-        sys.stderr.write("usage: _netns.py create FD | enter USERFD NETFD COMMAND [ARG]...\n")
+        sys.stderr.write(
+            "usage: _netns.py create FD [stub] | enter USERFD NETFD COMMAND [ARG]...\n"
+        )
         sys.exit(2)
 
 

@@ -119,6 +119,7 @@ a reader what the hit means.
 | --- | --- | --- |
 | `env` | the flow's launch environment, under the variable the software reads | `request` or `egress` |
 | `code` | passed explicitly by the flow to a constructor or call; in subprocess mode the flow reads it from a variable the runner names | `request` or `egress` |
+| `file` | a file the runner wrote where a program usually finds secrets, in a scratch project or scratch home it made for the run, such as a project `.env` or a credentials file | `tool_call` |
 | `mock-oauth` | a credential one of the mock's OAuth endpoints issued during the run: an authorization code, device code, access token, refresh token or ID token; ids `runtime.oauth.<token>#<n>`, `<token>` one of `code`, `device_code`, `access_token`, `refresh_token`, `id_token` | `minted` |
 
 ### A placement's own provider
@@ -310,9 +311,10 @@ one line each.
 | | `providers` | array of strings | optional, default empty: the endpoint ids of the placement's [own provider](#a-placements-own-provider), each 1 to 40 characters from `[A-Za-z0-9_-]` |
 | | `provider_host` | string | optional: the host name of the placement's own provider, 1 to 253 characters from `[A-Za-z0-9._:-]`, matched without regard to letter case |
 | `exercised` | `placement` | string | a placement id defined in this ledger, on any line |
-| | `evidence` | string | `request` (a credential field of a request to the placement's own provider held a needle of the value), `minted` (the mock issued it), `egress` (the flow tried to reach the placement's provider host and was refused). The judge also derives `request` and `egress` from the request capture; a runner without one may record them here |
+| | `evidence` | string | `request` (a credential field of a request to the placement's own provider held a needle of the value), `minted` (the mock issued it), `egress` (the flow tried to reach the placement's provider host and was refused), `tool_call` (the mock's model asked the program, in a tool call, for the place the placement lives, such as reading its file or printing its variable, and the program answered that tool call, with a result or a refusal). The judge also derives `request` and `egress` from the request capture; a runner without one may record them here |
 | `flow` | `id` | string | the flow's id, an id |
 | | `status` | string | `ok`, `failed` (crashed or exited non-zero), `timeout` or `skipped` |
+| | `telemetry` | boolean | optional, default `true`: the flow is expected to export telemetry. `false` for a flow whose program has its telemetry off, so an empty telemetry capture says nothing about it |
 | `unexpected` | `id` | string | an id, `unexpected.<endpoint>.<field>#<n>`: a credential field the mock received that held no needle of any ledger value. The record never carries the value |
 | `network` | `isolated` | boolean | the flows ran in a network with no route out but loopback ([Network isolation](#network-isolation)) |
 | | `required` | boolean | optional, default `false`: the run is incomplete unless `isolated` |
@@ -434,11 +436,11 @@ first line is the header; every other line is one request:
 
 | field | type | meaning |
 | --- | --- | --- |
-| `outcome` | string | `served` (the mock answered as itself: a mocked endpoint, or a 404 for a path it does not mock), `refused` (a plain-HTTP request for another host, refused with 403 and forwarded nowhere) or `connect` (a `CONNECT` for another host, refused with 403 before any byte of the tunnel) |
+| `outcome` | string | `served` (the mock answered as itself: a mocked endpoint, or a 404 for a path it does not mock), `refused` (a request for another host, refused with 403 and forwarded nowhere: a plain-HTTP request, or an HTTPS request the runner's TLS stub decrypted) or `connect` (a connection to another host that carried no visible content: a `CONNECT` refused with 403 before any byte of the tunnel, or a TLS connection the stub could not decrypt) |
 | `endpoint` | string or null | for `served`, the endpoint that answered: `model`, `oauth`, `otlp` or a declared endpoint's id; null for a path the mock does not mock, and for `refused` and `connect` |
 | `host` | string | the destination host as received, letter case kept: the mock's own address for `served`, the requested host otherwise |
 | `port` | integer | the destination port |
-| `method` | string | the request method |
+| `method` | string | the request method; `TLS` for a TLS connection the stub could not decrypt |
 | `path` | string or null | the request target as received, up to its first `?`, percent-escapes kept: the path, or for an absolute-form request the whole URL, userinfo included; null for `connect` |
 | `query` | string or null | the request target after its first `?`, empty when there is none; null for `connect` |
 | `headers` | array | every header as a `[name, value]` pair of strings, in the order received |
@@ -543,7 +545,7 @@ one reason:
 | `unexpected_credential` | the `unexpected` record's id | the mock received a credential field that held no needle of any ledger value |
 | `not_scanned` | the file | a capture file was not scanned (`compressed`, or a `symlink` inside a capture directory) |
 | `unparsed_record` | `<file>:<line>` | a line of a telemetry file is not an OTLP export request, or a line of a request capture file is not a request record or names a body the judge could not search in full (`unread`) |
-| `empty_capture` | none | the telemetry files hold no span, log record or metric data point. Swept files never count, whatever they hold |
+| `empty_capture` | none | the telemetry files hold no span, log record or metric data point, and the ledger has no `flow` record or at least one that does not say `telemetry` is `false`. Swept files never count, whatever they hold |
 | `network_not_isolated` | none | the `network` record says `required` and not `isolated`: the run required isolation and did not have it |
 | `direct_connection` | `<flow>=<protocol>:<target>`, such as `quickstart=tcp:203.0.113.7:443` | a `direct` record: a flow tried to reach a host around the mock. Isolation blocked it, so nothing left, but what it would have sent was never seen |
 
@@ -596,6 +598,19 @@ a swept capture file, so a canary in it is a hit like any other.
   socket: a network namespace does not separate filesystem sockets;
 - anything a process the flow started and detached into its own session
   does after the run.
+
+**Named and decrypted, for a run with the name and TLS stub.** A runner
+may also answer, inside the namespace, every name lookup sent to
+`127.0.0.1:53` with `127.0.0.1`, and serve `127.0.0.1:443` with TLS
+certificates it signs for each name asked for, under a certificate
+authority made for the run and trusted only by the flow. A request a flow
+then sends to another host is decrypted and recorded in the request
+capture as `refused`, by its host and port, its content judged like any
+other request; a TLS connection the flow does not complete is recorded as
+`connect`, with method `TLS`. A lookup the stub answered is not a `direct`
+record: what followed it is in the request capture. A lookup sent to any
+other address, and a connection to any other address or port, is observed
+as above.
 
 Where the runner cannot make the namespace (not Linux; user namespaces
 disabled, as `kernel.unprivileged_userns_clone=0` or

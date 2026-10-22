@@ -11,6 +11,9 @@ dependencies = [
     "weir-scan>=0.6.0",
     "click>=8.1",
     "opentelemetry-proto>=1.44",
+    # The TLS stub of the Claude Code check signs a certificate per host name
+    # under a certificate authority made for the run.
+    "cryptography>=44",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

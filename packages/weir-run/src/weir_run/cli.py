@@ -19,6 +19,7 @@ import click
 from weir_run import config
 from weir_run import judge as judge_cli
 from weir_run.check import run_spec
+from weir_run.claude_code import run_claude_code
 from weir_run.ledger import LedgerError
 from weir_run.spec import SpecError
 
@@ -83,15 +84,25 @@ def run_command(
         spec = config.load(config_path)
         command = judge_cli.resolve(weir_path)
         judge_cli.check_available(command)
-        code = run_spec(
-            spec,
-            command,
-            out=sys.stdout,
-            err=sys.stderr,
-            seed=seed,
-            json_report=report,
-            require_isolation=require_isolation,
-        )
+        if spec.claude_code is not None:
+            code = run_claude_code(
+                spec.claude_code,
+                command,
+                out=sys.stdout,
+                err=sys.stderr,
+                seed=seed,
+                json_report=report,
+            )
+        else:
+            code = run_spec(
+                spec,
+                command,
+                out=sys.stdout,
+                err=sys.stderr,
+                seed=seed,
+                json_report=report,
+                require_isolation=require_isolation,
+            )
     except (SpecError, LedgerError, OSError, subprocess.SubprocessError, RuntimeError) as exc:
         click.echo(f"weir-run: {exc}", err=True)
         sys.exit(USAGE_ERROR)

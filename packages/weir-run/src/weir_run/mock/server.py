@@ -28,6 +28,7 @@ import binascii
 import gzip
 import json
 import socket
+import ssl
 import threading
 import zlib
 from collections import Counter
@@ -108,7 +109,7 @@ class Mock:
         self.spec = spec
         self.ledger = ledger
         self.capture = capture
-        self.model = ModelApi(spec.model_reply, spec.tool_calls)
+        self.model = ModelApi(spec.model_reply, spec.tool_calls, spec.script)
         self.endpoints = {e.id: e for e in spec.endpoints}
         # A credential the OAuth endpoints issue belongs to them and to the
         # program's own APIs (docs/canary.md, "A placement's own provider").
@@ -515,6 +516,76 @@ class _Handler(BaseHTTPRequestHandler):
         if endpoint.capture and body:
             self.owner.capture.swept_file(f"ep-{endpoint.id}", body)
         return endpoint.status, endpoint.reply.encode("utf-8"), endpoint.content_type, {}
+
+
+class InterceptHandler(_Handler):
+    """A request the name and TLS stub caught on its way to another host
+    (`weir_run.mock.intercept`): recorded in the request capture as
+    `refused`, by the host the flow asked for, and refused. Nothing is
+    forwarded, opened or resolved. A TLS connection the flow does not
+    complete carried no content: it is recorded as `connect`."""
+
+    # The stub's port the connection came in on: 443 (TLS) or 80.
+    port = 443
+
+    def _destination(self) -> tuple[str, int]:
+        sni = getattr(self.request, "weir_sni", None)
+        if isinstance(sni, str):
+            return sni, self.port
+        host, _ = _authority(self.headers.get("Host", HOST), self.port)
+        return host or HOST, self.port
+
+    def handle(self) -> None:
+        if isinstance(self.request, ssl.SSLSocket):
+            try:
+                self.request.do_handshake()
+            except (ssl.SSLError, OSError):
+                sni = getattr(self.request, "weir_sni", None)
+                host = sni if isinstance(sni, str) else HOST
+                self.owner.capture.request(
+                    {
+                        "outcome": "connect",
+                        "endpoint": None,
+                        "host": host,
+                        "port": self.port,
+                        "method": "TLS",
+                        "path": None,
+                        "query": None,
+                        "headers": [],
+                        "body": None,
+                        "unread": None,
+                        "credential_fields": [
+                            [f.location, f.name]
+                            for f in self.owner.credential_fields("connect", None, host)
+                        ],
+                    }
+                )
+                self.owner.refuse(host)
+                self.close_connection = True
+                return
+        super().handle()
+
+    def do_CONNECT(self) -> None:  # noqa: N802
+        self._dispatch()
+
+    def _dispatch(self) -> None:
+        self._recorded = False
+        host, port = self._destination()
+        self._known = ("refused", None, host, port)
+        try:
+            try:
+                body, unread = self._body(self._read_body(), None)
+            except _TooLarge:
+                body, unread = None, "too_large"
+            self._record("refused", None, host, port, body, unread)
+            self._refuse(host)
+        except Exception:  # noqa: BLE001 - never echo a request; count and fail it
+            self.owner.note_error()
+            if not self._recorded:
+                self._record(*self._known, None, "error")
+            self._send((500, b"canary mock error\n", "text/plain", {}), close=True)
+
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _dispatch  # noqa: N815
 
 
 def _basic_user(header: str) -> str | None:

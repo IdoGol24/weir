@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import cast
 
 from weir_run.spec import (
+    KEY_OWNERS,
+    ClaudeCodeSpec,
     CredentialField,
     EndpointSpec,
     FlowSpec,
@@ -24,11 +26,19 @@ from weir_run.spec import (
     validate,
 )
 
-_TOP = {"mock", "placement", "flow"}
+_TOP = {"mock", "placement", "flow", "claude_code"}
 _MOCK = {"oauth", "model_reply", "tool_calls", "credential_fields", "endpoint"}
 _ENDPOINT = {"id", "credential_fields", "status", "reply", "content_type", "capture"}
 _PLACEMENT = {"id", "kind", "variable", "shape", "required", "provider", "provider_host"}
 _FLOW = {"id", "command", "cwd", "timeout_seconds", "env", "skip"}
+_CLAUDE_CODE = {
+    "key_owner",
+    "project",
+    "user_settings",
+    "trust_project",
+    "executable",
+    "timeout_seconds",
+}
 
 
 def _table(value: object, where: str) -> dict[str, object]:
@@ -152,6 +162,33 @@ def _flow(t: dict[str, object], base: Path) -> FlowSpec:
     )
 
 
+def _timeout(t: Mapping[str, object], where: str) -> float:
+    timeout = t.get("timeout_seconds", 300)
+    if not isinstance(timeout, int | float) or isinstance(timeout, bool) or timeout <= 0:
+        raise SpecError(f"{where}: timeout_seconds must be a positive number")
+    return float(timeout)
+
+
+def _claude_code(t: dict[str, object], base: Path) -> ClaudeCodeSpec:
+    where = "claude_code"
+    _keys(t, _CLAUDE_CODE, where)
+    key_owner = _opt_str(t, "key_owner", where)
+    if key_owner is not None and key_owner not in KEY_OWNERS:
+        raise SpecError(
+            f'{where}: key_owner {key_owner!r}: expected "anthropic" (an Anthropic API key)'
+            ' or "gateway" (a key for the gateway at the base URL)'
+        )
+    settings = _opt_str(t, "user_settings", where)
+    return ClaudeCodeSpec(
+        key_owner=key_owner,
+        project=(base / _str(t, "project", where, ".")).resolve(),
+        user_settings=None if settings is None else (base / settings).resolve(),
+        trust_project=_bool(t, "trust_project", where, True),
+        executable=_str(t, "executable", where, "claude"),
+        timeout_seconds=_timeout(t, where),
+    )
+
+
 def load(path: Path) -> RunSpec:
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -161,6 +198,20 @@ def load(path: Path) -> RunSpec:
         raise SpecError(f"config {path} is not valid TOML: {exc}") from None
     _keys(raw, _TOP, str(path))
     base = path.resolve().parent
+    if "claude_code" in raw:
+        others = sorted(set(raw) - {"claude_code"})
+        if others:
+            raise SpecError(
+                f"{path}: a [claude_code] check takes no [{others[0]}]:"
+                " the runner plants its secrets, scripts its model and runs its flow"
+            )
+        spec = RunSpec(
+            placements=(),
+            flows=(),
+            claude_code=_claude_code(_table(raw["claude_code"], "claude_code"), base),
+        )
+        validate(spec, require_flows=False)
+        return spec
     spec = RunSpec(
         placements=tuple(_placement(p) for p in _tables(raw.get("placement", []), "placement")),
         flows=tuple(_flow(f, base) for f in _tables(raw.get("flow", []), "flow")),
