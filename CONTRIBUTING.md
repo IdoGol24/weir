@@ -132,6 +132,32 @@ JSON edit" is true for the catalog and the rule and not yet true for the
 fixtures. Open an issue and we will work through it, and what breaks becomes
 the next improvement to this guide.
 
+## Agents working in this repository
+
+Coding agents that work here, yours and the review agent's, use only the
+repository's fixtures and synthetic data, never a user's real agent data or
+home secrets. `.claude/settings.json` enforces this for Claude Code: its
+`permissions.deny` rules refuse reads and edits of `~/.claude`,
+`~/.claude.json`, `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.netrc`,
+`~/.npmrc`, `~/.docker/config.json`, `~/.kube` and `~/.gnupg`. Deny rules
+hold in every permission mode, including bypassPermissions, and in a
+workspace that was never trusted. The rules also stop Claude Code's own
+auto-memory, which lives under `~/.claude`, from writing in this repository.
+
+Deny rules cover Claude Code's file tools and the Bash file commands it
+recognizes, such as `cat`, `head`, `tail` and `sed`. They do not stop a
+program that opens a file itself, such as `python3 -c "open(...)"` or a test
+script. The same paths are in `sandbox.filesystem.denyRead` and `denyWrite`,
+which the operating system enforces for every Bash command once you turn the
+Bash sandbox on (`/sandbox`, or `sandbox.enabled` in your user settings; it
+needs `bubblewrap` and `socat` on Linux). The repository does not turn the
+sandbox on for you: it would keep sandboxed commands from writing to the uv
+cache and from creating the user namespaces weir-run's isolation tests need.
+
+`packages/weir-run/tests/test_repo_agent_guard.py` proves the rules with the
+real Claude Code against weir-run's mock, with fake data only. It skips where
+Claude Code or bubblewrap is not installed.
+
 ## Security
 
 Do not open a public issue for a security finding. See

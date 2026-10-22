@@ -8,6 +8,10 @@
   Regenerate them from their source instead. CHANGELOG.md is the exception:
   there is no generator, so it is hand-maintained, and a release that changes
   behaviour adds its entry in the same commit range.
+- Never read a user's home configuration, agent data (such as ~/.claude) or
+  any real user data; use only the repository's fixtures and synthetic data.
+  `.claude/settings.json` enforces this for Claude Code, and CONTRIBUTING.md
+  ("Agents working in this repository") says what it cannot stop.
 - When making technical decisions, do not give much weight to development cost.
   Instead, prefer quality, simplicity, robustness, scalability, and long term maintainability.
 - For one-off or infrequent operational work, start with the simplest direct end-to-end path. Do not build wrappers, control planes, policy layers, custom verifiers, or automation unless the direct path exposes a concrete blocker or repeated need that justifies the added machinery.
