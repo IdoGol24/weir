@@ -11,9 +11,9 @@ strings themselves never decide where a hit is.
 from __future__ import annotations
 
 import json
-import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from pathlib import PurePath
 
 from weir.audit._types import Format, Kind
 from weir.canary import Signal
@@ -119,18 +119,32 @@ def _is_claude_code(obj: dict[str, Json]) -> bool:
     return obj.get("type") in ("user", "assistant") and isinstance(obj.get("sessionId"), str)
 
 
+_SIGNAL_LISTS = frozenset({"resourceSpans", "resourceLogs", "resourceMetrics"})
+
+
 def is_otlp(obj: Json) -> bool:
     """An OTLP/JSON export request (docs/canary.md, "The capture")."""
-    return isinstance(obj, dict) and any(
-        key in obj for key in ("resourceSpans", "resourceLogs", "resourceMetrics")
+    return isinstance(obj, dict) and any(key in obj for key in _SIGNAL_LISTS)
+
+
+def _is_claude_code_memory(path: PurePath) -> bool:
+    """A CLAUDE.md file, or a memory file `projects/<project>/memory/*.md`."""
+    if path.name == "CLAUDE.md":
+        return True
+    parts = path.parts
+    return (
+        path.suffix == ".md" and path.parent.name == "memory"
+        and len(parts) >= 4 and parts[-4] == "projects"
     )
 
 
 def recognise(path: str, data: bytes, lines: list[Line]) -> Format:
     if any(line.parsed is not None and _is_claude_code(line.parsed) for line in lines):
         return Format.CLAUDE_CODE
-    if os.path.basename(os.path.dirname(path)) == "tool-results":
+    if PurePath(path).parent.name == "tool-results":
         return Format.CLAUDE_CODE_TOOL_RESULTS
+    if _is_claude_code_memory(PurePath(path)):
+        return Format.CLAUDE_CODE_MEMORY
     if any(is_otlp(line.parsed) for line in lines):
         return Format.OTLP
     if whole_otlp(data) is not None:
@@ -243,27 +257,37 @@ _RESULT = "gen_ai.tool.call.result"
 _OUTPUT = "gen_ai.output.messages"
 _CONTEXT_ATTRIBUTES = frozenset({"gen_ai.input.messages", "gen_ai.system_instructions"})
 _GENAI = frozenset({_ARGUMENTS, _RESULT, _OUTPUT}) | _CONTEXT_ATTRIBUTES
-_TOOL_NAME = "gen_ai.tool.name"
+# Claude Code's own log events (`claude_code.tool_result`, `claude_code.user_prompt`)
+_PARAMETERS = "tool_parameters"
+_PROMPT = "prompt"
+_LOG_ATTRIBUTES = _GENAI | {_PARAMETERS, _PROMPT}
+# The attribute that names the tool of each attribute that has one
+_TOOL_NAMES = {
+    _ARGUMENTS: "gen_ai.tool.name", _RESULT: "gen_ai.tool.name", _PARAMETERS: "tool_name",
+}
+
+# The string at a location within an attribute's value, or None
+Lookup = Callable[[Path_], str | None]
 
 
-def _attribute_index(location: Path_) -> int | None:
+def _attribute_index(location: Path_, names: frozenset[str]) -> int | None:
     for index in range(1, len(location)):
-        if location[index] in _GENAI and location[index - 1] == "attributes":
+        if location[index] in names and location[index - 1] == "attributes":
             return index
     return None
 
 
-def _otlp_place(attribute: str, doc: Json, sub: Path_, tool: str | None) -> Place:
-    if attribute == _ARGUMENTS:
+def _otlp_place(attribute: str, sub: Path_, tool: str | None, at: Lookup) -> Place:
+    if attribute in (_ARGUMENTS, _PARAMETERS):
         return Place(Kind.TOOL_CALL, tool=tool, argument=sub or None)
     if attribute == _RESULT:
         return Place(Kind.CONTEXT, tool=tool)
-    if attribute == _OUTPUT and len(sub) >= 4 and sub[1] == "parts" and sub[3] == "arguments":
-        message = doc[sub[0]] if isinstance(doc, list) and isinstance(sub[0], int) else None
-        parts = message.get("parts") if isinstance(message, dict) else None
-        part = parts[sub[2]] if isinstance(parts, list) and isinstance(sub[2], int) else None
-        if isinstance(part, dict) and part.get("type") == "tool_call":
-            return Place(Kind.TOOL_CALL, tool=_str(part.get("name")), argument=sub[4:] or None)
+    if (
+        attribute == _OUTPUT and len(sub) >= 4 and isinstance(sub[0], int)
+        and sub[1] == "parts" and isinstance(sub[2], int) and sub[3] == "arguments"
+        and at((*sub[:3], "type")) == "tool_call"
+    ):
+        return Place(Kind.TOOL_CALL, tool=at((*sub[:3], "name")), argument=sub[4:] or None)
     return _CONTEXT
 
 
@@ -277,44 +301,76 @@ def _json_document(text: str) -> Json:
     return value if isinstance(value, (dict, list)) else None
 
 
+def _in_document(doc: Json) -> Lookup:
+    def at(path: Path_) -> str | None:
+        node = doc
+        for segment in path:
+            if isinstance(node, list) and isinstance(segment, int) and segment < len(node):
+                node = node[segment]
+            elif isinstance(node, dict) and isinstance(segment, str):
+                node = node.get(segment)
+            else:
+                return None
+        return _str(node)
+
+    return at
+
+
 def otlp_sites(request: dict[str, Json]) -> list[Site]:
     """The sites of one export request."""
     walk = walk_request(request)
     assert walk is not None
-    tools: dict[Record, str] = {}
+    # The strings a place is read from: a tool's name, a message part's
+    # `type` and `name`. A key-value's key comes before its value, so the
+    # last string at a location is its value, or the key when there is none.
+    named: dict[tuple[Record, Path_], str] = {}
     for site in walk.sites:
-        if site.record is not None and site.location == ("attributes", _TOOL_NAME):
-            name = _text(site.data)
-            if name != _TOOL_NAME:
-                tools[site.record] = name
+        if site.record is not None and site.location and site.location[-1] in (
+            "type", "name", *_TOOL_NAMES.values()
+        ):
+            named[(site.record, site.location)] = _text(site.data)
+
+    def in_record(record: Record, location: Path_) -> str | None:
+        value = named.get((record, location))
+        return value if value != location[-1] else None
+
+    def in_value(record: Record, head: Path_) -> Lookup:
+        return lambda path: in_record(record, (*head, *path))
+
     out: list[Site] = []
     for site in walk.sites:
         string = _text(site.data)
         record, signal = site.record, site.signal
-        index = _attribute_index(site.location) if site.record is not None else None
-        if index is None:
+        names = _LOG_ATTRIBUTES if signal is Signal.LOGS else _GENAI
+        index = _attribute_index(site.location, names) if record is not None else None
+        if record is None or index is None:
             out.append(Site(string, site.location, _UNKNOWN, otlp=record, signal=signal))
             continue
         attribute = str(site.location[index])
-        tool = tools.get(site.record) if site.record is not None else None
-        sub = site.location[index + 1 :]
+        tool_name = _TOOL_NAMES.get(attribute)
+        tool = in_record(record, ("attributes", tool_name)) if tool_name else None
+        head, sub = site.location[: index + 1], site.location[index + 1 :]
         doc = _json_document(string) if not sub else None
         if doc is None:
-            place = _otlp_place(attribute, None, sub, tool)
-            out.append(Site(string, site.location, place, otlp=record, signal=signal))
-            continue
-        for inner, path in strings(doc):
-            place = _otlp_place(attribute, doc, path, tool)
-            arguments = _json_document(inner) if place.kind is Kind.TOOL_CALL else None
-            if arguments is None or attribute != _OUTPUT:
-                out.append(Site(inner, (*site.location, *path), place, otlp=record, signal=signal))
+            pieces = [(string, sub, _otlp_place(attribute, sub, tool, in_value(record, head)))]
+        else:
+            at = _in_document(doc)
+            pieces = [(inner, path, _otlp_place(attribute, path, tool, at))
+                      for inner, path in strings(doc)]
+        for inner, path, place in pieces:
+            in_part = place.kind is Kind.TOOL_CALL and attribute == _OUTPUT
+            arguments = _json_document(inner) if in_part else None
+            if arguments is None:
+                out.append(Site(inner, (*head, *path), place, otlp=record, signal=signal))
                 continue
             # A tool_call part's arguments written as a JSON string: walk it,
             # so `argument` is the location within the arguments.
             for leaf, within in strings(arguments):
                 argument = (*path[4:], *within)
                 deeper = Place(Kind.TOOL_CALL, tool=place.tool, argument=argument)
-                location = (*site.location, *path, *within)
+                location = (*head, *path, *within)
                 out.append(Site(leaf, location, deeper, otlp=record, signal=signal))
+    # The members the structured walk leaves out: searched, kind unknown.
+    rest = {key: value for key, value in request.items() if key not in _SIGNAL_LISTS}
+    out.extend(Site(string, path, _UNKNOWN) for string, path in strings(rest))
     return out
-

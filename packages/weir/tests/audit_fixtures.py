@@ -25,6 +25,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import canary_fixtures as cfx
 from click.testing import CliRunner
@@ -235,6 +236,32 @@ def chat_span(output_messages: list[dict[str, object]]) -> dict[str, object]:
             cfx.kv("gen_ai.output.messages", json.dumps(output_messages)),
         ],
     )
+
+
+def any_value(value: object) -> dict[str, object]:
+    """A JSON value written as an OTLP AnyValue: an object as a
+    `kvlistValue`, an array as an `arrayValue`."""
+    if isinstance(value, dict):
+        members = cast("dict[str, object]", value)
+        items = [{"key": k, "value": any_value(v)} for k, v in members.items()]
+        return {"kvlistValue": {"values": items}}
+    if isinstance(value, list):
+        elements = cast("list[object]", value)
+        return {"arrayValue": {"values": [any_value(v) for v in elements]}}
+    return {"stringValue": value}
+
+
+def claude_code_event(event: str, **attributes: str) -> dict[str, object]:
+    """A log record shaped like a Claude Code `claude_code.<event>` log event."""
+    return {
+        "timeUnixNano": "1767225600000000000",
+        "body": {"stringValue": f"claude_code.{event}"},
+        "attributes": [
+            cfx.kv("event.name", event),
+            cfx.kv("session.id", SESSION_ID),
+            *(cfx.kv(key, value) for key, value in attributes.items()),
+        ],
+    }
 
 
 def write_otlp(path: Path, *spans: dict[str, object]) -> Path:

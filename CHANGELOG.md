@@ -7,7 +7,9 @@
   agent sessions (experimental).** Given the `weir-inventory/1` report, the
   fingerprint store and the key from one `weir inventory --store` run, it
   reads Claude Code session files (main transcripts, subagent transcripts
-  and saved tool outputs) and OTLP/JSON telemetry offline, and reports per
+  and saved tool outputs), `CLAUDE.md` and auto-memory files, and OTLP/JSON
+  telemetry (GenAI attributes and Claude Code's own log events) offline,
+  and reports per
   credential, by inventory name and never by value, whether it entered the
   agent's context or was sent out in a tool call, with counts and the file,
   line, field, tool and argument of each sighting. Strings are matched by

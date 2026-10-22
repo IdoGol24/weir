@@ -57,6 +57,7 @@ _KIND_ORDER = {kind: index for index, kind in enumerate(Kind)}
 _REASON_ORDER = {reason: index for index, reason in enumerate(UnknownReason)}
 _UNKNOWN = Place(Kind.UNKNOWN)
 _STORED = Place(Kind.STORED)
+_CONTEXT = Place(Kind.CONTEXT)
 
 
 @dataclass(frozen=True)
@@ -128,8 +129,8 @@ class _Auditor:
         for site in unparsed_sites(line, _UNKNOWN):
             self.search(file, line.number, site)
 
-    def tool_results(self, file: _File, data: bytes) -> None:
-        for number, site in text_sites(data.decode("utf-8", "surrogateescape"), _STORED):
+    def text(self, file: _File, data: bytes, place: Place) -> None:
+        for number, site in text_sites(data.decode("utf-8", "surrogateescape"), place):
             self.search(file, number, site)
 
     def unknown(self, file: _File, lines: list[Line]) -> None:
@@ -250,7 +251,9 @@ def audit_files(
         if file.format is Format.CLAUDE_CODE:
             auditor.claude_code(file, lines)
         elif file.format is Format.CLAUDE_CODE_TOOL_RESULTS:
-            auditor.tool_results(file, data)
+            auditor.text(file, data, _STORED)
+        elif file.format is Format.CLAUDE_CODE_MEMORY:
+            auditor.text(file, data, _CONTEXT)
         elif file.format is Format.OTLP:
             auditor.otlp(file, data, lines)
         else:
@@ -324,6 +327,7 @@ def audit_files(
         claude_code_tool_results_files=sum(
             f.format is Format.CLAUDE_CODE_TOOL_RESULTS for f in scanned
         ),
+        claude_code_memory_files=sum(f.format is Format.CLAUDE_CODE_MEMORY for f in scanned),
         otlp_files=sum(f.format is Format.OTLP for f in scanned),
         unknown_files=sum(f.format is Format.UNKNOWN for f in scanned),
         not_scanned=len(not_scanned),
