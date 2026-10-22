@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(~/.claude/**)",
+      "Read(~/.claude.json)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.netrc)",
+      "Read(~/.npmrc)",
+      "Read(~/.docker/config.json)",
+      "Read(~/.kube/**)",
+      "Read(~/.gnupg/**)",
+      "Edit(~/.claude/**)",
+      "Edit(~/.claude.json)",
+      "Edit(~/.ssh/**)",
+      "Edit(~/.aws/**)",
+      "Edit(~/.config/gcloud/**)",
+      "Edit(~/.netrc)",
+      "Edit(~/.npmrc)",
+      "Edit(~/.docker/config.json)",
+      "Edit(~/.kube/**)",
+      "Edit(~/.gnupg/**)"
+    ]
+  },
+  "sandbox": {
+    "filesystem": {
+      "denyRead": [
+        "~/.claude",
+        "~/.claude.json",
+        "~/.ssh",
+        "~/.aws",
+        "~/.config/gcloud",
+        "~/.netrc",
+        "~/.npmrc",
+        "~/.docker/config.json",
+        "~/.kube",
+        "~/.gnupg"
+      ],
+      "denyWrite": [
+        "~/.claude",
+        "~/.claude.json",
+        "~/.ssh",
+        "~/.aws",
+        "~/.config/gcloud",
+        "~/.netrc",
+        "~/.npmrc",
+        "~/.docker/config.json",
+        "~/.kube",
+        "~/.gnupg"
+      ]
+    }
+  }
+}

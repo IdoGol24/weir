@@ -2,3 +2,15 @@
 # Read only from the default branch.
 pr:
   template: .github/pull_request_template.md
+
+# Advisory guidance for the review agent, scoped to every changed file ("*"
+# has no slash, so it matches by basename at any depth). Read only from the
+# default branch. The enforced boundary is .claude/settings.json.
+review:
+  path_instructions:
+    - path: "*"
+      instructions: |
+        Never read anything under the user's home configuration or agent data,
+        for example ~/.claude, ~/.claude.json, ~/.ssh, ~/.aws, ~/.config,
+        ~/.netrc, ~/.npmrc, ~/.docker, ~/.kube or ~/.gnupg, and never read any
+        real user data. Use only this repository's fixtures and synthetic data.
