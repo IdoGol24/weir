@@ -3,9 +3,9 @@
 The hero is generated, never recorded. It runs `weir canary judge --sample`
 (the bundled fake ledger and capture) and lays the actual stdout out as an
 animated SVG terminal: the command types, the LEAK, coverage and result lines
-appear, the exit code lands. A GIF or a screenshot starts lying the first time the CLI changes
-wording, silently, because nothing checks a binary; this cannot, because
-test_demo_svg_drift.py regenerates it and compares bytes.
+appear, the exit code lands. A GIF or a screenshot starts lying the first time
+the CLI changes wording, silently, because nothing checks a binary; this
+cannot, because test_demo_svg_drift.py regenerates it and compares bytes.
 
 Animation is pure declarative CSS, which runs when an SVG is loaded through
 an <img> tag (scripts do not, which is why none are used). Every line's
