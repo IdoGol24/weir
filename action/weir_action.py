@@ -162,7 +162,7 @@ def render(
             parts.append(f"... and {cut} more lines in the job log.")
     footer = f"Config: `{shown_config}`."
     if commit and COMMIT.fullmatch(commit):
-        footer += f" Commit: `{commit[:12]}`."
+        footer += f" Head commit: `{commit[:12]}`."
     if run_url:
         footer += f" [Job log]({run_url})."
     parts += ["", footer]
@@ -324,7 +324,11 @@ def _pull_request() -> int | None:
 
 
 def _commit() -> str | None:
-    """The commit judged: a pull request's head, else the pushed commit."""
+    """The commit named: a pull request's head commit, else the pushed commit.
+
+    On a pull_request event GitHub checks out the merge of that head into
+    the base branch, so the tree judged is that merge commit.
+    """
     head = _event_pull_request().get("head")
     sha = cast(dict[str, Any], head).get("sha") if isinstance(head, dict) else None
     return sha if isinstance(sha, str) else os.environ.get("GITHUB_SHA")

@@ -85,7 +85,7 @@ On a pull request, one step runs your weir-run config and posts the verdict as o
 - uses: IdoGol24/weir@<ref>   # a release tag, or better its full commit SHA
 ```
 
-Put it after the steps that check out your code and install your project. It runs `canary.toml` (`with: config: <path>` for another), fails the job on a leak or an incomplete run, and passes on a clean one; a usage or configuration error fails it as an error. The comment shows the report's lines, which never hold a value. The job needs:
+Put it after the steps that check out your code and install your project. It runs `canary.toml` (`with: config: <path>` for another), fails the job on a leak or an incomplete run, and passes on a clean one; a usage or configuration error fails it as an error. The comment shows the report's lines, which never hold a value, and names the pull request's head commit; on a `pull_request` event GitHub checks out the merge of that head into the base branch, so the tree judged is that merge commit. The job needs:
 
 ```yaml
 permissions:

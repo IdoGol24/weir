@@ -133,7 +133,9 @@ of the judge's report are shown, and they name placements, locations and
 sinks, never a value or a fragment of one. A long report is cut after 60
 lines, the coverage, network and result lines kept, and the job log has the
 rest. An error shows weir-run's exit code and no report. The footer names
-the config, the commit judged and the job log.
+the config, the pull request's head commit and the job log. On a
+`pull_request` event GitHub checks out the merge of that head into the base
+branch, so the tree judged is that merge commit.
 
 ## Permissions and the token
 

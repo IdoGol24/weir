@@ -41,7 +41,9 @@
   request from a fork, is a warning; the verdict stands. On GitHub-hosted
   Linux runners it allows unprivileged user namespaces so the flows run
   isolated. Only the step that posts the comment gets the token, after the
-  flows have run, and the comment names the commit it judged. At a ref
+  flows have run, and the comment names the pull request's head commit;
+  on a `pull_request` event GitHub checks out the merge of that head into
+  the base branch, so the tree judged is that merge commit. At a ref
   between releases, where the recorded weir-run needs a newer weir-scan
   than the one recorded, it stops with an error instead of installing
   older code. Its README is `action/README.md`.

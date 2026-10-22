@@ -784,12 +784,12 @@ def test_the_token_is_only_the_report_steps() -> None:
     assert ids.index("check") < ids.index("report")
 
 
-def test_the_comment_names_the_commit_it_judged() -> None:
+def test_the_comment_names_the_head_commit() -> None:
     sha = "0123456789abcdef0123456789abcdef01234567"
     body = weir_action.render(0, _report("clean"), key="k", config="c", run_url=None, commit=sha)
-    assert f"`{sha[:12]}`" in body
+    assert f"Head commit: `{sha[:12]}`" in body
     body = weir_action.render(0, _report("clean"), key="k", config="c", run_url=None, commit="x`y")
-    assert "Commit" not in body
+    assert "Head commit" not in body
 
 
 @skip_windows
@@ -802,7 +802,7 @@ def test_a_pr_comment_names_the_pull_requests_head(tmp_path: Path, github: StubG
     )
     assert run.code == 0, run.stderr
     (body,) = _posted(github)
-    assert f"Commit: `{sha[:12]}`" in body
+    assert f"Head commit: `{sha[:12]}`" in body
 
 
 def test_install_refuses_recorded_versions_between_releases(
