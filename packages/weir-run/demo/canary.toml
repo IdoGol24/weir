@@ -15,16 +15,19 @@ id = "env.OPENAI_API_KEY"
 kind = "env"
 shape = "openai"
 required = true
+provider = "model"                # it belongs to the model API, nowhere else
 
 [[placement]]
 id = "env.SEARCH_API_KEY"
 kind = "env"
 required = true
+provider = "search"
 
 [[placement]]
 id = "code.auth.client_secret"    # read from CANARY_CODE_AUTH_CLIENT_SECRET
 kind = "code"
 required = true
+provider = "oauth"
 
 [[flow]]
 id = "demo"

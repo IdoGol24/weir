@@ -98,9 +98,9 @@ def test_generate_redraws_until_acceptable() -> None:
     assert generate(lambda: next(draws), ["takenvalue0000000000"], []) == "freshvalue1111111111"
 
 
-def test_a_value_sharing_an_8_character_run_with_an_id_is_rejected() -> None:
-    # Exactly 8 shared characters (QUICKSTA) is a run; 7 (QUICKST) is not.
-    assert overlaps("ab12QUICKSTAzz", "flow.QUICKSTART")
-    assert not acceptable("ab12QUICKSTAzz", [], ["flow.QUICKSTART"])
-    assert not overlaps("ab12QUICKSTzzzzz", "flow.QUICKSTART")
-    assert acceptable("ab12QUICKSTzzzzz", [], ["flow.QUICKSTART"])
+def test_a_value_sharing_a_6_character_run_with_an_id_is_rejected() -> None:
+    # Exactly 6 shared characters (QUICKS) is a run; 5 (QUICK) is not.
+    assert overlaps("ab12QUICKSzz", "flow.QUICKSTART")
+    assert not acceptable("ab12QUICKSzz", [], ["flow.QUICKSTART"])
+    assert not overlaps("ab12QUICKzzzzzzz", "flow.QUICKSTART")
+    assert acceptable("ab12QUICKzzzzzzz", [], ["flow.QUICKSTART"])

@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
+from collections.abc import Sequence
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
@@ -73,9 +74,12 @@ def _json(status: int, body: object) -> Reply:
 
 
 class OAuth:
-    def __init__(self, ledger: Ledger, source: ByteSource) -> None:
+    def __init__(self, ledger: Ledger, source: ByteSource, providers: Sequence[str]) -> None:
         self.ledger = ledger
         self.source = source
+        # Where a credential it issues belongs: these endpoints and the
+        # program's own APIs (docs/canary.md, "A placement's own provider").
+        self.providers = tuple(providers)
         self.base_url = ""
         self._lock = threading.Lock()
         # code -> scope it was authorized for (to decide on an ID token).
@@ -85,7 +89,7 @@ class OAuth:
         return self.source.choose(ALNUM, 40)
 
     def _mint(self, token: str) -> str:
-        return self.ledger.mint(token, self._opaque).value
+        return self.ledger.mint(token, self._opaque, self.providers).value
 
     def _mint_id_token(self, audience: str) -> str:
         header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
@@ -101,7 +105,7 @@ class OAuth:
             payload = _b64url(json.dumps(claims).encode())
             return f"{header}.{payload}.{_b64url(self.source.read(32))}"
 
-        return self.ledger.mint("id_token", make).value
+        return self.ledger.mint("id_token", make, self.providers).value
 
     def metadata(self) -> Reply:
         u = self.base_url

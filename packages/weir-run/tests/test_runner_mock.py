@@ -1,7 +1,11 @@
 """The loopback mock against docs/canary.md ("The boundary", "Runtime
-values", "The capture") and the OpenAI and OTLP wire formats it stands in
-for. Requests are real HTTP over 127.0.0.1; the conftest guard refuses any
-other destination and records the attempt.
+values", "The capture", "The request capture") and the OpenAI and OTLP wire
+formats it stands in for. Requests are real HTTP over 127.0.0.1; the
+conftest guard refuses any other destination and records the attempt.
+
+The mock records requests; it does not judge them. Whether a value in a
+request was exercised or leaked is the judge's call, tested against the
+real judge in test_runner_requests.py and packages/weir/tests.
 """
 
 from __future__ import annotations
@@ -98,6 +102,15 @@ class Rig:
     def unexpected(self) -> list[str]:
         return [r["id"] for r in self.records() if r["type"] == "unexpected"]
 
+    def requests(self) -> list[dict[str, Any]]:
+        """The request capture's records, header checked and dropped."""
+        lines = self.capture.requests.read_text(encoding="utf-8").splitlines()
+        assert json.loads(lines[0]) == {"schema": "canary-requests/1"}
+        return [json.loads(line) for line in lines[1:]]
+
+    def body(self, record: dict[str, Any]) -> bytes:
+        return base64.b64decode(record["body"])
+
 
 PLACEMENTS = (
     PlacementSpec("env.MODEL_KEY", "env", "MODEL_KEY"),
@@ -124,7 +137,7 @@ def rig(tmp_path: Path) -> Generator[Rig]:
     key = ledger.plant("env.MODEL_KEY", "env", shaped(source, "generic")).value
     search_key = ledger.plant("env.SEARCH_KEY", "env", shaped(source, "generic")).value
     capture = Capture(tmp_path / "capture")
-    mock = Mock(SPEC, ledger, capture, PLACEMENTS, source)
+    mock = Mock(SPEC, ledger, capture, source)
     mock.start()
     try:
         yield Rig(mock, ledger, capture, key, search_key)
@@ -147,12 +160,23 @@ def test_the_mock_binds_loopback_only(rig: Rig) -> None:
     assert urlsplit(rig.mock.url).hostname == "127.0.0.1"
 
 
-def test_connect_to_any_other_host_is_refused_and_logged(rig: Rig, network_log: NetworkLog) -> None:
+def test_connect_to_any_other_host_is_refused_and_recorded(
+    rig: Rig, network_log: NetworkLog
+) -> None:
     reply = rig.request("CONNECT", "search.invalid:443")
     assert reply.status == 403
     assert rig.mock.egress == {"search.invalid": 1}
-    assert rig.evidence("env.SEARCH_KEY") == {"egress"}
-    assert rig.evidence("env.MODEL_KEY") == set()
+    [record] = rig.requests()
+    assert {k: record[k] for k in ("outcome", "endpoint", "host", "port", "method")} == {
+        "outcome": "connect",
+        "endpoint": None,
+        "host": "search.invalid",
+        "port": 443,
+        "method": "CONNECT",
+    }
+    assert record["path"] is None and record["query"] is None and record["body"] is None
+    # Evidence is the judge's to derive from the record, not the mock's.
+    assert rig.evidence("env.SEARCH_KEY") == set()
     # The mock never tried to reach, or even resolve, the refused host.
     assert network_log.refused == []
 
@@ -166,8 +190,31 @@ def test_an_absolute_form_request_for_another_host_is_refused(
     assert reply.status == 403
     assert rig.mock.egress == {"api.other.invalid": 1}
     assert network_log.refused == []
-    # Refused before any endpoint saw it: no request evidence, no record.
-    assert rig.evidence("env.MODEL_KEY") == set()
+    # Refused before any endpoint saw it, but recorded whole, body included.
+    [record] = rig.requests()
+    assert (record["outcome"], record["host"], record["port"]) == (
+        "refused",
+        "api.other.invalid",
+        80,
+    )
+    assert (record["method"], record["endpoint"]) == ("POST", None)
+    assert record["path"] == "http://api.other.invalid/v1/x"
+    assert ["Authorization", f"Bearer {rig.key}"] in record["headers"]
+    assert rig.body(record) == b"{}"
+    assert rig.unexpected() == []
+
+
+def test_a_refused_request_keeps_its_target_as_received(rig: Rig) -> None:
+    # A value can ride in the userinfo or the host itself: both are kept.
+    rig.request("GET", "http://user:pw@Exfil.Other.invalid:8080/p%2Fq?x=1")
+    rig.request("CONNECT", "[2001:db8::1]:8443")
+    refused, connect = rig.requests()
+    assert (refused["host"], refused["port"]) == ("Exfil.Other.invalid", 8080)
+    assert (refused["path"], refused["query"]) == (
+        "http://user:pw@Exfil.Other.invalid:8080/p%2Fq",
+        "x=1",
+    )
+    assert (connect["host"], connect["port"]) == ("2001:db8::1", 8443)
 
 
 def test_an_absolute_form_request_for_the_mock_itself_is_served(rig: Rig) -> None:
@@ -178,21 +225,94 @@ def test_an_absolute_form_request_for_the_mock_itself_is_served(rig: Rig) -> Non
 def test_unmocked_paths_are_404_and_counted(rig: Rig) -> None:
     assert rig.request("GET", "/nowhere/at/all").status == 404
     assert rig.mock.unmocked == {"GET /nowhere/at/all": 1}
+    [record] = rig.requests()
+    assert (record["outcome"], record["endpoint"]) == ("served", None)
+
+
+# -- the request capture -----------------------------------------------
+
+
+def test_every_served_request_is_recorded_whole(rig: Rig) -> None:
+    doc = {"messages": [{"role": "user", "content": "hi"}]}
+    rig.post_json("/v1/chat/completions?api-version=1", doc, {"X-Trace": "t1"})
+    [record] = rig.requests()
+    assert {k: record[k] for k in ("outcome", "endpoint", "host", "port", "method")} == {
+        "outcome": "served",
+        "endpoint": "model",
+        "host": HOST,
+        "port": rig.mock.port,
+        "method": "POST",
+    }
+    assert (record["path"], record["query"]) == ("/v1/chat/completions", "api-version=1")
+    assert ["X-Trace", "t1"] in record["headers"]
+    assert json.loads(rig.body(record)) == doc
+    assert record["unread"] is None
+
+
+@pytest.mark.parametrize(
+    ("path", "endpoint"),
+    [
+        ("/v1/embeddings", "model"),
+        ("/v1/traces", "otlp"),
+        ("/oauth/token", "oauth"),
+        ("/.well-known/openid-configuration", "oauth"),
+        ("/ep/search/q", "search"),
+        ("/ep/elsewhere/q", None),
+    ],
+)
+def test_each_record_names_the_endpoint_that_answered(
+    rig: Rig, path: str, endpoint: str | None
+) -> None:
+    rig.request("POST", path, b"", {"Content-Type": "application/x-www-form-urlencoded"})
+    assert [r["endpoint"] for r in rig.requests()] == [endpoint]
+
+
+def test_a_compressed_body_is_recorded_decompressed(rig: Rig) -> None:
+    body = json.dumps({"input": "hi"}).encode()
+    headers = {"Content-Type": "application/json", "Content-Encoding": "gzip"}
+    rig.request("POST", "/v1/embeddings", gzip.compress(body), headers)
+    [record] = rig.requests()
+    assert rig.body(record) == body and record["unread"] is None
+
+
+def test_a_body_in_an_unknown_encoding_is_recorded_as_received_and_unread(rig: Rig) -> None:
+    headers = {"Content-Type": "application/json", "Content-Encoding": "br"}
+    assert rig.request("POST", "/v1/embeddings", b"\x0bopaque", headers).status == 415
+    [record] = rig.requests()
+    assert rig.body(record) == b"\x0bopaque" and record["unread"] == "encoding"
+
+
+def test_a_body_over_the_limit_is_recorded_unread(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("weir_run.mock.server.MAX_BODY", 8)
+    reply = rig.request("POST", "/v1/embeddings", b'{"input": "too long"}')
+    assert reply.status == 413
+    [record] = rig.requests()
+    assert record["body"] is None and record["unread"] == "too_large"
+
+
+def test_bodies_judged_elsewhere_are_not_repeated(rig: Rig) -> None:
+    rig.request("POST", "/v1/traces", b"", {"Content-Type": "application/x-protobuf"})
+    rig.post_json("/ep/search/runs", {"run": "telemetry body"})
+    assert [r["body"] for r in rig.requests()] == [None, None]
 
 
 # -- credential fields -------------------------------------------------
 
 
-def test_a_bearer_canary_is_request_evidence(rig: Rig) -> None:
+def test_a_bearer_canary_is_accounted_for(rig: Rig) -> None:
     rig.post_json("/v1/chat/completions", {"messages": []}, {"Authorization": f"Bearer {rig.key}"})
-    assert rig.evidence("env.MODEL_KEY") == {"request"}
     assert rig.unexpected() == []
+    # The mock records the request; the judge attributes the value.
+    assert rig.evidence("env.MODEL_KEY") == set()
+    assert ["Authorization", f"Bearer {rig.key}"] in rig.requests()[0]["headers"]
 
 
-def test_a_basic_credential_holding_a_canary_is_request_evidence(rig: Rig) -> None:
+def test_a_basic_credential_holding_a_canary_is_accounted_for(rig: Rig) -> None:
     basic = base64.b64encode(f"client:{rig.key}".encode()).decode()
     rig.post_json("/v1/chat/completions", {"messages": []}, {"Authorization": f"Basic {basic}"})
-    assert rig.evidence("env.MODEL_KEY") == {"request"}
+    assert rig.unexpected() == []
 
 
 def test_an_unaccounted_credential_is_recorded_without_its_value(rig: Rig, tmp_path: Path) -> None:
@@ -200,6 +320,9 @@ def test_an_unaccounted_credential_is_recorded_without_its_value(rig: Rig, tmp_p
     rig.post_json("/v1/chat/completions", {"messages": []}, {"Authorization": f"Bearer {stranger}"})
     assert rig.unexpected() == ["unexpected.model.authorization#1"]
     assert stranger not in rig.ledger.path.read_text()
+    # Only the request capture, which holds what the program sent and is
+    # deleted with the rest of the capture, has it.
+    rig.capture.requests.unlink()
     assert stranger.encode() not in _all_bytes(tmp_path)
 
 
@@ -210,8 +333,10 @@ def test_declared_fields_are_inspected_and_others_are_not(rig: Rig) -> None:
         headers={"x-api-key": "unaccounted-value-1234", "x-other": "also-not-a-credential"},
     )
     assert reply.status == 200 and reply.json() == {"results": []}
-    assert rig.evidence("env.SEARCH_KEY") == {"request"}
     assert rig.unexpected() == ["unexpected.search.x-api-key#1"]
+    assert rig.requests()[0]["query"] == urlencode(
+        {"key": rig.search_key, "other": "not-a-credential"}
+    )
 
 
 def test_a_captured_endpoint_body_is_a_swept_file(rig: Rig) -> None:
@@ -440,8 +565,8 @@ def test_authorization_code_flow(rig: Rig) -> None:
     code = query["code"][0]
     assert _placement_values(rig)["runtime.oauth.code#1"] == code
     tokens = _form(rig, "/oauth/token", {"grant_type": "authorization_code", "code": code}).json()
-    # Redeeming the code is a request carrying a ledger value.
-    assert rig.evidence("runtime.oauth.code#1") == {"minted", "request"}
+    # Redeeming the code is a request carrying a ledger value: accounted for.
+    assert rig.evidence("runtime.oauth.code#1") == {"minted"}
     assert "refresh_token" in tokens and rig.unexpected() == []
 
 
@@ -452,13 +577,14 @@ def test_device_flow(rig: Rig) -> None:
     grant = "urn:ietf:params:oauth:grant-type:device_code"
     tokens = _form(rig, "/oauth/token", {"grant_type": grant, "device_code": device["device_code"]})
     assert tokens.status == 200
-    assert rig.evidence("runtime.oauth.device_code#1") == {"minted", "request"}
+    assert rig.evidence("runtime.oauth.device_code#1") == {"minted"}
+    assert rig.unexpected() == []
 
 
 @pytest.mark.parametrize("field", CREDENTIAL_FORM_FIELDS)
 def test_oauth_form_credential_fields(rig: Rig, field: str) -> None:
     _form(rig, "/oauth/token", {"grant_type": "client_credentials", field: rig.key})
-    assert rig.evidence("env.MODEL_KEY") == {"request"}
+    assert rig.unexpected() == []
     _form(rig, "/oauth/token", {"grant_type": "client_credentials", field: "unknown-credential-1"})
     assert rig.unexpected() == [f"unexpected.oauth.{field}#1"]
 
@@ -476,7 +602,7 @@ def test_client_secret_basic_auth_holding_a_canary(rig: Rig) -> None:
         {"grant_type": "client_credentials"},
         {"Authorization": f"Basic {basic}"},
     )
-    assert reply.status == 200 and rig.evidence("env.MODEL_KEY") == {"request"}
+    assert reply.status == 200 and rig.unexpected() == []
 
 
 def test_discovery_metadata_points_at_the_mock(rig: Rig) -> None:
@@ -602,12 +728,15 @@ def test_an_undecodable_body_is_swept_and_marks_the_run_incomplete(
     assert (rig.capture.swept / marker["undecodable"]).read_bytes() == body
 
 
-def test_otlp_request_headers_never_enter_the_capture(rig: Rig, tmp_path: Path) -> None:
+def test_otlp_request_headers_go_to_the_request_capture_only(rig: Rig, tmp_path: Path) -> None:
     rig.request(
         "POST",
         "/v1/traces",
         _span_export().SerializeToString(),
         {"Content-Type": "application/x-protobuf", "Authorization": f"Bearer {rig.key}"},
     )
-    assert rig.evidence("env.MODEL_KEY") == {"request"}
+    assert rig.unexpected() == []
+    [record] = rig.requests()
+    assert ["Authorization", f"Bearer {rig.key}"] in record["headers"]
+    rig.capture.requests.unlink()
     assert rig.key.encode() not in _all_bytes(tmp_path)

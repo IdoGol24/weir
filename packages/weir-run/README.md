@@ -1,12 +1,15 @@
 # weir-run
 
-The canary runner checks whether a program's telemetry carries the
-credentials the program holds. It plants a unique fake credential (a
-canary) wherever a real one would live, runs the program's own example
-flows against a local mock with telemetry exported to a file, and asks
-`weir canary judge` one question: did any planted value reach the capture?
-Because the runner knows every value it planted, the answer is an exact
-match in seven encoded forms, not a pattern guess.
+The canary runner checks whether a program exposes the credentials it
+holds to a place outside your control: its telemetry, its console output,
+the model provider (prompts and messages) or any other service or host. It
+plants a unique fake credential (a canary) wherever a real one would live,
+runs the program's own example flows against a local mock that records
+every request and exports telemetry to a file, and asks `weir canary
+judge` one question: did any planted value reach the capture, or a request
+to anything but its own provider? Because the runner knows every value it
+planted, the answer is an exact match in seven encoded forms, not a
+pattern guess.
 
 Its contract, and the judge's, is weir's
 [`docs/canary.md`](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
@@ -23,16 +26,18 @@ weir-run run --config canary.toml
   3. flows   each under an empty environment plus an allowlist, URLs pointed at the mock,
              in a network namespace whose only network is loopback (Linux)
   4. capture OTLP/JSON lines + other telemetry bodies + each flow's stdout and stderr
+             + every request the mock received, refused ones included
   5. judge   weir canary judge (weir-scan: opens no socket, starts no process)
   6. delete  the ledger and the capture
-exit 0 clean and complete | 1 a canary reached the capture | 2 usage, input or runner error | 3 incomplete
+exit 0 clean and complete | 1 a canary leaked | 2 usage, input or runner error | 3 incomplete
 ```
 
 - **The judge is weir-scan's**, called only through its command line. The
   runner never imports weir, and weir never imports the runner (both are
   import-linter contracts in the repository's `pyproject.toml`). The runner
   requires weir-scan 0.6.0 or later, the first release whose
-  `weir canary judge` reads the ledger's `network` and `direct` records;
+  `weir canary judge` reads the ledger's `network` and `direct` records
+  and takes `--requests` (the request sink);
   without a judge it exits 2 before running anything.
 - **Local and offline.** The mock binds `127.0.0.1` on a port the OS picks;
   there is no option to bind anything else. Every flow gets the mock as its
@@ -101,7 +106,8 @@ id = "env.SEARCH_API_KEY"         # the variable is the id after "env."
 kind = "env"                      # env | code
 shape = "generic"                 # see Shapes
 required = true                   # incomplete unless exercised or leaked
-provider_host = "api.search.example"   # a refused attempt to reach it is evidence
+provider = "search"               # the mocked endpoint it belongs to: model, oauth, otlp or an endpoint id
+provider_host = "api.search.example"   # its real host: a refused attempt to reach it is evidence
 
 [[placement]]
 id = "code.client.api_key"
@@ -191,6 +197,27 @@ leftover child processes are stopped when the flow ends.
 Every supported grant succeeds, whatever it presents. The OAuth paths exist only with `oauth = true`.
 Anything else is answered 404 and listed after the run.
 
+**Requests are a sink.** The mock records every request it receives, a
+refused one included, in `capture/requests.jsonl`: destination, method,
+path, query, headers and body. The judge searches each request for every
+canary and decides by the placement's own provider (`provider` and
+`provider_host` above):
+
+- in a request to its own provider, a canary is evidence that it was
+  exercised, as a key in its own API's auth header should be;
+- anywhere else it is a `LEAK` naming the sink and the field, for example
+  `sink="model" at=body.messages[0].content` for a key pasted into a
+  prompt, `sink="search"` for a key sent to the wrong one of your APIs, or
+  `sink="collector.example (blocked)"` for a key in a plain-HTTP request
+  to another host;
+- a refused HTTPS `CONNECT` carries no visible content: it is listed as
+  `blocked connection: <host>:<port>` and counted in the coverage, never a
+  leak by itself.
+
+A placement with no `provider` belongs in no request, so any request that
+holds it is a leak. A token the mock's OAuth endpoints issue belongs to
+those endpoints and to every `[[mock.endpoint]]`.
+
 **Credential fields.** Before any of these handles a request, the mock
 inspects its credential fields: the whole `Authorization` and
 `Proxy-Authorization` headers on every mocked endpoint, each endpoint's
@@ -198,18 +225,18 @@ declared fields,
 and on the OAuth endpoints the form fields `client_secret`,
 `client_assertion`, `assertion`, `code`, `device_code`, `refresh_token`,
 `subject_token`, `actor_token` and `password`. A field holding a canary in
-any encoded form (a Basic credential included) is `request` evidence that
-the placement was exercised. Any other non-empty value is recorded as
-`unexpected.<endpoint>.<field>#<n>`, never with its value, and makes the
-run incomplete: a flow that sends a credential no canary accounts for has
-left the check's premise.
+any encoded form (a Basic credential included) is accounted for, and the
+judge attributes it from the request capture. Any other non-empty value is
+recorded as `unexpected.<endpoint>.<field>#<n>`, never in the ledger, and
+makes the run incomplete: a flow that sends a credential no canary
+accounts for has left the check's premise.
 
 **The capture.** The receiver writes each export request decompressed, as
 one OTLP/JSON line (trace and span ids in lowercase hex), under
-`capture/otlp/`. Request headers never enter the capture. A body it cannot
-decode is kept as its own capture file and a marker line makes the run
-incomplete. Request bodies of an endpoint with `capture = true` and each
-flow's stdout and stderr are swept capture files.
+`capture/otlp/`; its headers go to the request capture only. A body it
+cannot decode is kept as its own capture file and a marker line makes the
+run incomplete. Request bodies of an endpoint with `capture = true` and
+each flow's stdout and stderr are swept capture files.
 
 ## Network isolation
 
@@ -275,9 +302,9 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
   `<canary:PLACEMENT-ID>`; whether the network was isolated, and each
   blocked direct attempt; refused egress and unmocked requests by count.
 - **stdout:** the judge's text report: one `LEAK` line per hit, the
-  not-exercised placements, the incomplete reasons, the coverage line, the
-  network line and the result. It names placements and locations, never a value or a
-  fragment of one.
+  not-exercised placements, the blocked destinations, the incomplete
+  reasons, the coverage line, the network line and the result. It names
+  placements, locations and sinks, never a value or a fragment of one.
 - `--report FILE` also writes the judge's `canary-report/1` JSON.
 - The exit code is the judge's, or 2 for the runner's own usage and
   configuration errors and any other failure of the run (an unwritable
@@ -294,14 +321,15 @@ Installing the runner registers a `canary_check` fixture (subprocess mode):
 ```python
 def test_quickstart_exports_no_credentials(canary_check):
     canary_check.mock(oauth=True)
-    canary_check.env("SEARCH_API_KEY", required=True)
-    variable = canary_check.code("code.client.api_key")
     search = canary_check.endpoint("search", credential_fields=["header:x-api-key"])
+    canary_check.env("SEARCH_API_KEY", required=True, provider="search")
+    variable = canary_check.code("code.client.api_key", provider="oauth")
     canary_check.run(["{python}", "examples/quickstart.py"], env={"SEARCH_BASE_URL": search})
     # teardown judges; the test fails on a leak or an incomplete run
 ```
 
-Declare the mock, the placements and the endpoints first; the first `run`
+Declare the mock and the endpoints, then the placements that name them as
+their `provider`, first; the first `run`
 plants the canaries and starts the mock. At teardown the plugin judges,
 prints the redacted flow output and the report, deletes the ledger and the
 capture, and fails the test unless the result is clean. To assert on the

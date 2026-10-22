@@ -14,7 +14,7 @@ import json
 import os
 import re
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,7 +51,7 @@ class Ledger:
         self._lock = threading.Lock()
         self._placements: dict[str, Placement] = {}
         # Every id that is or will be printed. A new value must share no
-        # 8-character run with any of them; the stems of ids the mock mints
+        # 6-character run with any of them; the stems of ids the mock mints
         # later (`runtime.oauth.access_token`, `unexpected.<ep>.<field>`)
         # are reserved up front for the same reason.
         self._ids: list[str] = list(reserved_ids)
@@ -85,9 +85,16 @@ class Ledger:
         self._ids.append(record_id)
 
     def plant(
-        self, placement_id: str, kind: str, make: Callable[[], str], required: bool = False
+        self,
+        placement_id: str,
+        kind: str,
+        make: Callable[[], str],
+        required: bool = False,
+        providers: Sequence[str] = (),
+        provider_host: str | None = None,
     ) -> Placement:
-        """Draw a fresh value with `make` and add it as a placement."""
+        """Draw a fresh value with `make` and add it as a placement, with
+        its own provider (docs/canary.md, "A placement's own provider")."""
         with self._lock:
             if kind not in KINDS:
                 raise LedgerError(f"unknown placement kind {kind}")
@@ -107,18 +114,23 @@ class Ledger:
             }
             if required:
                 record["required"] = True
+            if providers:
+                record["providers"] = list(providers)
+            if provider_host is not None:
+                record["provider_host"] = provider_host
             self._write(record)
             self._needles += [(n, placement_id) for _, n in needles(value)]
             self._pattern = None
             return placement
 
-    def mint(self, token: str, make: Callable[[], str]) -> Placement:
+    def mint(self, token: str, make: Callable[[], str], providers: Sequence[str]) -> Placement:
         """A credential the mock's OAuth endpoints issue: ledgered as a
-        `mock-oauth` placement with `minted` evidence before it is handed out."""
+        `mock-oauth` placement with `minted` evidence before it is handed out.
+        Its providers are the OAuth endpoints and the program's own APIs."""
         with self._lock:
             n = self._counters.get(token, 0) + 1
             self._counters[token] = n
-        placement = self.plant(f"runtime.oauth.{token}#{n}", "mock-oauth", make)
+        placement = self.plant(f"runtime.oauth.{token}#{n}", "mock-oauth", make, False, providers)
         self.exercised(placement.id, "minted")
         return placement
 
@@ -212,7 +224,7 @@ class Ledger:
 
     def withheld(self, text: str) -> bool:
         """Would the judge's printing rule withhold text? (any needle, or any
-        8-character run of any ledger value)"""
+        6-character run of any ledger value)"""
         data = text.encode("utf-8", "surrogateescape")
         if self.holders(data):
             return True

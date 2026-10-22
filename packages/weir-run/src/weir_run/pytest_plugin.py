@@ -1,11 +1,12 @@
 """The pytest plugin, subprocess mode: a canary check inside a test.
 
     def test_quickstart_exports_no_credentials(canary_check):
-        canary_check.env("SEARCH_API_KEY", required=True)
-        canary_check.run(["{python}", "examples/quickstart.py"])
+        search = canary_check.endpoint("search", reply='{"results": []}')
+        canary_check.env("SEARCH_API_KEY", required=True, provider="search")
+        canary_check.run(["{python}", "examples/quickstart.py"], env={"SEARCH_BASE_URL": search})
         # teardown judges; the test fails on a leak or an incomplete run
 
-Declare placements and mocked endpoints first; the first `run` (or the
+Declare mocked endpoints, then placements, first; the first `run` (or the
 first read of `mock_url`) plants the canaries, writes the ledger and starts
 the mock, after which declarations are closed. Each `run` is one flow under
 the same allowlisted environment as `weir-run run`. At teardown the
@@ -91,12 +92,14 @@ class CanaryCheck:
         id: str | None = None,  # noqa: A002 - the contract's word
         shape: str = "generic",
         required: bool = False,
+        provider: str | None = None,
         provider_host: str | None = None,
     ) -> str:
         """Plant a canary in each flow's environment as `variable`. Returns
-        the placement id."""
+        the placement id. `provider` is the mocked endpoint it belongs to
+        (declare a configured endpoint first)."""
         pid = id or f"env.{variable}"
-        self._declare(PlacementSpec(pid, "env", variable, shape, required, provider_host))
+        self._declare(PlacementSpec(pid, "env", variable, shape, required, provider_host, provider))
         return pid
 
     def code(
@@ -106,12 +109,13 @@ class CanaryCheck:
         variable: str | None = None,
         shape: str = "generic",
         required: bool = False,
+        provider: str | None = None,
         provider_host: str | None = None,
     ) -> str:
         """A canary the flow passes explicitly; it reads it from the returned
-        variable name."""
+        variable name. `provider` is the mocked endpoint it belongs to."""
         name = variable or default_variable(id, "code")
-        self._declare(PlacementSpec(id, "code", name, shape, required, provider_host))
+        self._declare(PlacementSpec(id, "code", name, shape, required, provider_host, provider))
         return name
 
     def endpoint(

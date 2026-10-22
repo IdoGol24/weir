@@ -36,7 +36,7 @@ _BANNED = re.compile("|".join(BANNED_WORDS), re.IGNORECASE)
 
 # Ids are printed in reports, so no id may hold a run of this many
 # consecutive characters of any value (docs/canary.md, the ledger).
-ID_OVERLAP = 8
+ID_OVERLAP = 6
 
 
 @dataclass(frozen=True)
@@ -98,7 +98,8 @@ def overlaps(value: str, text: str, run: int = ID_OVERLAP) -> bool:
 
 def acceptable(value: str, taken: Iterable[str], ids: Iterable[str]) -> bool:
     """A value is usable when it holds no banned word, repeats no value and
-    shares no 8-character run with any id that is or will be printed."""
+    shares no run of ID_OVERLAP characters with any id that is or will be
+    printed."""
     if _BANNED.search(value):
         return False
     if value in set(taken):

@@ -4,16 +4,20 @@ It is every endpoint a flow is pointed at (the model API, the OAuth
 endpoints, the OTLP/HTTP receiver and the program's own configured APIs)
 and the HTTP(S) proxy for everything else. As a proxy it refuses: a
 `CONNECT host:port` or an absolute-form request for any other host gets a
-403 and nothing is forwarded, opened or resolved. The refused host is
-logged, and a placement whose `provider_host` it is gets `egress`
-evidence.
+403 and nothing is forwarded, opened or resolved.
+
+Every request it receives, refused ones included, is recorded before it is
+answered as one line of the request capture (docs/canary.md, "The request
+capture"): destination, method, path, query, headers and body. The judge
+decides from it whether a planted value went to its own provider
+(exercised) or anywhere else (a leak).
 
 Before any mocked endpoint handles a request, the credential-field rules
-run (docs/canary.md, "Runtime values"): each credential field either holds
-a needle of a ledger value (`request` evidence for each such placement) or
-is recorded as `unexpected` by endpoint and field name only. The mock
-writes no request content anywhere else, and logs nothing about a request
-but its method, a value-free path and a refused host.
+run (docs/canary.md, "Runtime values"): a credential field that holds no
+needle of any ledger value is recorded as `unexpected` by endpoint and
+field name only. Beyond the request capture, the mock writes no request
+content anywhere, and logs nothing about a request but its method, a
+value-free path and a refused host.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from collections import Counter
 from collections.abc import Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import SplitResult, parse_qs, urlsplit
 
 from weir_run.capture import Capture
 from weir_run.ledger import Ledger
@@ -37,14 +41,43 @@ from weir_run.mock import otlp
 from weir_run.mock.model import ModelApi
 from weir_run.mock.oauth import CREDENTIAL_FORM_FIELDS, OAuth, parse_form
 from weir_run.shapes import ByteSource
-from weir_run.spec import CredentialField, EndpointSpec, MockSpec, PlacementSpec
+from weir_run.spec import CredentialField, EndpointSpec, MockSpec
 
 HOST = "127.0.0.1"
 MAX_BODY = 64 * 1024 * 1024
 ALWAYS_INSPECTED = ("authorization", "proxy-authorization")
 ENDPOINT_PREFIX = "/ep/"
+DEFAULT_PORTS = {"http": 80, "https": 443}
 
 type Reply = tuple[int, bytes, str, dict[str, str]]
+
+
+class _TooLarge(ValueError):
+    """A request body over MAX_BODY: not read, so not judged in full."""
+
+
+def _authority(authority: str, default_port: int) -> tuple[str, int]:
+    """The host, letter case kept, and port of `[userinfo@]host[:port]`."""
+    hostport = authority.rpartition("@")[2]
+    if hostport.startswith("["):
+        host, _, rest = hostport[1:].partition("]")
+        port = rest.removeprefix(":")
+    else:
+        host, sep, port = hostport.rpartition(":")
+        if not sep:
+            host, port = hostport, ""
+    return host, int(port) if port.isdigit() and int(port) <= 65535 else default_port
+
+
+def _text(received: str) -> str:
+    """http.server decodes a request line and headers as Latin-1; recover
+    the bytes and read them as UTF-8 where they are, so the judge matches
+    what was on the wire."""
+    raw = received.encode("latin-1", errors="replace")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return received
 
 
 def _decompress(raw: bytes, encoding: str) -> bytes | None:
@@ -67,19 +100,17 @@ class Mock:
         spec: MockSpec,
         ledger: Ledger,
         capture: Capture,
-        placements: Sequence[PlacementSpec],
         source: ByteSource,
     ) -> None:
         self.spec = spec
         self.ledger = ledger
         self.capture = capture
         self.model = ModelApi(spec.model_reply, spec.tool_calls)
-        self.oauth = OAuth(ledger, source) if spec.oauth else None
         self.endpoints = {e.id: e for e in spec.endpoints}
-        self._provider_hosts: dict[str, list[str]] = {}
-        for p in placements:
-            if p.provider_host:
-                self._provider_hosts.setdefault(p.provider_host.lower(), []).append(p.id)
+        # A credential the OAuth endpoints issue belongs to them and to the
+        # program's own APIs (docs/canary.md, "A placement's own provider").
+        providers = ("oauth", *self.endpoints)
+        self.oauth = OAuth(ledger, source, providers) if spec.oauth else None
         self._lock = threading.Lock()
         self.egress: Counter[str] = Counter()
         self.unmocked: Counter[str] = Counter()
@@ -136,11 +167,8 @@ class Mock:
     # -- egress and bookkeeping ----------------------------------------
 
     def refuse(self, host: str) -> None:
-        host = host.lower()
         with self._lock:
-            self.egress[host] += 1
-        for placement_id in self._provider_hosts.get(host, []):
-            self.ledger.exercised(placement_id, "egress")
+            self.egress[host.lower()] += 1
 
     def note_unmocked(self, method: str, path: str) -> None:
         with self._lock:
@@ -153,15 +181,35 @@ class Mock:
     # -- the credential-field rules ------------------------------------
 
     def inspect(self, endpoint: str, fields: list[tuple[str, str]]) -> None:
+        """Record each credential field that holds no needle as `unexpected`.
+        A field that does is the judge's to attribute, from the request
+        capture."""
         for name, value in fields:
-            if not value:
-                continue
-            holders = self.ledger.holders(value.encode("utf-8", "surrogateescape"))
-            if holders:
-                for placement_id in holders:
-                    self.ledger.exercised(placement_id, "request")
-            else:
+            if value and not self.ledger.holders(value.encode("utf-8", "surrogateescape")):
                 self.ledger.unexpected(endpoint, name)
+
+    def endpoint_of(self, method: str, path: str) -> str | None:
+        """The mocked endpoint that answers a request for path, if any."""
+        if path in otlp.PATHS and method == "POST":
+            return "otlp"
+        if path.startswith("/v1/"):
+            return "model"
+        if self.oauth is not None and path.startswith(("/oauth/", "/.well-known/")):
+            return "oauth"
+        if path.startswith(ENDPOINT_PREFIX):
+            endpoint = path[len(ENDPOINT_PREFIX) :].split("/", 1)[0]
+            if endpoint in self.endpoints:
+                return endpoint
+        return None
+
+    def body_judged_elsewhere(self, endpoint: str | None) -> bool:
+        """An OTLP export is the telemetry capture, and a configured
+        endpoint with capture on keeps its bodies as swept files: neither
+        body is repeated in the request capture."""
+        if endpoint == "otlp":
+            return True
+        configured = self.endpoints.get(endpoint or "")
+        return configured is not None and configured.capture
 
 
 def _body_fields(body: bytes, content_type: str) -> dict[str, list[str]]:
@@ -206,13 +254,13 @@ class _Handler(BaseHTTPRequestHandler):
                     break
                 total += size
                 if total > MAX_BODY:
-                    raise ValueError("body too large")
+                    raise _TooLarge
                 chunks.append(self.rfile.read(size))
                 self.rfile.readline()
             return b"".join(chunks)
         length = int(self.headers.get("Content-Length", "0") or "0")
         if length > MAX_BODY:
-            raise ValueError("body too large")
+            raise _TooLarge
         return self.rfile.read(length) if length > 0 else b""
 
     def _send(self, reply: Reply, close: bool = False) -> None:
@@ -234,26 +282,90 @@ class _Handler(BaseHTTPRequestHandler):
         reply: Reply = (403, b"egress refused by the canary mock\n", "text/plain", {})
         self._send(reply, close=True)
 
+    # -- the request capture -------------------------------------------
+
+    def _record(
+        self,
+        outcome: str,
+        endpoint: str | None,
+        host: str,
+        port: int,
+        body: bytes | None,
+        unread: str | None = None,
+    ) -> None:
+        """One line of the request capture (docs/canary.md, "The request
+        capture"), written before the request is answered. The request
+        target is recorded as received, split at its `?`: for an
+        absolute-form request it keeps its scheme, userinfo and host."""
+        path: str | None = None
+        query: str | None = None
+        if outcome != "connect":
+            path, _, query = self.path.partition("?")
+        self.owner.capture.request(
+            {
+                "outcome": outcome,
+                "endpoint": endpoint,
+                "host": host,
+                "port": port,
+                "method": _text(self.command),
+                "path": None if path is None else _text(path),
+                "query": None if query is None else _text(query),
+                "headers": [[_text(k), _text(v)] for k, v in self.headers.items()],
+                "body": None if body is None else base64.b64encode(body).decode("ascii"),
+                "unread": unread,
+            }
+        )
+
+    def _body(self, raw: bytes, endpoint: str | None) -> tuple[bytes | None, str | None]:
+        """The body to record and why it is unread, if it is."""
+        if self.owner.body_judged_elsewhere(endpoint):
+            return None, None
+        decoded = _decompress(raw, self.headers.get("Content-Encoding", ""))
+        return (raw, "encoding") if decoded is None else (decoded, None)
+
     # -- dispatch ------------------------------------------------------
 
     def do_CONNECT(self) -> None:  # noqa: N802
-        self._refuse(self.path.rsplit(":", 1)[0].strip("[]"))
+        host, port = _authority(self.path, 0)
+        self._record("connect", None, host, port, None)
+        self._refuse(host)
 
     def _dispatch(self) -> None:
         try:
             target = self.path
+            parts = urlsplit(target)
             if "://" in target.split("?", 1)[0]:
-                parts = urlsplit(target)
                 own = parts.hostname in (HOST, "localhost") and parts.port == self.owner.port
                 if not own:
-                    self._refuse(parts.hostname or "")
+                    self._refuse_absolute(parts)
                     return
                 target = parts.path + (f"?{parts.query}" if parts.query else "")
-            raw = self._read_body()
+                parts = urlsplit(target)
+            endpoint = self.owner.endpoint_of(self.command, parts.path)
+            port = self.owner.port
+            try:
+                raw = self._read_body()
+            except _TooLarge:
+                self._record("served", endpoint, HOST, port, None, "too_large")
+                self._send((413, b"body too large\n", "text/plain", {}), close=True)
+                return
+            body, unread = self._body(raw, endpoint)
+            self._record("served", endpoint, HOST, port, body, unread)
             self._send(self._route(target, raw))
         except Exception:  # noqa: BLE001 - never echo a request; count and fail it
             self.owner.note_error()
             self._send((500, b"canary mock error\n", "text/plain", {}), close=True)
+
+    def _refuse_absolute(self, parts: SplitResult) -> None:
+        """A plain-HTTP request for another host: recorded with its body,
+        then refused. Nothing is forwarded, opened or resolved."""
+        host, port = _authority(parts.netloc, DEFAULT_PORTS.get(parts.scheme.lower(), 0))
+        try:
+            body, unread = self._body(self._read_body(), None)
+        except _TooLarge:
+            body, unread = None, "too_large"
+        self._record("refused", None, host, port, body, unread)
+        self._refuse(host)
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _dispatch  # noqa: N815
 
@@ -280,8 +392,10 @@ class _Handler(BaseHTTPRequestHandler):
         content_type = self.headers.get("Content-Type", "")
         body = _decompress(raw, self.headers.get("Content-Encoding", ""))
         method = self.command
+        # The same function names the endpoint in the request capture.
+        endpoint = owner.endpoint_of(method, path)
 
-        if path in otlp.PATHS and method == "POST":
+        if endpoint == "otlp":
             fields = self._fields(owner.spec.fields_for("otlp"), query, {})
             owner.inspect("otlp", fields)
             status, reply, kind = otlp.receive(
@@ -293,25 +407,22 @@ class _Handler(BaseHTTPRequestHandler):
             return 415, b"unsupported content encoding\n", "text/plain", {}
         body_fields = _body_fields(body, content_type)
 
-        if path.startswith("/v1/"):
+        if endpoint == "model":
             owner.inspect("model", self._fields(owner.spec.fields_for("model"), query, body_fields))
             return self._model(method, path, body)
 
-        if owner.oauth is not None and (
-            path.startswith("/oauth/") or path.startswith("/.well-known/")
-        ):
+        if endpoint == "oauth":
             fields = self._fields(owner.spec.fields_for("oauth"), query, body_fields)
             form = parse_form(body) if "form-urlencoded" in content_type.lower() else {}
             fields += [(n, v) for n in CREDENTIAL_FORM_FIELDS for v in form.get(n, [])]
             owner.inspect("oauth", fields)
             return self._oauth(method, path, query, form)
 
-        if path.startswith(ENDPOINT_PREFIX):
-            endpoint = owner.endpoints.get(path[len(ENDPOINT_PREFIX) :].split("/", 1)[0])
-            if endpoint is not None:
-                fields = self._fields(endpoint.credential_fields, query, body_fields)
-                owner.inspect(endpoint.id, fields)
-                return self._endpoint(endpoint, body)
+        if endpoint is not None:
+            configured = owner.endpoints[endpoint]
+            fields = self._fields(configured.credential_fields, query, body_fields)
+            owner.inspect(configured.id, fields)
+            return self._endpoint(configured, body)
 
         owner.note_unmocked(method, path)
         return 404, b"not mocked\n", "text/plain", {}

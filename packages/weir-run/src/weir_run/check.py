@@ -84,8 +84,12 @@ class CheckRun:
             self.planted: dict[str, str] = {}
             for p in spec.placements:
                 made = shaped(self.source, p.shape)
-                self.planted[p.variable] = self.ledger.plant(p.id, p.kind, made, p.required).value
-            self.mock = Mock(spec.mock, self.ledger, self.capture, spec.placements, self.source)
+                providers = () if p.provider is None else (p.provider,)
+                placement = self.ledger.plant(
+                    p.id, p.kind, made, p.required, providers, p.provider_host
+                )
+                self.planted[p.variable] = placement.value
+            self.mock = Mock(spec.mock, self.ledger, self.capture, self.source)
             self.mock.start(None if self.jail is None else self.jail.listener)
         except BaseException:
             if self.jail is not None:

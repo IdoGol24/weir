@@ -31,6 +31,7 @@ CONFIG = """
 id = "env.APP_KEY"
 kind = "env"
 required = true
+provider = "model"
 
 [[flow]]
 id = "main"
@@ -166,6 +167,25 @@ def test_two_runs_print_the_same_report(
             "[mock.credential_fields]\notlp = ['body:token']\n",
             "has no body: fields",
         ),
+        (
+            "[[flow]]\nid = 'a'\ncommand = ['x']\n"
+            "[[placement]]\nid = 'env.A'\nkind = 'env'\nprovider = 'search'\n",
+            "provider 'search' is not an endpoint",
+        ),
+        (
+            "[[flow]]\nid = 'a'\ncommand = ['x']\n"
+            "[[placement]]\nid = 'env.A'\nkind = 'env'\nprovider = 'oauth'\n",
+            "needs oauth = true",
+        ),
+        (
+            "[[flow]]\nid = 'a'\ncommand = ['x']\n"
+            "[[placement]]\nid = 'env.A'\nkind = 'env'\nprovider_host = 'a b'\n",
+            "is not a host",
+        ),
+        (
+            "[[flow]]\nid = 'a'\ncommand = ['x']\n[[mock.endpoint]]\nid = 'unmocked'\n",
+            "endpoint id 'unmocked' is not usable",
+        ),
     ],
 )
 def test_configuration_errors_exit_2(
@@ -193,14 +213,32 @@ def test_a_weir_without_the_judge_exits_2_before_any_flow(
     assert not side.exists()
 
 
+# A fake judge's answer to the runner's `--help` probe: one that can judge
+# the request capture.
+HELP = "if '--help' in sys.argv: print('--requests'); sys.exit(0)\n"
+
+
+def test_a_judge_that_cannot_judge_requests_exits_2_before_any_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A weir-scan release from before the request sink: `canary judge`
+    # exists, `--requests` does not.
+    script = tmp_path / "judge.py"
+    script.write_text("import sys\nprint('--otlp PATH')\nsys.exit(0)\n", encoding="utf-8")
+    config, side = _setup(tmp_path)
+    result = _run(monkeypatch, [sys.executable, str(script)], config)
+    assert result.exit_code == 2
+    assert "cannot judge outbound requests" in result.stderr
+    assert not side.exists()
+
+
 def test_a_judge_input_error_is_exit_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
 ) -> None:
     # A judge that accepts --help and then refuses the run's input.
     script = tmp_path / "judge.py"
     script.write_text(
-        "import sys\nif '--help' in sys.argv: sys.exit(0)\n"
-        "print('ledger.jsonl:3: bad record', file=sys.stderr)\nsys.exit(2)\n",
+        f"import sys\n{HELP}print('ledger.jsonl:3: bad record', file=sys.stderr)\nsys.exit(2)\n",
         encoding="utf-8",
     )
     config, _ = _setup(tmp_path)
@@ -213,7 +251,7 @@ def _sleeping_judge(tmp_path: Path, *, on_help: bool) -> list[str]:
     script = tmp_path / "judge.py"
     script.write_text(
         "import sys, time\n"
-        f"if '--help' in sys.argv and not {on_help}: sys.exit(0)\n"
+        f"if '--help' in sys.argv and not {on_help}: print('--requests'); sys.exit(0)\n"
         "time.sleep(30)\n",
         encoding="utf-8",
     )
@@ -281,8 +319,7 @@ def test_a_judge_killed_by_a_signal_is_exit_2_never_its_raw_code(
 ) -> None:
     script = tmp_path / "judge.py"
     script.write_text(
-        "import os, signal, sys\nif '--help' in sys.argv: sys.exit(0)\n"
-        "os.kill(os.getpid(), signal.SIGKILL)\n",
+        f"import os, signal, sys\n{HELP}os.kill(os.getpid(), signal.SIGKILL)\n",
         encoding="utf-8",
     )
     config, side = _setup(tmp_path, "leak")

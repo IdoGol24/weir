@@ -21,6 +21,7 @@ from weir_run.spec import SpecError
 
 LEDGER = "ledger.jsonl"
 OTLP_DIR = "capture/otlp"
+REQUESTS_FILE = "capture/requests.jsonl"
 SWEPT_DIR = "capture/swept"
 JUDGE_TIMEOUT_SECONDS = 600
 # docs/canary.md, "Exit codes": any other code is a judge that failed.
@@ -54,7 +55,8 @@ def resolve(explicit: str | None = None) -> list[str]:
 
 
 def check_available(command: Sequence[str]) -> None:
-    """Fail before any flow runs when this weir has no canary judge."""
+    """Fail before any flow runs when this weir has no canary judge, or one
+    that cannot judge the request capture."""
     try:
         done = subprocess.run(
             [*command, "canary", "judge", "--help"],
@@ -70,10 +72,16 @@ def check_available(command: Sequence[str]) -> None:
             "this weir has no `weir canary judge` command; "
             "install a weir-scan release that ships it"
         )
+    if b"--requests" not in done.stdout:
+        raise SpecError(
+            "this weir's `weir canary judge` cannot judge outbound requests (no --requests);"
+            " install a weir-scan release that ships it"
+        )
 
 
 def judge(command: Sequence[str], run_dir: Path, *, json_report: bool = False) -> Verdict:
     args = [*command, "canary", "judge", "--ledger", LEDGER, "--otlp", OTLP_DIR]
+    args += ["--requests", REQUESTS_FILE]
     if json_report:
         args.append("--json")
     args.append(SWEPT_DIR)
