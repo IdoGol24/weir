@@ -1,0 +1,104 @@
+name: Weir leak check
+description: >-
+  Run a weir-run config (fake credentials, a loopback mock, your agent's
+  flows) and post the verdict, leak, clean or incomplete, on the pull request.
+author: IdoGol24
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  config:
+    description: The weir-run config to run, relative to the workspace.
+    default: canary.toml
+  require-isolation:
+    description: >-
+      true: a run whose flows could not be isolated from the network is
+      incomplete (weir-run run --require-isolation).
+    default: "false"
+  comment:
+    description: >-
+      true: post the verdict as one comment on the pull request, updated in
+      place on a re-run. Needs pull-requests write permission.
+    default: "true"
+  comment-key:
+    description: >-
+      Tells this check's comment apart from another one's on the same pull
+      request, such as a matrix job's. Default: the config path.
+    default: ""
+  python-version:
+    description: >-
+      Set up this Python version first (actions/setup-python). Default: the
+      job's own Python, the one your flows' dependencies are installed in.
+    default: ""
+  weir-scan-version:
+    description: The exact weir-scan version to install. Default, the version at this action's ref.
+    default: ""
+  weir-run-version:
+    description: The exact weir-run version to install. Default, the version at this action's ref.
+    default: ""
+
+outputs:
+  result:
+    description: clean, leak, incomplete or error.
+    value: ${{ steps.check.outputs.result }}
+  exit-code:
+    description: weir-run's exit code.
+    value: ${{ steps.check.outputs.exit-code }}
+  report:
+    description: Path of the judge's JSON report (canary-report/1), when the run reached a verdict.
+    value: ${{ steps.check.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      if: inputs.python-version != ''
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    # weir-run isolates flows in an unprivileged user and network namespace,
+    # which GitHub's Ubuntu images restrict by default. Only on a
+    # GitHub-hosted runner, whose machine lasts one job; never on yours.
+    - name: Allow unprivileged user namespaces
+      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: sudo -n sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null 2>&1 || true
+
+    - name: Install weir-scan and weir-run
+      id: install
+      shell: bash
+      env:
+        WEIR_SCAN_VERSION: ${{ inputs.weir-scan-version }}
+        WEIR_RUN_VERSION: ${{ inputs.weir-run-version }}
+      run: |
+        python=$(command -v python || command -v python3 || true)
+        if [ -z "$python" ]; then
+          echo "::error title=Weir leak check::no Python found; set the python-version input or set up Python first"
+          exit 2
+        fi
+        exec "$python" -I "$GITHUB_ACTION_PATH/action/weir_action.py" install
+
+    # No token here: no process holds one while the flows run.
+    - name: Run the leak check
+      id: check
+      shell: bash
+      env:
+        WEIR_PYTHON: ${{ steps.install.outputs.python }}
+        WEIR_CONFIG: ${{ inputs.config }}
+        WEIR_REQUIRE_ISOLATION: ${{ inputs.require-isolation }}
+      run: 'exec "$WEIR_PYTHON" -I "$GITHUB_ACTION_PATH/action/weir_action.py" check'
+
+    - name: Report the verdict
+      id: report
+      shell: bash
+      env:
+        WEIR_PYTHON: ${{ steps.install.outputs.python }}
+        WEIR_CONFIG: ${{ inputs.config }}
+        WEIR_EXIT_CODE: ${{ steps.check.outputs.exit-code }}
+        WEIR_VERDICT: ${{ steps.check.outputs.verdict }}
+        WEIR_COMMENT: ${{ inputs.comment }}
+        WEIR_COMMENT_KEY: ${{ inputs.comment-key }}
+        WEIR_GITHUB_TOKEN: ${{ github.token }}
+      run: 'exec "$WEIR_PYTHON" -I "$GITHUB_ACTION_PATH/action/weir_action.py" report'

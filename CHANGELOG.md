@@ -28,6 +28,28 @@
   under the fingerprint key, so a reader can tell the store's key from
   another one. `weir audit` refuses a store without it: run
   `weir inventory --store` again.
+- **A GitHub Action: `uses: IdoGol24/weir@<ref>`.** One step in a pull
+  request job installs weir-scan and weir-run at exact versions (by
+  default the versions at the action's ref, wheels only), runs
+  `weir-run run --config` (`canary.toml` by default, `require-isolation`
+  optional) and posts the verdict as one PR comment, updated in place on a
+  re-run, with the job's own `GITHUB_TOKEN` and `pull-requests: write`
+  only. The comment and the step summary show the result and the report's
+  own lines, never a value. The job passes on clean (0) and fails on leak
+  (1), incomplete (3) and error (2, or an exit code the report's result
+  line does not confirm). A comment that cannot be posted, as on a pull
+  request from a fork, is a warning; the verdict stands. On GitHub-hosted
+  Linux runners it allows unprivileged user namespaces so the flows run
+  isolated. Of the action's own steps only the one that posts the comment
+  is given the token, after the flows have run; with `python-version` set,
+  actions/setup-python also receives it through its own `token` input
+  default and exits before the check step, so no process holds the token
+  while the flows run. The comment names the pull request's head commit;
+  on a `pull_request` event GitHub checks out the merge of that head into
+  the base branch, so the tree judged is that merge commit. At a ref
+  between releases, where the recorded weir-run needs a newer weir-scan
+  than the one recorded, it stops with an error instead of installing
+  older code. Its README is `action/README.md`.
 
 ## [0.6.0] - 2026-10-22
 

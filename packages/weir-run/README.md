@@ -364,4 +364,6 @@ pytest option (see [Network isolation](#network-isolation)).
   machine with network access it connects to that host directly. Run such
   flows in a container with no route out, and use `--require-isolation`
   where a run must not pass unisolated.
-- No GitHub Action and no in-process pytest mode yet.
+- No in-process pytest mode yet. In GitHub Actions, the
+  [Weir action](https://github.com/IdoGol24/weir/tree/main/action) runs a
+  config and posts the verdict on the pull request.

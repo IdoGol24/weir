@@ -77,6 +77,24 @@ command = ["{python}", "examples/quickstart.py"]
 
 The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
 
+## Run it in CI
+
+On a pull request, one step runs your weir-run config and posts the verdict as one comment, updated in place on every re-run:
+
+```yaml
+- uses: IdoGol24/weir@<ref>   # a release tag, or better its full commit SHA
+```
+
+Put it after the steps that check out your code and install your project. It runs `canary.toml` (`with: config: <path>` for another), fails the job on a leak or an incomplete run, and passes on a clean one; a usage or configuration error fails it as an error. The comment shows the report's lines, which never hold a value, and names the pull request's head commit; on a `pull_request` event GitHub checks out the merge of that head into the base branch, so the tree judged is that merge commit. Of the action's own steps only the one that posts the comment is given the job's token; with `python-version` set, actions/setup-python also receives it through its own `token` input default and exits before the check step, so no process holds the token while the flows run. Check out with `persist-credentials: false`, so the token is not left in `.git/config` either, where the flows could read it while they run. The job needs:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+```
+
+The inputs, the outputs and a whole workflow are in [the action's README](https://github.com/IdoGol24/weir/tree/main/action).
+
 ## Also included: the flow scan, `weir inventory` and `weir audit` (experimental)
 
 ### The flow scan

@@ -56,7 +56,9 @@ include = [
     "packages/weir-run/tests",
     "packages/weir-run/demo",
     "tests",
+    "action",
 ]
+extraPaths = ["action"]
 typeCheckingMode = "strict"
 pythonVersion = "3.12"
 
@@ -67,7 +69,8 @@ testpaths = [
     "packages/weir-tracegen/tests",
     "packages/weir-run/tests",
 ]
-pythonpath = ["tests"]
+# action/: the GitHub Action's helper, a script tested as a module.
+pythonpath = ["tests", "action"]
 
 [tool.importlinter]
 root_packages = ["weir", "weir_tracegen", "weir_run"]
