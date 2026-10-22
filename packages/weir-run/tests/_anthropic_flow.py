@@ -4,8 +4,9 @@ Code reach the API, with ANTHROPIC_API_KEY in the `x-api-key` header.
 
 Every mode runs one coding-task turn. The first request offers a
 `read_file` tool, which the scripted model calls; the flow answers with a
-tool_result and streams the final reply. MODE decides what else the
-conversation holds:
+tool_result, streams the final reply and exports one clean span, so the
+telemetry capture is not empty. MODE decides what else the conversation
+holds:
 
 - `own`: nothing more; the key is only in `x-api-key`;
 - `tool-result`: the tool result holds ANTHROPIC_API_KEY, as a read of a
@@ -33,6 +34,17 @@ READ_FILE = {
         "required": ["path"],
     },
 }
+
+
+def export_span() -> None:
+    doc = {"resourceSpans": [{"scopeSpans": [{"spans": [{"name": "claude turn"}]}]}]}
+    request = urllib.request.Request(
+        os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"],
+        data=json.dumps(doc).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        response.read()
 
 
 def post(key: str, body: dict[str, Any]) -> bytes:
@@ -98,6 +110,7 @@ def main() -> None:
     text, stop = streamed(post(key, {**turn, "messages": messages, "stream": True}))
     if stop != "end_turn" or not text:
         raise SystemExit("expected a final text reply")
+    export_span()
     print(text)
 
 
