@@ -11,6 +11,7 @@ strings themselves never decide where a hit is.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import PurePath
@@ -141,9 +142,10 @@ def _is_claude_code_memory(path: PurePath) -> bool:
 def recognise(path: str, data: bytes, lines: list[Line]) -> Format:
     if any(line.parsed is not None and _is_claude_code(line.parsed) for line in lines):
         return Format.CLAUDE_CODE
-    if PurePath(path).parent.name == "tool-results":
+    where = PurePath(os.path.abspath(path))
+    if where.parent.name == "tool-results":
         return Format.CLAUDE_CODE_TOOL_RESULTS
-    if _is_claude_code_memory(PurePath(path)):
+    if _is_claude_code_memory(where):
         return Format.CLAUDE_CODE_MEMORY
     if any(is_otlp(line.parsed) for line in lines):
         return Format.OTLP
