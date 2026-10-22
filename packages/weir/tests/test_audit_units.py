@@ -1,0 +1,421 @@
+"""`weir audit` behaviour beyond the acceptance tests (docs/audit.md): the
+three inventory inputs, the Claude Code and OTLP classification tables, the
+candidate rules, files and directories, the text report and determinism.
+
+Fake data only, built by audit_fixtures under the test's temporary
+directory, inventoried by the real `weir inventory`.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+from pathlib import Path
+
+import audit_fixtures as fx
+import canary_fixtures as cfx
+import pytest
+
+from weir.audit import inputs as audit_inputs
+from weir.inventory import fingerprint as inventory_fingerprint
+
+# --- the fingerprint and the key check agree with the inventory's -----------
+
+
+@pytest.mark.parametrize("value", ["a", "é" * 3, "x\udcff y", cfx.fake_value("fp", 40)])
+def test_the_audit_fingerprints_exactly_as_the_inventory_does(value: str) -> None:
+    key = bytes(range(32))
+    data = value.encode("utf-8", "surrogateescape")
+    assert audit_inputs.fingerprint(key, data).hex() == inventory_fingerprint.fingerprint(
+        key, value
+    )
+    assert audit_inputs.key_check(key) == inventory_fingerprint.key_check(key)
+    assert audit_inputs.FINGERPRINT_VERSION == inventory_fingerprint.FINGERPRINT_VERSION
+
+
+def test_the_store_carries_the_key_check_of_its_key(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    store = json.loads(setup.store.read_text())
+    key = bytes.fromhex(setup.key.read_text().strip())
+    assert store["key_check"] == inventory_fingerprint.key_check(key)
+
+
+# --- the three inventory inputs ---------------------------------------------
+
+
+def _session(setup: fx.Setup, path: Path, text: str = "README.md\n") -> Path:
+    session = fx.Session()
+    session.prompt("list the files here")
+    session.tool_use("Bash", {"command": "ls"}, "toolu_01")
+    session.tool_result("toolu_01", text)
+    return session.write(path)
+
+
+def _rewrite_json(path: Path, change: object) -> None:
+    data = json.loads(path.read_text())
+    change(data)  # type: ignore[operator]
+    path.write_text(json.dumps(data))
+
+
+def _error(run: fx.Run, setup: fx.Setup, *names: str) -> None:
+    assert run.exit_code == 2
+    assert run.stdout == ""
+    assert run.stderr.startswith("error: ")
+    for name in names:
+        assert name in run.stderr
+    cfx.assert_value_free(run.stderr, setup.values.values())
+
+
+def test_a_store_without_a_key_check_is_refused(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    _rewrite_json(setup.store, lambda d: d.pop("key_check"))
+    _error(setup.audit([_session(setup, tmp_path / "s.jsonl")]), setup, str(setup.store), "again")
+
+
+def test_a_store_from_another_run_is_refused(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    other = fx.build(tmp_path / "other", extra_env="EXTRA_TOKEN=" + cfx.fake_value("x") + "\n")
+    os.replace(other.store, setup.store)
+    os.replace(other.key, setup.key)
+    run = setup.audit([_session(setup, tmp_path / "s.jsonl")])
+    _error(run, setup, str(setup.store), str(setup.report), "same")
+
+
+def test_an_unsupported_fingerprint_version_is_refused(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    _rewrite_json(setup.store, lambda d: d["records"][0].update(fingerprint_v=2))
+    _error(setup.audit([_session(setup, tmp_path / "s.jsonl")]), setup, "fingerprint_v 2")
+
+
+@pytest.mark.parametrize("text", ["not hex at all", "ab" * 16, ""])
+def test_a_key_that_is_not_64_hex_characters_is_refused(tmp_path: Path, text: str) -> None:
+    setup = fx.build(tmp_path)
+    bad = tmp_path / "bad.key"
+    bad.write_text(text)
+    _error(setup.audit([_session(setup, tmp_path / "s.jsonl")], key=bad), setup, str(bad))
+
+
+def test_a_missing_input_is_refused_and_the_key_is_never_created(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    missing = tmp_path / "no.key"
+    _error(setup.audit([_session(setup, tmp_path / "s.jsonl")], key=missing), setup, str(missing))
+    assert not missing.exists()
+    _error(setup.audit([tmp_path / "nothing.jsonl"]), setup, "nothing.jsonl")
+
+
+def test_a_report_that_is_not_an_inventory_report_is_refused(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    setup.report.write_text(json.dumps({"schema": "canary-report/1"}))
+    _error(setup.audit([_session(setup, tmp_path / "s.jsonl")]), setup, "weir-inventory/1")
+
+
+def test_paths_are_required(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    assert setup.audit([]).exit_code == 2
+
+
+# --- credentials the audit can and cannot check --------------------------------
+
+
+def test_a_credential_without_a_fingerprint_is_not_checkable_never_not_found(
+    tmp_path: Path,
+) -> None:
+    setup = fx.build(tmp_path, bashrc="export VAULT_TOKEN=$(pass show vault)\n")
+    run = setup.audit([_session(setup, tmp_path / "s.jsonl")], as_json=False)
+    report = setup.audit([_session(setup, tmp_path / "s.jsonl")]).report
+    row = fx.credential(report, setup.ids["VAULT_TOKEN"])
+    assert (row["state"], row["value_state"]) == ("not_checkable", "dynamic")
+    assert report["coverage"]["not_checkable"] == 1  # type: ignore[index]
+    assert "not checkable: VAULT_TOKEN (~/.bashrc) dynamic" in run.lines
+    assert run.exit_code == 0
+
+
+def test_credentials_that_share_a_value_are_each_found(tmp_path: Path) -> None:
+    twin = cfx.fake_value("audit-acme")
+    setup = fx.build(tmp_path, extra_env=f"TWIN_TOKEN={twin}\n")
+    assert twin == setup.values[fx.ACME]
+    path = _session(setup, tmp_path / "s.jsonl", f"token {twin}\n")
+    report = setup.audit([path]).report
+    for name in (fx.ACME, "TWIN_TOKEN"):
+        assert fx.credential(report, setup.ids[name])["state"] == "in_context"
+        assert len(fx.hits(report, setup.ids[name])) == 1
+
+
+# --- Claude Code classification (docs/audit.md, "Claude Code session files") --
+
+
+def _one_record(setup: fx.Setup, tmp_path: Path, record: dict[str, object]) -> fx.Run:
+    session = fx.Session()
+    session.prompt("hello")
+    session.record({"sessionId": fx.SESSION_ID, **record})
+    return setup.audit([session.write(tmp_path / "s.jsonl")])
+
+
+def _only_hit(run: fx.Run, setup: fx.Setup, name: str = fx.ACME) -> dict[str, object]:
+    (hit,) = fx.hits(run.report, setup.ids[name])
+    return hit
+
+
+@pytest.mark.parametrize(
+    ("record", "kind", "location"),
+    [
+        (
+            {"type": "attachment", "attachment": {"type": "file", "filename": "x.env"},
+             "rendered": [{"content": "<file>{v}</file>"}]},
+            "context", "rendered[0].content",
+        ),
+        (
+            {"type": "attachment", "attachment": {"type": "file", "content": "{v}"},
+             "rendered": [{"content": "elided"}]},
+            "stored", "attachment.content",
+        ),
+        (
+            {"type": "attachment", "attachment": {"type": "session_context", "context": "{v}"}},
+            "unknown", "attachment.context",
+        ),
+        ({"type": "summary", "summary": "the token is {v}"}, "context", "summary"),
+        ({"type": "summary", "leafUuid": "{v}"}, "stored", "leafUuid"),
+        ({"type": "last-prompt", "lastPrompt": "use {v}"}, "stored", "lastPrompt"),
+        ({"type": "queue-operation", "content": "use {v}"}, "stored", "content"),
+        (
+            {"type": "user", "message": {"role": "user", "content": "x"},
+             "toolUseResult": {"stdout": "{v}"}},
+            "stored", "toolUseResult.stdout",
+        ),
+        (
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "maybe {v}"}]}},
+            "context", "message.content[0].thinking",
+        ),
+        (
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "future_block", "data": "{v}"}]}},
+            "unknown", "message.content[0].data",
+        ),
+        (
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "server_tool_use", "id": "srv_1", "name": "web_fetch",
+                 "input": {"url": "https://api.invalid/?k={v}"}}]}},
+            "tool_call", "message.content[0].input.url",
+        ),
+        (
+            {"type": "assistant", "message": {"role": "assistant", "model": "{v}",
+                                              "content": "x"}},
+            "stored", "message.model",
+        ),
+        ({"type": "system", "content": "hook said {v}"}, "unknown", "content"),
+    ],
+)
+def test_claude_code_records_are_classified_by_type_and_location(
+    tmp_path: Path, record: dict[str, object], kind: str, location: str
+) -> None:
+    setup = fx.build(tmp_path)
+    filled = json.loads(json.dumps(record).replace("{v}", setup.values[fx.ACME]))
+    run = _one_record(setup, tmp_path, filled)
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["location"], hit["line"]) == (kind, location, 2)
+    assert run.exit_code == {"context": 1, "tool_call": 1, "unknown": 3, "stored": 0}[kind]
+    state = {"context": "in_context", "tool_call": "in_tool_call"}.get(kind, kind)
+    assert fx.credential(run.report, setup.ids[fx.ACME])["state"] == state
+
+
+def test_a_tool_result_names_the_tool_of_its_tool_use(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    session = fx.Session()
+    session.tool_use("Grep", {"pattern": "TOKEN"}, "toolu_a")
+    session.tool_use("Read", {"file_path": "/fake/.env"}, "toolu_b")
+    session.tool_result("toolu_b", f"{fx.ACME}={setup.values[fx.ACME]}")
+    session.tool_result("toolu_none", f"again {setup.values[fx.GH]}")
+    report = setup.audit([session.write(tmp_path / "s.jsonl")]).report
+    assert _only_hit(fx.Run(1, json.dumps(report), ""), setup)["tool"] == "Read"
+    assert fx.hits(report, setup.ids[fx.GH])[0]["tool"] is None
+
+
+def test_a_session_directory_is_read_with_its_subagents_and_tool_results(
+    tmp_path: Path,
+) -> None:
+    setup = fx.build(tmp_path)
+    project = tmp_path / "projects" / "-fake-home-work-proj"
+    _session(setup, project / f"{fx.SESSION_ID}.jsonl")
+    sub = fx.Session()
+    sub_line, _ = sub.tool_result("toolu_9", f"token {setup.values[fx.GH]}")
+    sub_path = sub.write(project / fx.SESSION_ID / "subagents" / "agent-1.jsonl")
+    spill = project / fx.SESSION_ID / "tool-results" / "toolu_01.txt"
+    spill.parent.mkdir(parents=True)
+    cfx.write(spill, f"line one\n{fx.ACME}={setup.values[fx.ACME]}\n")
+    os.symlink(spill, project / "linked.jsonl")
+
+    run = setup.audit([tmp_path / "projects"])
+
+    report = run.report
+    formats = {f["file"]: (f["format"], f["not_scanned"]) for f in report["files"]}  # type: ignore[union-attr,index]
+    assert formats == {
+        str(project / f"{fx.SESSION_ID}.jsonl"): ("claude-code", None),
+        str(sub_path): ("claude-code", None),
+        str(spill): ("claude-code-tool-results", None),
+        str(project / "linked.jsonl"): (None, "symlink"),
+    }
+    assert _only_hit(run, setup, fx.GH)["file"] == str(sub_path)
+    assert _only_hit(run, setup, fx.GH)["line"] == sub_line
+    spilled = _only_hit(run, setup)
+    assert (spilled["kind"], spilled["file"], spilled["line"]) == ("stored", str(spill), 2)
+    assert ("not_scanned", str(project / "linked.jsonl")) in [
+        (u["reason"], u["subject"]) for u in report["unknown"]  # type: ignore[union-attr,index]
+    ]
+    assert run.exit_code == 1
+
+
+# --- OTLP classification (docs/audit.md, "OTLP telemetry") -------------------
+
+
+def test_otlp_outside_the_genai_attributes_is_unknown(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    span = cfx.span("GET", attributes=[cfx.kv("http.request.header.authorization",
+                                                f"Bearer {setup.values[fx.ACME]}")])
+    run = setup.audit([fx.write_otlp(tmp_path / "otlp.jsonl", span)])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["location"]) == (
+        "unknown", "attributes.http.request.header.authorization",
+    )
+    assert run.exit_code == 3
+
+
+def test_otlp_input_messages_and_a_bytes_value_are_found(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    messages = json.dumps([{"role": "user", "parts": [
+        {"type": "text", "content": f"key {setup.values[fx.ACME]}"}]}])
+    raw = base64.b64encode(f"gh={setup.values[fx.GH]}".encode()).decode()
+    span = cfx.span("chat m", attributes=[
+        cfx.kv("gen_ai.input.messages", messages),
+        {"key": "gen_ai.tool.call.result", "value": {"bytesValue": raw}},
+    ])
+    run = setup.audit([fx.write_otlp(tmp_path / "otlp.jsonl", span)])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["location"]) == (
+        "context", "attributes.gen_ai.input.messages[0].parts[0].content",
+    )
+    gh = _only_hit(run, setup, fx.GH)
+    assert (gh["kind"], gh["location"], gh["form"]) == (
+        "context", "attributes.gen_ai.tool.call.result", "raw",
+    )
+
+
+def test_a_pretty_printed_otlp_file_is_one_record(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    request = json.loads(cfx.traces(fx.tool_span("Bash", "{}", setup.values[fx.ACME])))
+    path = tmp_path / "otlp.json"
+    path.write_text(json.dumps(request, indent=2))
+    run = setup.audit([path])
+    (row,) = run.report["files"]  # type: ignore[misc]
+    assert (row["format"], row["records"], row["unparsed_lines"]) == ("otlp", 1, 0)
+    assert (_only_hit(run, setup)["kind"], _only_hit(run, setup)["line"]) == ("context", 1)
+
+
+# --- candidates (docs/audit.md, "Candidates") --------------------------------
+
+
+def _found_in(setup: fx.Setup, tmp_path: Path, text: str, name: str) -> list[str]:
+    path = _session(setup, tmp_path / "s.jsonl", text)
+    return [h["form"] for h in fx.hits(setup.audit([path]).report, setup.ids[name])]  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "     3→{v}\n     4→next",  # Read tool line numbers
+        "     3\t{v}",
+        'export PLAIN_SECRET="{v}"',
+        "PLAIN_SECRET: '{v}'",
+        "value=`{v}`",
+        "said {v} then",
+        "({v})",
+        "{v}.",
+    ],
+)
+def test_a_value_holding_separators_is_found_by_the_line_and_word_rules(
+    tmp_path: Path, template: str
+) -> None:
+    setup = fx.build(tmp_path)
+    text = template.replace("{v}", setup.values[fx.SPECIAL])
+    assert _found_in(setup, tmp_path, text, fx.SPECIAL) == ["raw"]
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["https://u:{v}@db.invalid/x", "a,{v};b", "k={v}&n=1", "[{v}]", "--token={v}", "{v}\\n"],
+)
+def test_a_plain_value_is_found_between_cut_points(tmp_path: Path, template: str) -> None:
+    setup = fx.build(tmp_path)
+    text = template.replace("{v}", setup.values[fx.ACME])
+    assert _found_in(setup, tmp_path, text, fx.ACME) == ["raw"]
+
+
+@pytest.mark.parametrize("template", ["x{v}", "{v}9", "-{v}", "{v}_"])
+def test_a_value_glued_to_a_word_character_is_not_claimed(tmp_path: Path, template: str) -> None:
+    """docs/audit.md, "What the audit does not claim"."""
+    setup = fx.build(tmp_path)
+    text = template.replace("{v}", setup.values[fx.ACME])
+    assert _found_in(setup, tmp_path, text, fx.ACME) == []
+
+
+def test_a_pem_private_key_is_found_whole(tmp_path: Path) -> None:
+    body = "\n".join(cfx.fake_value(f"audit-pem-{i}", 64) for i in range(3))
+    pem = f"-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----"
+    setup = fx.build(tmp_path, extra_env=f'DEPLOY_KEY="{pem}"\n')
+    assert _found_in(setup, tmp_path, f"$ cat key.pem\n{pem}\n$ ", "DEPLOY_KEY") == ["raw"]
+
+
+def test_a_long_base64_blob_is_searched_through_its_decoding(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    blob = base64.b64encode(
+        b"x" * 400 + f" {setup.values[fx.ACME]} ".encode() + b"y" * 400
+    ).decode()
+    assert _found_in(setup, tmp_path, f"data:{blob}", fx.ACME) == ["base64"]
+
+
+# --- the report ------------------------------------------------------------------
+
+
+def test_the_text_report_lays_out_hits_summaries_and_coverage(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    session = fx.Session()
+    line = session.tool_use("Bash", {"command": f"use {setup.values[fx.ACME]}"}, "toolu_01")
+    notes = tmp_path / "notes.log"
+    cfx.write(notes, "nothing here\n")
+    path = session.write(tmp_path / "s.jsonl")
+
+    run = setup.audit([path, notes], as_json=False)
+
+    acme = f"{fx.ACME} (launch env)"
+    assert run.lines[0] == (
+        f"TOOL_CALL {acme} file={path}:{line} record=assistant tool=\"Bash\" argument=command"
+        " at=message.content[0].input.command form=raw"
+    )
+    assert f"{acme}: in_tool_call (1 tool call, 0 context, 0 stored, 0 unknown)" in run.lines
+    assert f"not found: {fx.GH} (launch env)" in run.lines
+    assert f"not found: {fx.AWS_SECRET} (~/.aws/credentials default)" in run.lines
+    assert f"unknown: unrecognised_format {notes}" in run.lines
+    assert run.lines[-2].startswith(
+        f"coverage: {len(setup.values)} credentials ({len(setup.values)} checkable), 2 files"
+        " (1 claude-code, 1 unknown), 1 record (0 unrecognised), 0 unparsed lines,"
+        " 0 not scanned, "
+    )
+    assert run.lines[-1] == "result: exposed"
+
+
+def test_the_report_depends_on_where_values_are_not_what_they_are(tmp_path: Path) -> None:
+    outputs: list[tuple[str, str]] = []
+    for seed in ("", "-second"):
+        root = tmp_path / f"run{seed or '-first'}"
+        setup = fx.build(root, seed=seed)
+        session = fx.Session()
+        session.prompt(f"token {setup.values[fx.GH]}")
+        session.tool_use("Bash", {"command": f"x {setup.values[fx.ACME]}"}, "toolu_01")
+        encoded = base64.b64encode(setup.values[fx.SPECIAL].encode()).decode()
+        session.tool_result("toolu_01", encoded)
+        path = session.write(tmp_path / "shared" / "s.jsonl")
+        text = setup.audit([path], as_json=False).stdout
+        report = setup.audit([path]).stdout
+        outputs.append((text, report))
+    assert outputs[0] == outputs[1]

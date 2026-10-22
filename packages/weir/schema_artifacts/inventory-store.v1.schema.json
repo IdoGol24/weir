@@ -3,6 +3,9 @@
     "Store": {
       "additionalProperties": false,
       "properties": {
+        "key_check": {
+          "type": "string"
+        },
         "records": {
           "items": {
             "$ref": "#/$defs/StoredRecord"
@@ -15,6 +18,7 @@
       },
       "required": [
         "schema",
+        "key_check",
         "records"
       ],
       "title": "Store",

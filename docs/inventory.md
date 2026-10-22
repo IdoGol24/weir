@@ -337,11 +337,15 @@ A credential:
 
 ## The store (`weir-inventory-store/1`)
 
-`{"schema": "weir-inventory-store/1", "records": [...]}`, records sorted by
-`credential_id`, each `{credential_id, fingerprint, fingerprint_v, path,
-offsets}`. `path` is null for the process environment; `offsets` is empty
-when a value's position is unknown (a scanner result whose file moved, git
-history).
+`{"schema": "weir-inventory-store/1", "key_check": "...", "records": [...]}`,
+records sorted by `credential_id`, each `{credential_id, fingerprint,
+fingerprint_v, path, offsets}`. `path` is null for the process environment;
+`offsets` is empty when a value's position is unknown (a scanner result
+whose file moved, git history). `key_check` is the lowercase hex
+HMAC-SHA256 of the ASCII bytes `weir-inventory-store key check` under the
+key: derived from the key alone, it tells a reader such as
+[`weir audit`](audit.md) whether it holds the key the store was written
+under, since any other key would match nothing.
 
 ## Versioning
 

@@ -120,7 +120,7 @@ fingerprinted, or **decoded candidates** directly:
 | `json` | when the string holds a `\`: the candidates of the string *unescaped*, and, for each JSON string literal in it (a `"` to the next `"` not escaped by a `\`) whose content holds a `\`, the content unescaped as a candidate whole and its candidates. *Unescaped*: each JSON escape (`\"` `\\` `\/` `\b` `\f` `\n` `\r` `\t` `\uXXXX` in either letter case, a surrogate pair as one character) replaced by its character, any other `\` left as it is |
 | `json2` | `json` applied to each text `json` unescaped |
 | `url` | each candidate of the string itself that holds a `%` followed by two hex digits, or a `+`: every such `%XX` replaced by its byte, in two variants, `+` kept and `+` read as a space, the bytes read as UTF-8 |
-| `base64` | the candidates of each run of 8 or more characters of `A-Za-z0-9+/` (and up to two `=` after it), decoded from its first, second, third and fourth character on, each time up to the last whole group of 4, read as UTF-8 |
+| `base64` | the candidates of each run of 8 or more characters of `A-Za-z0-9+/` (and up to two `=` after it), decoded from its first, second, third and fourth character on (a last group of 2 or 3 characters padded, one of 1 dropped), read as UTF-8 |
 | `base64url` | the same for each run of 8 or more characters of `A-Za-z0-9_-` that holds a `-` or a `_` |
 | `hex` | the candidates of each run of 16 or more hex digits, decoded from its first and from its second digit on, up to the last whole pair, read as UTF-8 |
 
@@ -148,11 +148,15 @@ From a text the audit takes these **candidates**:
    two backticks;
 5. each PEM private key: `-----BEGIN ... PRIVATE KEY-----` through the next
    `-----END ... PRIVATE KEY-----`;
-6. each **token** and its **sub-spans**. A token is a maximal run of
+6. each **word**, a maximal run of characters with no whitespace, control
+   or undecodable character in it: whole, without the separators (below)
+   at its two ends, and without every character other than a word
+   character or `-` at its two ends;
+7. each **token** and its **sub-spans**. A token is a maximal run of
    characters none of which is a **separator**: whitespace, a control
    character, an undecodable character, or one of ``" ' ` < > ( ) [ ] { } ,
-   ; | \``. In a token, every character other than a letter, a digit, `-`
-   or `_` is a **break**; the token's two ends and the positions just
+   ; | \``. In a token, every character other than a word character (a
+   Unicode letter or digit, or `_`) or `-` is a **break**; the token's two ends and the positions just
    before and just after each break are its **cut points**. A sub-span
    runs from a cut point to any of the 64 cut points after it. A token of
    256 or more characters that are all base64 or all hex characters is a
@@ -313,10 +317,12 @@ result: exposed
 
 Precisely:
 
-- a hit: `<KIND> <credential> file=<file>:<line> format=<format>` for an
-  `unknown` file and `record=<type>` for a `claude-code` record, then
-  `signal=<signal>` and `span=<quoted name>`, `log=<index>` or
-  `metric=<quoted name>` for an OTLP record, then `tool=<quoted name>` and
+- a hit: `<KIND> <credential> file=<file>:<line>`, then `record=<type>` for
+  a `claude-code` record, or `signal=<signal>` and `span=<quoted name>`,
+  `log=<index>` or `metric=<quoted name>` for an OTLP record, or
+  `format=<format>` for a text line (an `unknown` or
+  `claude-code-tool-results` file, or an unparsed line), then
+  `tool=<quoted name>` and
   `argument=<location>` when there is one, then `at=<location>` when there
   is one, then `form=<form>`; `<KIND>` is `TOOL_CALL`, `CONTEXT`, `UNKNOWN`
   or `STORED`; quoted names use JSON string quoting; `<line>` is the line of
@@ -349,7 +355,7 @@ drift-tested: [`packages/weir/schema_artifacts/audit.v1.schema.json`](../package
 | `exit_code` | integer | `0`, `1` or `3` |
 | `credentials` | array | one per credential in the report (below), sorted by name, display, scope and id |
 | `hits` | array | one per hit and credential (below) |
-| `files` | array | `{file, format, records, unrecognised_records, unparsed_lines, strings, bytes, not_scanned}`, sorted by file; `not_scanned` is `compressed`, `symlink` or null |
+| `files` | array | `{file, format, records, unrecognised_records, unparsed_lines, strings, bytes, not_scanned}`, sorted by file; `not_scanned` is `compressed`, `symlink` or null, and `format` is null for a file not scanned |
 | `unknown` | array | `{reason, subject}` |
 | `coverage` | object | `credentials`, `checkable`, `not_checkable`, `files`, `claude_code_files`, `claude_code_tool_results_files`, `otlp_files`, `unknown_files`, `not_scanned`, `records`, `unrecognised_records`, `unparsed_lines`, `strings`, `bytes` |
 
@@ -385,10 +391,10 @@ A hit:
 A `clean` result is evidence about the files given, the checkable
 credentials and the matching rules above. The audit does not find:
 
-- a value that is not a whole candidate: a value glued to a letter, a digit,
-  `-` or `_` on a side that is not a cut point, a truncated, split, masked
-  or line-wrapped value, or a value holding a separator that no line,
-  assignment, quoted run or PEM rule takes whole;
+- a value that is not a whole candidate: a value glued to a word character
+  or `-` on a side that is not a cut point, a truncated, split, masked or
+  line-wrapped value, or a value holding a separator that no line,
+  assignment, quoted run, PEM or word rule takes whole;
 - a value hashed, encrypted, compressed, or encoded in a way not listed
   (URL-encoded base64, UTF-16, HTML entities);
 - a credential whose value changed since the inventory ran (its
