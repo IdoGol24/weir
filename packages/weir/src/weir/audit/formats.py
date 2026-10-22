@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from weir.audit._types import Format, Kind
+from weir.canary import Signal
 from weir.canary.walk import Json, Record, Segment, walk_request
 
 Path_ = tuple[Segment, ...]
@@ -36,6 +37,8 @@ class Site:
     # A Claude Code record's `type` (any JSON value, printed only if a string)
     record_type: str | None = None
     otlp: Record | None = None
+    # The OTLP signal a string sits under, a resource or scope string included
+    signal: Signal | None = None
 
 
 @dataclass
@@ -287,20 +290,31 @@ def otlp_sites(request: dict[str, Json]) -> list[Site]:
     out: list[Site] = []
     for site in walk.sites:
         string = _text(site.data)
+        record, signal = site.record, site.signal
         index = _attribute_index(site.location) if site.record is not None else None
         if index is None:
-            out.append(Site(string, site.location, _UNKNOWN, otlp=site.record))
+            out.append(Site(string, site.location, _UNKNOWN, otlp=record, signal=signal))
             continue
         attribute = str(site.location[index])
         tool = tools.get(site.record) if site.record is not None else None
         sub = site.location[index + 1 :]
         doc = _json_document(string) if not sub else None
         if doc is None:
-            out.append(Site(string, site.location, _otlp_place(attribute, None, sub, tool),
-                            otlp=site.record))
+            place = _otlp_place(attribute, None, sub, tool)
+            out.append(Site(string, site.location, place, otlp=record, signal=signal))
             continue
         for inner, path in strings(doc):
-            out.append(Site(inner, (*site.location, *path),
-                            _otlp_place(attribute, doc, path, tool), otlp=site.record))
+            place = _otlp_place(attribute, doc, path, tool)
+            arguments = _json_document(inner) if place.kind is Kind.TOOL_CALL else None
+            if arguments is None or attribute != _OUTPUT:
+                out.append(Site(inner, (*site.location, *path), place, otlp=record, signal=signal))
+                continue
+            # A tool_call part's arguments written as a JSON string: walk it,
+            # so `argument` is the location within the arguments.
+            for leaf, within in strings(arguments):
+                argument = (*path[4:], *within)
+                deeper = Place(Kind.TOOL_CALL, tool=place.tool, argument=argument)
+                location = (*site.location, *path, *within)
+                out.append(Site(leaf, location, deeper, otlp=record, signal=signal))
     return out
 

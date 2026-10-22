@@ -398,8 +398,7 @@ def test_the_text_report_lays_out_hits_summaries_and_coverage(tmp_path: Path) ->
     assert f"unknown: unrecognised_format {notes}" in run.lines
     assert run.lines[-2].startswith(
         f"coverage: {len(setup.values)} credentials ({len(setup.values)} checkable), 2 files"
-        " (1 claude-code, 1 unknown), 1 record (0 unrecognised), 0 unparsed lines,"
-        " 0 not scanned, "
+        " (1 claude-code, 1 unknown), 1 record (0 unrecognised), 0 unparsed lines, "
     )
     assert run.lines[-1] == "result: exposed"
 
@@ -432,3 +431,43 @@ def test_a_long_file_path_is_printed_in_full(tmp_path: Path) -> None:
     assert len(str(path)) > 200
     run = setup.audit([path], as_json=False)
     assert run.lines[0].split(" file=")[1].startswith(f"{path}:{line} ")
+
+
+def test_a_file_not_scanned_is_its_own_group_in_the_coverage_line(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    packed = tmp_path / "old.jsonl.gz"
+    packed.write_bytes(b"\x1f\x8b" + b"\x00" * 16)
+    session = _session(setup, tmp_path / "s.jsonl")
+    run = setup.audit([session, packed], as_json=False)
+    assert f"not scanned: {packed} (compressed)" in run.lines
+    assert " 2 files (1 claude-code, 1 not scanned), " in run.lines[-2]
+    assert run.exit_code == 3
+
+
+def test_an_otlp_resource_string_names_its_signal(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    request = json.loads(cfx.traces(
+        cfx.span("op"), resource=[cfx.kv("service.name", setup.values[fx.ACME])]
+    ))
+    path = tmp_path / "otlp.jsonl"
+    cfx.write(path, json.dumps(request) + "\n")
+    run = setup.audit([path])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["signal"], hit["span"], hit["location"]) == (
+        "unknown", "traces", None, "resource.attributes.service.name",
+    )
+
+
+def test_tool_call_part_arguments_written_as_a_json_string_are_walked(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    arguments = json.dumps({"headers": {"authorization": f"Bearer {setup.values[fx.ACME]}"}})
+    messages = [{"role": "assistant", "parts": [
+        {"type": "tool_call", "id": "call_1", "name": "http_get", "arguments": arguments}]}]
+    run = setup.audit([fx.write_otlp(tmp_path / "otlp.jsonl", fx.chat_span(messages))])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["tool"], hit["argument"], hit["form"]) == (
+        "tool_call", "http_get", "headers.authorization", "raw",
+    )
+    assert hit["location"] == (
+        "attributes.gen_ai.output.messages[0].parts[0].arguments.headers.authorization"
+    )

@@ -181,7 +181,7 @@ def _hit(found: _Found, credential: str, shown: _Printer) -> Hit:
         line=found.line,
         format=found.format,
         record=None if site.record_type is None else shown(site.record_type),
-        signal=None if record is None else record.signal,
+        signal=site.signal,
         span=None if record is None or record.span is None else shown(record.span),
         span_id=None if record is None else record.span_id,
         log_record=None if record is None else record.log_record,
