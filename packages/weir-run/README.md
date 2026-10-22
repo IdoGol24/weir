@@ -20,9 +20,9 @@ This page is for the maintainer who adds the check to a project's CI.
 ```text
 weir-run run --config canary.toml
   1. plant   one fresh fake value per placement -> ledger (mode 0600, private temp dir)
-  2. mock    127.0.0.1 only: OpenAI-compatible model API, OAuth endpoints,
-             OTLP/HTTP receiver, your project's own APIs; refuses every proxied
-             request to another host
+  2. mock    127.0.0.1 only: OpenAI-compatible and Anthropic Messages model API,
+             OAuth endpoints, OTLP/HTTP receiver, your project's own APIs;
+             refuses every proxied request to another host
   3. flows   each under an empty environment plus an allowlist, URLs pointed at the mock,
              in a network namespace whose only network is loopback (Linux)
   4. capture OTLP/JSON lines + other telemetry bodies + each flow's stdout and stderr

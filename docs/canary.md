@@ -427,7 +427,7 @@ first line is the header; every other line is one request:
 
 ```json
 {"schema": "canary-requests/1"}
-{"outcome": "served", "endpoint": "model", "host": "127.0.0.1", "port": 41817, "method": "POST", "path": "/v1/chat/completions", "query": "", "headers": [["Host", "127.0.0.1:41817"], ["Authorization", "Bearer <fake value>"]], "body": "<base64>", "unread": null, "credential_fields": [["header", "authorization"], ["header", "proxy-authorization"]]}
+{"outcome": "served", "endpoint": "model", "host": "127.0.0.1", "port": 41817, "method": "POST", "path": "/v1/chat/completions", "query": "", "headers": [["Host", "127.0.0.1:41817"], ["Authorization", "Bearer <fake value>"]], "body": "<base64>", "unread": null, "credential_fields": [["header", "authorization"], ["header", "proxy-authorization"], ["header", "x-api-key"]]}
 {"outcome": "refused", "endpoint": null, "host": "collector.example", "port": 80, "method": "POST", "path": "http://collector.example/ingest", "query": "", "headers": [["Host", "collector.example"]], "body": "<base64>", "unread": null, "credential_fields": [["header", "authorization"], ["header", "proxy-authorization"]]}
 {"outcome": "connect", "endpoint": null, "host": "api.example", "port": 443, "method": "CONNECT", "path": null, "query": null, "headers": [["Host", "api.example:443"]], "body": null, "unread": null, "credential_fields": [["header", "authorization"], ["header", "proxy-authorization"]]}
 ```

@@ -213,7 +213,8 @@ class Mock:
         fields of the endpoint that answered it or, for a refused request
         or a CONNECT, of the endpoints whose placements name its host as
         their provider host. An endpoint's fields are those it declares,
-        and on the OAuth endpoints their form fields."""
+        on the model API also `x-api-key`, and on the OAuth endpoints their
+        form fields."""
         fields = [CredentialField("header", name) for name in ALWAYS_INSPECTED]
         if outcome == "served":
             endpoints = [] if endpoint is None else [endpoint]
