@@ -36,7 +36,7 @@ DirectProtocol = Literal["tcp", "udp", "dns"]
 # A direct record's target: an address and port, or a DNS name. The runner
 # writes only these characters, so a target can neither break a line nor
 # quote anything; the judge still prints it under the capture-text rule.
-TARGET_PATTERN = r"^[A-Za-z0-9._:\[\]_-]{1,260}$"
+TARGET_PATTERN = r"^[A-Za-z0-9._:\[\]-]{1,260}$"
 Target = Annotated[str, msgspec.Meta(min_length=1, max_length=260, pattern=TARGET_PATTERN)]
 
 

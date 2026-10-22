@@ -29,7 +29,7 @@ DIRECT_PROTOCOLS = ("tcp", "udp", "dns")
 MIN_VALUE_LENGTH = 16
 
 _ID = re.compile(r"[A-Za-z0-9._:#/-]{1,128}")
-_TARGET = re.compile(r"[A-Za-z0-9._:\[\]_-]{1,260}")
+_TARGET = re.compile(r"[A-Za-z0-9._:\[\]-]{1,260}")
 
 
 class LedgerError(Exception):

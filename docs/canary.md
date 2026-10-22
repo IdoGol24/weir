@@ -269,7 +269,7 @@ one line each.
 | | `required` | boolean | optional, default `false`: the run is incomplete unless `isolated` |
 | `direct` | `flow` | string | the id of the flow that made the attempt, defined by a `flow` record on any line |
 | | `protocol` | string | `tcp` (a connection opened to an address), `udp` (a datagram sent to an address) or `dns` (a name looked up) |
-| | `target` | string | `<address>:<port>` (an IPv6 address in brackets) for `tcp` and `udp`, the name asked for for `dns`; 1 to 260 characters from `[A-Za-z0-9._:[]_-]` |
+| | `target` | string | `<address>:<port>` (an IPv6 address in brackets) for `tcp` and `udp`, the name asked for for `dns`; 1 to 260 characters from `[A-Za-z0-9._:[]-]` |
 | | `attempts` | integer | how many times, at least 1 |
 
 A ledger has at most one `network` record. Without one, nothing says the
