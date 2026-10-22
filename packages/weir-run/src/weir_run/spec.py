@@ -48,6 +48,7 @@ RUNNER_VARIABLES = frozenset(
         "CANARY_MOCK_URL",
         "OPENAI_BASE_URL",
         "OPENAI_API_BASE",
+        "ANTHROPIC_BASE_URL",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_PROTOCOL",
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
@@ -87,6 +88,13 @@ class CredentialField:
         return cls(location, name.lower() if location == "header" else name)
 
 
+# The credential fields a built-in endpoint always declares, before any the
+# config adds: the Anthropic Messages API sends its key in `x-api-key`.
+BUILTIN_FIELDS: dict[str, tuple[CredentialField, ...]] = {
+    "model": (CredentialField("header", "x-api-key"),),
+}
+
+
 @dataclass(frozen=True)
 class EndpointSpec:
     """A mocked API of the program's own, served at `{mock}/ep/<id>/...`."""
@@ -113,7 +121,9 @@ class MockSpec:
         for ep in self.endpoints:
             if ep.id == endpoint:
                 return ep.credential_fields
-        return self.credential_fields.get(endpoint, ())
+        builtin = BUILTIN_FIELDS.get(endpoint, ())
+        added = self.credential_fields.get(endpoint, ())
+        return builtin + tuple(f for f in added if f not in builtin)
 
 
 @dataclass(frozen=True)

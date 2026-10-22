@@ -3,6 +3,20 @@
 ## [Unreleased]
 
 ### Added
+- **weir-run: an Anthropic Messages API mock.** The mock serves
+  `POST /v1/messages` beside the OpenAI-compatible APIs, plain and
+  streaming (`message_start`, `content_block_start`, `content_block_delta`,
+  `content_block_stop`, `message_delta`, `message_stop`), on the same
+  script: with tools offered, turn one answers with a `tool_use` block for
+  every tool, and once the next user message carries `tool_result` blocks
+  it answers `model_reply`. Flows get `ANTHROPIC_BASE_URL` pointing at the
+  mock, the variable the Anthropic SDKs read their base URL from; a flow's
+  `env` may no longer set it. The model
+  API now always declares the `x-api-key` header as a credential field: a
+  placement with `provider = "model"` sent there is exercised, the same
+  value in a prompt or a tool result is a leak to `model`, and any other
+  value in `x-api-key` is `unexpected.model.x-api-key` and makes the run
+  incomplete.
 - **weir-run: flows run where the only network is loopback.** On Linux,
   `weir-run run` and the pytest plugin run the mock and every flow in an
   unprivileged user and network namespace with no route out, so a client

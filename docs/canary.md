@@ -175,6 +175,8 @@ receives:
 - on every mocked endpoint, the credential fields that endpoint declares
   in the runner's configuration: one or more headers, query parameters or
   body fields;
+- on the mock's model API, the `x-api-key` header, where the Anthropic
+  Messages API carries its key;
 - on the endpoints the runner's configuration declares as the mock's OAuth
   endpoints only, the form fields `client_secret`, `client_assertion`,
   `assertion`, `code`, `device_code`, `refresh_token`, `subject_token`,
@@ -442,7 +444,7 @@ first line is the header; every other line is one request:
 | `headers` | array | every header as a `[name, value]` pair of strings, in the order received |
 | `body` | string or null | the body after its `Content-Encoding` is removed, base64-encoded (standard alphabet, padded); empty when there is no body. Null for a `connect`, for an OTLP export (its content is the telemetry capture) and for a declared endpoint that keeps its bodies as swept capture files: a body judged elsewhere is not judged twice |
 | `unread` | string or null | why the body could not be judged in full: `encoding` (a `Content-Encoding` the mock cannot remove; `body` holds the bytes as received), `too_large` (over the mock's 64 MiB limit; `body` is null) or `error` (the mock failed while reading or answering the request; `body` is null); null otherwise |
-| `credential_fields` | array | the request's [credential fields](#runtime-values), each a `[location, name]` pair: `location` is `header`, `query` or `body`, and a header name is matched without regard to letter case. The `Authorization` and `Proxy-Authorization` headers of every request, then the fields of its endpoints: for a `served` request the endpoint that answered it, and for a `refused` or `connect` request the providers of every placement whose provider host is its host (matched without regard to letter case), since those endpoints stand in for that host. An endpoint's fields are those it declares in the runner's configuration, and on the mock's OAuth endpoints also their form fields. A `body` field is a form field or a member of a top-level JSON object, everything under the member included |
+| `credential_fields` | array | the request's [credential fields](#runtime-values), each a `[location, name]` pair: `location` is `header`, `query` or `body`, and a header name is matched without regard to letter case. The `Authorization` and `Proxy-Authorization` headers of every request, then the fields of its endpoints: for a `served` request the endpoint that answered it, and for a `refused` or `connect` request the providers of every placement whose provider host is its host (matched without regard to letter case), since those endpoints stand in for that host. An endpoint's fields are those it declares in the runner's configuration, on the mock's model API also the `x-api-key` header, and on the mock's OAuth endpoints also their form fields. A `body` field is a form field or a member of a top-level JSON object, everything under the member included |
 
 ### Attribution
 

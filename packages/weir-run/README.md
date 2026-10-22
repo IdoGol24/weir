@@ -55,8 +55,9 @@ exit 0 clean and complete | 1 a canary leaked | 2 usage, input or runner error |
   and the tokens its OAuth endpoints issue. Never put a real credential in
   a config, a flow's `env` or anywhere a flow reads it.
 - Never point a flow at a real provider. Every API a flow calls must be the
-  mock: the model API through `OPENAI_BASE_URL`, your project's own APIs
-  through `[[mock.endpoint]]`, OAuth through the mock's endpoints.
+  mock: the model API through `OPENAI_BASE_URL` or `ANTHROPIC_BASE_URL`,
+  your project's own APIs through `[[mock.endpoint]]`, OAuth through the
+  mock's endpoints.
 - The ledger and the capture are deleted when the run ends. Do not copy
   them anywhere, and never commit one: a provider-shaped canary in a public
   repository is reported to the provider as a leaked key. Only the
@@ -92,6 +93,7 @@ tool_calls = "each-offered-tool-once"   # or "none"
 
 [mock.credential_fields]          # extra credential fields of built-in endpoints
 model = ["header:api-key"]        # endpoints: model, oauth, otlp (otlp: header and query only)
+                                  # model always has header:x-api-key, the Anthropic key header
 
 [[mock.endpoint]]                 # one of your project's own APIs
 id = "search"                     # served at {mock}/ep/search/...
@@ -171,6 +173,7 @@ A flow starts from an empty environment, not the job's, and gets exactly:
 | `SYSTEMROOT`, `PATHEXT` | Windows only, from the runner |
 | `CANARY_MOCK_URL` | the mock's base URL, `http://127.0.0.1:<port>` |
 | `OPENAI_BASE_URL`, `OPENAI_API_BASE` | `<mock>/v1` |
+| `ANTHROPIC_BASE_URL` | `<mock>`: the Anthropic SDKs add `/v1/messages` themselves |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_{TRACES,LOGS,METRICS}_ENDPOINT` | the mock's receiver |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` and the per-signal ones | `http/protobuf` |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (both cases) | the mock, which refuses |
@@ -187,6 +190,7 @@ leftover child processes are stopped when the flow ends.
 | --- | --- |
 | `POST /v1/chat/completions` | Chat Completions, plain and streaming. With tools offered, turn one calls every tool once with a minimal schema-valid argument, so each tool's credentials are exercised; once tool results are in the conversation it answers `model_reply` |
 | `POST /v1/responses` | Responses, plain and streaming, same script |
+| `POST /v1/messages` | the Anthropic Messages API, plain and streaming (`message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`), same script: turn one answers with a `tool_use` block for every offered tool, and once a user message carries `tool_result` blocks it answers `model_reply`. The key goes in `x-api-key` |
 | `POST /v1/embeddings`, `GET /v1/models` | fixed answers |
 | `POST /v1/traces`, `/v1/logs`, `/v1/metrics` | the OTLP/HTTP receiver: protobuf or JSON, gzip or deflate |
 | `GET /oauth/authorize` | redirects with a fresh code |
@@ -226,7 +230,8 @@ every `[[mock.endpoint]]`.
 **Credential fields.** Before any of these handles a request, the mock
 inspects its credential fields: the whole `Authorization` and
 `Proxy-Authorization` headers on every mocked endpoint, each endpoint's
-declared fields,
+declared fields, the model API's `x-api-key` header (the Anthropic
+Messages API's key),
 and on the OAuth endpoints the form fields `client_secret`,
 `client_assertion`, `assertion`, `code`, `device_code`, `refresh_token`,
 `subject_token`, `actor_token` and `password`. A field holding a canary in
@@ -350,7 +355,8 @@ pytest option (see [Network isolation](#network-isolation)).
 
 - Placements: `env`, `code` and `mock-oauth` only. The other kinds in the
   contract (`tool-field`, `mcp`, `settings-file` and the rest) are reserved.
-- Model APIs: OpenAI-compatible only.
+- Model APIs: OpenAI-compatible, and the Anthropic Messages API's
+  `POST /v1/messages` only (no token counting, batches or files).
 - Network isolation is Linux only. Elsewhere, a client that ignores proxy
   settings and has a hard-coded host is not stopped by the runner: on a
   machine with network access it connects to that host directly. Run such

@@ -473,6 +473,7 @@ class _Handler(BaseHTTPRequestHandler):
         routes = {
             ("POST", "/v1/chat/completions"): model.chat,
             ("POST", "/v1/responses"): model.responses,
+            ("POST", "/v1/messages"): model.messages,
             ("POST", "/v1/embeddings"): model.embeddings,
         }
         handler = routes.get((method, path))
