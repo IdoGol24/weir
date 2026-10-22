@@ -156,12 +156,12 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-# docs/audit.md: the audit is a pure function of its input bytes, their
-# paths and `CLAUDE_CONFIG_DIR`. It reads the files it is given and nothing
-# else: no socket, no process, no clock, no
-# randomness (`secrets` included: it never makes a key), and none of the
-# trace pipeline. It reuses the canary judge's OTLP walk, file collection and
-# printing rule, and the inventory's record types and name rule.
+# docs/audit.md: the audit is a pure function of its inputs and flags. It
+# reads the files it is given and nothing else: no socket, no process, no
+# clock, no environment variable, no randomness (`secrets` included: it
+# never makes a key), and none of the trace pipeline. It reuses the canary
+# judge's OTLP walk, file collection and printing rule, and the inventory's
+# record types and name rule.
 name = "audit is pure: no network, process, clock, randomness or pipeline"
 type = "forbidden"
 source_modules = ["weir.audit"]

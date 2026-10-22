@@ -86,10 +86,11 @@ class Setup:
 
     def audit(
         self, paths: Sequence[Path | str], *, as_json: bool = True, key: Path | None = None,
+        extra: Sequence[str] = (),
     ) -> Run:
         args = [
             "audit", "--inventory", str(self.report), "--store", str(self.store),
-            "--key", str(key or self.key),
+            "--key", str(key or self.key), *extra,
         ]
         if as_json:
             args.append("--json")

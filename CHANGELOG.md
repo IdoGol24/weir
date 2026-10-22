@@ -17,6 +17,8 @@
   JSON, URL, base64, base64url, hex). An unrecognised file format, a line
   that is not a record, a file not scanned or a sighting whose place it
   cannot classify makes the result `unknown`, exit 3, never a false clean.
+  `--claude-config-dir PATH` names a Claude config directory other than
+  `~/.claude`; no environment variable changes the output.
   Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
   schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
 - **weir-scan: the inventory store carries a key check.**

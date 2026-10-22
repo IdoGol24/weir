@@ -24,14 +24,13 @@ inventory's key, and looks the fingerprint up in the store. A match is
 exact, so a hit is the credential itself, not a pattern guess.
 
 It runs offline: it opens no socket, starts no process, reads no clock and
-uses no randomness. It reads only the files it is given, and the same input
-bytes at the same paths, under the same `CLAUDE_CONFIG_DIR` (see
-[Files and formats](#files-and-formats)), always give the same output bytes.
+uses no randomness. It reads only the files it is given and no environment
+variable, and the same inputs and flags always give the same output bytes.
 
 ## Running it
 
 ```sh
-weir audit --inventory REPORT --store STORE --key KEY [--json] PATH...
+weir audit --inventory REPORT --store STORE --key KEY [--claude-config-dir PATH] [--json] PATH...
 ```
 
 | option | meaning |
@@ -40,6 +39,7 @@ weir audit --inventory REPORT --store STORE --key KEY [--json] PATH...
 | `--store` | **Required.** The `weir-inventory-store/1` fingerprint store from the same `weir inventory` run (`--store`). |
 | `--key` | **Required.** The fingerprint key that run used (`--key`, default `HOME/.weir/fingerprint.key`). The audit never creates a key: a new key would match nothing and read as a clean result. |
 | `PATH` | **One or more.** A session file, telemetry file or directory. A directory is read recursively in sorted path order. |
+| `--claude-config-dir` | Optional. A Claude config directory other than `~/.claude`: its `projects` directory counts like a `.claude/projects` directory (see [Files and formats](#files-and-formats)). Nothing else, an environment variable included, says where that directory is. |
 | `--json` | Print the `weir-audit/1` JSON report instead of the text report. |
 
 There is no default for any input, so a run never reads a real home by
@@ -87,7 +87,7 @@ report still prints the path as given:
 
 | format | recognised when | read as |
 | --- | --- | --- |
-| `claude-code` | a JSON Lines file whose parsed lines are JSON objects, at least one with `type` `user` or `assistant` and a string `sessionId`; or, with no such record, a JSON Lines file inside a Claude Code projects directory with at least one record, every record's `type` a bookkeeping type: `summary`, or a type the Claude Code table below makes `stored` at every location (`file-history-snapshot`, say). A Claude Code projects directory is a directory `projects` directly inside a directory named `.claude` (`~/.claude/projects/`), or the `projects` directory of the Claude config directory the environment variable `CLAUDE_CONFIG_DIR` names; any other directory named `projects` is not one. A `user` or `assistant` record without a string `sessionId`, or a record of any other type, makes such a file `unknown` | a Claude Code session file: the main transcript or a subagent's (`<session>/subagents/*.jsonl`), or a file of bookkeeping records beside them |
+| `claude-code` | a JSON Lines file whose parsed lines are JSON objects, at least one with `type` `user` or `assistant` and a string `sessionId`; or, with no such record, a JSON Lines file inside a Claude Code projects directory with at least one record, every record's `type` a bookkeeping type: `summary`, or a type the Claude Code table below makes `stored` at every location (`file-history-snapshot`, say). A Claude Code projects directory is a directory `projects` directly inside a directory named `.claude` (`~/.claude/projects/`), or the `projects` directory of a Claude config directory given with `--claude-config-dir`; any other directory named `projects` is not one. A `user` or `assistant` record without a string `sessionId`, or a record of any other type, makes such a file `unknown` | a Claude Code session file: the main transcript or a subagent's (`<session>/subagents/*.jsonl`), or a file of bookkeeping records beside them |
 | `claude-code-tool-results` | a file whose parent directory is named `tool-results` | a large tool output Claude Code saved beside a session (`<session>/tool-results/`): text |
 | `claude-code-memory` | a file named `CLAUDE.md`, or a `.md` file in a directory named `memory` two levels below a directory named `projects` (`projects/<project>/memory/*.md`, `MEMORY.md` included) | a file Claude Code loads into the agent's context: a `CLAUDE.md` or an auto-memory file. Text |
 | `otlp` | a JSON Lines file whose parsed lines are OTLP/JSON export requests (an object holding `resourceSpans`, `resourceLogs` or `resourceMetrics`), or, when no line is an export request, a whole file that is one such request (pretty-printed, say) | exported telemetry |

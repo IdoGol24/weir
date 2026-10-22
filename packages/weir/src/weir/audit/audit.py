@@ -3,15 +3,16 @@
 
 Reads the inventory's report, store and key, then every file given, and
 returns a value-free report. Pure: no socket, no process, no clock, no
-randomness; the same input bytes at the same paths, under the same
-`CLAUDE_CONFIG_DIR`, give the same report.
+randomness, and no environment variable; the same inputs and flags give
+the same report.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import msgspec
 
@@ -232,11 +233,13 @@ def audit_files(
     key: bytes,
     by_fingerprint: dict[bytes, tuple[str, ...]],
     paths: Sequence[str],
+    claude_config_dirs: Sequence[str] = (),
 ) -> Report:
     try:
         capture = collect_capture([], paths, lambda path: path)
     except CaptureError as exc:
         raise AuditInputError(str(exc).replace("capture ", "file ", 1)) from None
+    projects_dirs = [PurePath(os.path.abspath(d), "projects") for d in claude_config_dirs]
     auditor = _Auditor(Matcher(key, set(by_fingerprint)), by_fingerprint)
     files: list[_File] = []
     not_scanned: dict[str, NotScannedReason] = {}
@@ -247,7 +250,7 @@ def audit_files(
             continue
         data = item.data
         lines = json_lines(data)
-        file = _File(item.path, recognise(item.path, data, lines), len(data))
+        file = _File(item.path, recognise(item.path, data, lines, projects_dirs), len(data))
         files.append(file)
         if file.format is Format.CLAUDE_CODE:
             auditor.claude_code(file, lines)
@@ -345,12 +348,17 @@ def audit_files(
 
 
 def audit_paths(
-    report_path: Path, store_path: Path, key_path: Path, paths: Sequence[str]
+    report_path: Path, store_path: Path, key_path: Path, paths: Sequence[str],
+    claude_config_dirs: Sequence[str] = (),
 ) -> Report:
     """Read the inventory inputs, then every file, and audit. Raises
-    `AuditInputError` (exit 2) on unusable input."""
+    `AuditInputError` (exit 2) on unusable input. `claude_config_dirs`
+    (`--claude-config-dir`) are Claude config directories whose `projects`
+    directory counts like `.claude/projects`."""
     inputs = load_inputs(report_path, store_path, key_path)
-    return audit_files(inputs.credentials, inputs.key, inputs.by_fingerprint, paths)
+    return audit_files(
+        inputs.credentials, inputs.key, inputs.by_fingerprint, paths, claude_config_dirs
+    )
 
 
 def encode_report(report: Report) -> bytes:

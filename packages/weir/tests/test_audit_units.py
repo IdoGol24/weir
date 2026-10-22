@@ -714,20 +714,19 @@ def _bookkeeping(setup: fx.Setup, kind: str) -> dict[str, object]:
 )
 @pytest.mark.parametrize("config_dir", [None, "claude-config"])
 def test_a_claude_projects_file_of_bookkeeping_records_only_is_a_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config_dir: str | None, kind: str,
-    hit_kind: str, location: str, exit_code: int,
+    tmp_path: Path, config_dir: str | None, kind: str, hit_kind: str, location: str,
+    exit_code: int,
 ) -> None:
     setup = fx.build(tmp_path)
     claude = tmp_path / "home" / ".claude"
-    if config_dir is None:
-        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    else:
+    extra: list[str] = []
+    if config_dir is not None:
         claude = tmp_path / config_dir
-        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude))
+        extra = ["--claude-config-dir", str(claude)]
     path = claude / "projects" / "-fake-home-work-proj" / "a.jsonl"
     path.parent.mkdir(parents=True)
     cfx.write(path, json.dumps(_bookkeeping(setup, kind)) + "\n")
-    run = setup.audit([path])
+    run = setup.audit([path], extra=extra)
     assert run.report["files"][0]["format"] == "claude-code"  # type: ignore[index]
     hit = _only_hit(run, setup)
     assert (hit["kind"], hit["record"], hit["location"], hit["line"]) == (
@@ -749,9 +748,8 @@ def test_a_claude_projects_file_of_bookkeeping_records_only_is_a_session(
     ],
 )
 def test_bookkeeping_records_with_another_type_or_outside_claude_projects_stay_unknown(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str, extra: dict[str, object] | None
+    tmp_path: Path, where: str, extra: dict[str, object] | None
 ) -> None:
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     setup = fx.build(tmp_path)
     path = tmp_path / where
     path.parent.mkdir(parents=True)
@@ -763,10 +761,7 @@ def test_bookkeeping_records_with_another_type_or_outside_claude_projects_stay_u
     assert (run.report["result"], run.exit_code) == ("unknown", 3)
 
 
-def test_a_chat_log_under_a_projects_directory_is_unknown_not_a_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+def test_a_chat_log_under_a_projects_directory_is_unknown_not_a_session(tmp_path: Path) -> None:
     setup = fx.build(tmp_path)
     path = tmp_path / "home" / "projects" / "chatbot" / "data" / "chat.jsonl"
     path.parent.mkdir(parents=True)
@@ -805,3 +800,27 @@ def test_a_type_that_is_not_a_string_is_unknown_not_a_crash(tmp_path: Path) -> N
     (row,) = run.report["files"]  # type: ignore[misc]
     assert (row["records"], row["unrecognised_records"]) == (3, 1)
     assert run.exit_code == 3
+
+
+def test_no_environment_variable_changes_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/audit.md: only the inputs and flags decide the output. A summary-only
+    file in another Claude config directory is unknown unless that directory is
+    given with --claude-config-dir; CLAUDE_CONFIG_DIR pointing at it changes
+    nothing."""
+    setup = fx.build(tmp_path)
+    config = tmp_path / "claude-config"
+    path = config / "projects" / "-fake-home-work-proj" / "a.jsonl"
+    path.parent.mkdir(parents=True)
+    cfx.write(path, json.dumps(_bookkeeping(setup, "summary")) + "\n")
+
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    without = setup.audit([path])
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    with_env = setup.audit([path])
+    flagged = setup.audit([path], extra=["--claude-config-dir", str(config)])
+
+    assert with_env.stdout == without.stdout
+    assert (without.report["files"][0]["format"], without.exit_code) == ("unknown", 3)  # type: ignore[index]
+    assert (flagged.report["files"][0]["format"], flagged.exit_code) == ("claude-code", 1)  # type: ignore[index]

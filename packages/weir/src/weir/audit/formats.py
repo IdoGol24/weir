@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import PurePath
@@ -121,16 +121,15 @@ def _is_claude_code(obj: dict[str, Json]) -> bool:
     return obj.get("type") in ("user", "assistant") and isinstance(obj.get("sessionId"), str)
 
 
-def _in_claude_projects(where: PurePath) -> bool:
-    """Inside a `.claude/projects` directory, or the `projects` directory of
-    the Claude config directory `CLAUDE_CONFIG_DIR` names."""
+def _in_claude_projects(where: PurePath, projects_dirs: Sequence[PurePath]) -> bool:
+    """Inside a `.claude/projects` directory, or inside the `projects`
+    directory of a Claude config directory given with `--claude-config-dir`."""
     if (".claude", "projects") in pairwise(where.parent.parts):
         return True
-    config = os.environ.get("CLAUDE_CONFIG_DIR")
-    return bool(config) and where.is_relative_to(PurePath(os.path.abspath(config), "projects"))
+    return any(where.is_relative_to(projects) for projects in projects_dirs)
 
 
-def _is_session(where: PurePath, lines: list[Line]) -> bool:
+def _is_session(where: PurePath, lines: list[Line], projects_dirs: Sequence[PurePath]) -> bool:
     """A record with a session id, or, inside a Claude Code projects
     directory, records whose types are all bookkeeping types."""
     records = [line.parsed for line in lines if line.parsed is not None]
@@ -138,7 +137,7 @@ def _is_session(where: PurePath, lines: list[Line]) -> bool:
         return True
     return (
         bool(records) and all(_str(r.get("type")) in _BOOKKEEPING_TYPES for r in records)
-        and _in_claude_projects(where)
+        and _in_claude_projects(where, projects_dirs)
     )
 
 
@@ -161,9 +160,13 @@ def _is_claude_code_memory(path: PurePath) -> bool:
     )
 
 
-def recognise(path: str, data: bytes, lines: list[Line]) -> Format:
+def recognise(
+    path: str, data: bytes, lines: list[Line], projects_dirs: Sequence[PurePath] = ()
+) -> Format:
+    """`projects_dirs`: the `projects` directories of the Claude config
+    directories given, as absolute paths."""
     where = PurePath(os.path.abspath(path))
-    if _is_session(where, lines):
+    if _is_session(where, lines, projects_dirs):
         return Format.CLAUDE_CODE
     if where.parent.name == "tool-results":
         return Format.CLAUDE_CODE_TOOL_RESULTS
