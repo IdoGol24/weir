@@ -296,7 +296,7 @@ The audit is **incomplete**, and lists each reason, when:
 | --- | --- | --- |
 | `no_files_read` | none | no file was read: the paths given are empty directories, do not exist, or hold only files not scanned. An empty input is never clean |
 | `unrecognised_format` | the file | a file's format is `unknown` |
-| `unparsed_line` | `<file>:<line>` | a line of a `claude-code` or `otlp` file is not a record |
+| `unparsed_line` | `<file>:<line>` | a line of a `claude-code` or `otlp` file is not a record, or each line of a `claude-code-subagent-meta` file when the file is not one JSON object |
 | `not_scanned` | the file | a file was not scanned (`compressed`, a `symlink` inside a directory, or a given path that is `missing`) |
 | `unknown_kind` | `<file>:<line>` | a hit whose kind is `unknown` |
 
@@ -317,7 +317,7 @@ credentials do not change the result.
 | `0` | `clean` | complete, and no checkable credential entered the agent's context or a tool call |
 | `1` | `exposed` | at least one credential entered the agent's context or was sent out in a tool call |
 | `2` | none | usage or input error: bad arguments, an unusable or mismatched report, store or key, an unreadable path. No report is printed |
-| `3` | `unknown` | no credential found in the context or a tool call, but the audit is incomplete: an unknown format, an unparsed line, a file not scanned, or a hit whose kind is unknown. A zero here would not be a real zero |
+| `3` | `unknown` | no credential found in the context or a tool call, but the audit is incomplete: no file read, an unknown format, an unparsed line, a file not scanned, or a hit whose kind is unknown. A zero here would not be a real zero |
 
 ### Printing
 
