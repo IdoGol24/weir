@@ -97,6 +97,8 @@ def test_the_environment_points_every_client_at_the_mock(tmp_path: Path) -> None
     ):
         assert env[name] == url
     assert env["OPENAI_BASE_URL"].startswith(url)
+    # The Anthropic SDKs and Claude Code append /v1/messages themselves.
+    assert env["ANTHROPIC_BASE_URL"] == url
     assert env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] == f"{url}/v1/traces"
     assert "127.0.0.1" in env["NO_PROXY"].split(",")
     assert env["HOME"] == str(tmp_path)

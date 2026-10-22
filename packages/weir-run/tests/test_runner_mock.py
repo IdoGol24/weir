@@ -1,7 +1,8 @@
 """The loopback mock against docs/canary.md ("The boundary", "Runtime
-values", "The capture", "The request capture") and the OpenAI and OTLP wire
-formats it stands in for. Requests are real HTTP over 127.0.0.1; the
-conftest guard refuses any other destination and records the attempt.
+values", "The capture", "The request capture") and the OpenAI, Anthropic
+and OTLP wire formats it stands in for. Requests are real HTTP over
+127.0.0.1; the conftest guard refuses any other destination and records
+the attempt.
 
 The mock records requests; it does not judge them. Whether a value in a
 request was exercised or leaked is the judge's call, tested against the
@@ -253,6 +254,7 @@ def test_every_served_request_is_recorded_whole(rig: Rig) -> None:
     ("path", "endpoint"),
     [
         ("/v1/embeddings", "model"),
+        ("/v1/messages", "model"),
         ("/v1/traces", "otlp"),
         ("/oauth/token", "oauth"),
         ("/.well-known/openid-configuration", "oauth"),
@@ -270,7 +272,9 @@ def test_each_record_names_the_endpoint_that_answered(
 @pytest.mark.parametrize(
     ("target", "declared"),
     [
-        ("/v1/embeddings", ()),
+        # The model API declares the Anthropic Messages API's key header.
+        ("/v1/embeddings", (CredentialField("header", "x-api-key"),)),
+        ("/v1/messages", (CredentialField("header", "x-api-key"),)),
         ("/ep/search/q", SPEC.endpoints[0].credential_fields),
         ("/oauth/token", tuple(CredentialField("body", n) for n in CREDENTIAL_FORM_FIELDS)),
         ("/ep/elsewhere/q", ()),
@@ -554,6 +558,171 @@ def test_embeddings_one_vector_per_input(rig: Rig, encoding: str) -> None:
 def test_models(rig: Rig) -> None:
     listed = rig.request("GET", "/v1/models").json()["data"]
     assert listed and rig.request("GET", f"/v1/models/{listed[0]['id']}").status == 200
+
+
+# -- the Anthropic Messages API ----------------------------------------
+
+ANTHROPIC_VERSION = {"anthropic-version": "2023-06-01"}
+CLAUDE_WEATHER: dict[str, Any] = {
+    "name": "get_weather",
+    "description": "The weather in a city.",
+    "input_schema": WEATHER["function"]["parameters"],
+}
+CLAUDE_LOOKUP: dict[str, Any] = {"name": "lookup", "input_schema": {"type": "object"}}
+HELLO = {"role": "user", "content": "hi"}
+
+
+def _messages(rig: Rig, doc: dict[str, Any], key: str | None = None) -> Reply:
+    headers = dict(ANTHROPIC_VERSION)
+    if key is not None:
+        headers["x-api-key"] = key
+    return rig.post_json("/v1/messages", {"model": "claude-mock", "max_tokens": 64, **doc}, headers)
+
+
+def _events(body: bytes) -> list[tuple[str, Any]]:
+    """An Anthropic event stream as (event name, data) pairs, pings dropped."""
+    out: list[tuple[str, Any]] = []
+    for block in body.decode().split("\n\n"):
+        if not block.strip():
+            continue
+        fields = dict(line.split(": ", 1) for line in block.splitlines())
+        out.append((fields["event"], json.loads(fields["data"])))
+    return [(name, data) for name, data in out if name != "ping"]
+
+
+def _schema_valid(tool: dict[str, Any], value: Any) -> bool:
+    schema = tool["input_schema"]
+    return _valid(value, schema, schema.get("$defs", {}))
+
+
+def test_messages_answers_with_the_scripted_reply(rig: Rig) -> None:
+    reply = _messages(rig, {"messages": [HELLO]})
+    assert reply.status == 200
+    assert reply.headers["Content-Type"] == "application/json"
+    message = reply.json()
+    assert (message["type"], message["role"], message["model"]) == (
+        "message",
+        "assistant",
+        "claude-mock",
+    )
+    assert message["id"].startswith("msg_")
+    assert message["content"] == [{"type": "text", "text": SPEC.model_reply}]
+    assert (message["stop_reason"], message["stop_sequence"]) == ("end_turn", None)
+    assert message["usage"]["input_tokens"] > 0 and message["usage"]["output_tokens"] > 0
+
+
+def test_messages_streaming_follows_the_event_protocol(rig: Rig) -> None:
+    reply = _messages(rig, {"messages": [HELLO], "stream": True})
+    assert reply.headers["Content-Type"] == "text/event-stream"
+    events = _events(reply.body)
+    # Each event's name is its data's type.
+    assert all(name == data["type"] for name, data in events)
+    names = [name for name, _ in events]
+    deltas = len(names) - 5
+    assert deltas >= 1
+    assert names == [
+        "message_start",
+        "content_block_start",
+        *["content_block_delta"] * deltas,
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+    ]
+    start = events[0][1]["message"]
+    assert (start["type"], start["role"], start["content"], start["stop_reason"]) == (
+        "message",
+        "assistant",
+        [],
+        None,
+    )
+    assert events[1][1]["content_block"] == {"type": "text", "text": ""}
+    assert {data["index"] for name, data in events if name.startswith("content_block")} == {0}
+    text = "".join(data["delta"]["text"] for name, data in events if name == "content_block_delta")
+    assert text == SPEC.model_reply
+    assert events[-2][1]["delta"]["stop_reason"] == "end_turn"
+
+
+def test_messages_turn_one_calls_every_offered_tool_with_schema_valid_input(rig: Rig) -> None:
+    message = _messages(rig, {"messages": [HELLO], "tools": [CLAUDE_WEATHER, CLAUDE_LOOKUP]}).json()
+    assert message["stop_reason"] == "tool_use"
+    uses = message["content"]
+    assert [b["type"] for b in uses] == ["tool_use", "tool_use"]
+    assert [b["name"] for b in uses] == ["get_weather", "lookup"]
+    assert len({b["id"] for b in uses}) == 2
+    assert all(re.fullmatch(r"toolu_[A-Za-z0-9_]+", b["id"]) for b in uses)
+    for block, tool in zip(uses, [CLAUDE_WEATHER, CLAUDE_LOOKUP], strict=True):
+        assert _schema_valid(tool, block["input"])
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [[], [{"type": "text", "text": "a note the client appends to the tool results"}]],
+)
+def test_messages_tool_use_then_tool_result_round_trip(
+    rig: Rig, extra: list[dict[str, Any]]
+) -> None:
+    tools = [CLAUDE_WEATHER, CLAUDE_LOOKUP]
+    first = _messages(rig, {"messages": [HELLO], "tools": tools}).json()
+    uses = first["content"]
+    results = [
+        {"type": "tool_result", "tool_use_id": b["id"], "content": [{"type": "text", "text": "ok"}]}
+        for b in uses
+    ]
+    conversation = [
+        HELLO,
+        {"role": "assistant", "content": uses},
+        {"role": "user", "content": results + extra},
+    ]
+    second = _messages(rig, {"messages": conversation, "tools": tools}).json()
+    assert second["content"] == [{"type": "text", "text": SPEC.model_reply}]
+    assert second["stop_reason"] == "end_turn"
+    # A new question from the user starts a new turn, which calls the tools again.
+    conversation += [
+        {"role": "assistant", "content": second["content"]},
+        {"role": "user", "content": [{"type": "text", "text": "and tomorrow?"}]},
+    ]
+    third = _messages(rig, {"messages": conversation, "tools": tools}).json()
+    assert third["stop_reason"] == "tool_use"
+
+
+def test_messages_streaming_tool_use(rig: Rig) -> None:
+    reply = _messages(rig, {"messages": [HELLO], "tools": [CLAUDE_WEATHER], "stream": True})
+    events = _events(reply.body)
+    starts = [data for name, data in events if name == "content_block_start"]
+    assert [s["content_block"]["type"] for s in starts] == ["tool_use"]
+    block = starts[0]["content_block"]
+    assert (block["name"], block["input"]) == ("get_weather", {})
+    assert block["id"].startswith("toolu_")
+    partial = "".join(
+        data["delta"]["partial_json"]
+        for name, data in events
+        if name == "content_block_delta" and data["delta"]["type"] == "input_json_delta"
+    )
+    assert _schema_valid(CLAUDE_WEATHER, json.loads(partial))
+    assert next(d for n, d in events if n == "message_delta")["delta"]["stop_reason"] == "tool_use"
+
+
+def test_messages_tool_choice_none_answers_without_tools(rig: Rig) -> None:
+    doc = {"messages": [HELLO], "tools": [CLAUDE_LOOKUP], "tool_choice": {"type": "none"}}
+    message = _messages(rig, doc).json()
+    assert message["content"] == [{"type": "text", "text": SPEC.model_reply}]
+
+
+def test_messages_x_api_key_canary_is_accounted_for(rig: Rig) -> None:
+    _messages(rig, {"messages": [HELLO]}, key=rig.key)
+    assert rig.unexpected() == []
+    [record] = rig.requests()
+    assert ["x-api-key", rig.key] in record["headers"]
+    assert ["header", "x-api-key"] in record["credential_fields"]
+    # The mock records the request; the judge attributes the value.
+    assert rig.evidence("env.MODEL_KEY") == set()
+
+
+def test_messages_unaccounted_x_api_key_is_recorded_without_its_value(rig: Rig) -> None:
+    stranger = "Zq8RealLookingKey0000000000000000"
+    _messages(rig, {"messages": [HELLO]}, key=stranger)
+    assert rig.unexpected() == ["unexpected.model.x-api-key#1"]
+    assert stranger not in rig.ledger.path.read_text()
 
 
 # -- OAuth -------------------------------------------------------------
