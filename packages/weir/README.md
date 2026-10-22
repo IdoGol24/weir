@@ -107,6 +107,8 @@ weir inventory --home ~ --json --store store.json > inventory.json
 weir audit --inventory inventory.json --store store.json --key ~/.weir/fingerprint.key ~/.claude/projects/
 ```
 
+If you set `CLAUDE_CONFIG_DIR` to move Claude Code's config directory, pass `"$CLAUDE_CONFIG_DIR/projects"` instead; with the variable set, the audit reads that projects folder the way it reads `~/.claude/projects`.
+
 ## Why you can trust it
 
 - **It searches for what it planted.** A hit is a planted value found in the capture, never a pattern guess, and the judge's output depends only on where values appear, never on what they are.
