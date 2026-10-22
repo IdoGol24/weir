@@ -12,8 +12,10 @@ Three steps call it, each with the interpreter weir-run is installed into:
 
 The comment shows only the judge's verdict lines, which name placements
 and locations, never a value (docs/canary.md, "The text report"). It is
-posted with the job's own GITHUB_TOKEN, which only the `report` step gets:
-no process holds it while the flows run.
+posted with the job's own GITHUB_TOKEN. Of the action's own steps only
+`report` is given it. With `python-version` set, actions/setup-python also
+receives it through its own `token` input default, and exits before the
+`check` step, so no process holds the token while the flows run.
 
 Standard library only: it runs before anything else is installed, and
 under `python -I`, so nothing in the checked-out workspace can shadow it.

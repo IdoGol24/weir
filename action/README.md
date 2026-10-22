@@ -64,7 +64,8 @@ write.
    `--require-isolation` when asked. The job log shows weir-run's output
    as usual: each flow's output with every planted value replaced, then
    the report.
-4. In a separate step, the only one that gets the job's token, it writes
+4. In a separate step, the only one of its own steps that is given the
+   job's token, it writes
    the verdict to the job's step summary and, on a pull request, to its
    comment, then ends with the verdict's exit code.
 
@@ -143,9 +144,12 @@ branch, so the tree judged is that merge commit.
   request from a fork, whose token is read-only, the action warns that no
   comment was posted, and the verdict and the job's result stand; the step
   summary still has the verdict.
-- The action uses the job's own `GITHUB_TOKEN` and no other secret. Only
-  the step that posts the comment gets it, after the flows have run, so no
-  process holds it while they run. Every flow also starts from an empty
+- The action uses the job's own `GITHUB_TOKEN` and no other secret. Of
+  the action's own steps only the one that posts the comment is given it,
+  after the flows have run. With `python-version` set,
+  actions/setup-python also receives the job token through its own `token`
+  input default, and exits before the check step. So no process holds the
+  token while the flows run. Every flow also starts from an empty
   environment.
 - It makes no request but the comment's, to the GitHub API the job runs
   against, the PyPI install and, with `python-version`, the download

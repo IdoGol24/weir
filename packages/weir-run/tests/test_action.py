@@ -363,7 +363,8 @@ class Run:
 
 def _resolve(expr: str, context: dict[str, Any]) -> str:
     value: Any = context
-    for part in expr.strip().split("."):
+    path = re.sub(r"\[\s*'([^']*)'\s*\]", r".\1", expr.strip())
+    for part in path.split("."):
         value = cast(dict[str, Any], value).get(part, "") if isinstance(value, dict) else ""
     return "" if value is None else str(value)
 
@@ -393,6 +394,24 @@ def _parse_outputs(path: Path) -> dict[str, str]:
     return outputs
 
 
+def _context(inputs: dict[str, str], runner_temp: Path) -> dict[str, Any]:
+    """The expression context the runner would give action.yml's steps."""
+    defaults = {
+        name: str(spec.get("default", ""))
+        for name, spec in cast(dict[str, dict[str, Any]], _action()["inputs"]).items()
+    }
+    unknown = set(inputs) - set(defaults)
+    assert not unknown, f"not inputs of action.yml: {unknown}"
+    return {
+        "inputs": defaults | inputs,
+        "github": {"token": TOKEN, "action_path": str(ROOT)},
+        "secrets": {"GITHUB_TOKEN": TOKEN},
+        "runner": {"os": "Linux", "environment": "self-hosted", "temp": str(runner_temp)},
+        # The install step needs PyPI; the runner would set this output.
+        "steps": {"install": {"outputs": {"python": sys.executable}}},
+    }
+
+
 def run_action(
     tmp: Path,
     inputs: dict[str, str],
@@ -403,26 +422,13 @@ def run_action(
 ) -> Run:
     """Run action.yml's run steps as the runner would, one bash per step."""
     action = _action()
-    defaults = {
-        name: str(spec.get("default", ""))
-        for name, spec in cast(dict[str, dict[str, Any]], action["inputs"]).items()
-    }
-    unknown = set(inputs) - set(defaults)
-    assert not unknown, f"not inputs of action.yml: {unknown}"
     runner_temp = tmp / "runner-temp"
     runner_temp.mkdir(exist_ok=True)
     event_path = tmp / "event.json"
     event_path.write_text(json.dumps(event), encoding="utf-8")
     summary = tmp / "step-summary.md"
     summary.write_text("", encoding="utf-8")
-    context: dict[str, Any] = {
-        "inputs": defaults | inputs,
-        "github": {"token": TOKEN, "action_path": str(ROOT)},
-        "secrets": {"GITHUB_TOKEN": TOKEN},
-        "runner": {"os": "Linux", "environment": "self-hosted", "temp": str(runner_temp)},
-        # The install step needs PyPI; the runner would set this output.
-        "steps": {"install": {"outputs": {"python": sys.executable}}},
-    }
+    context = _context(inputs, runner_temp)
     base = {
         "PATH": os.pathsep.join([str(Path(sys.executable).parent), "/usr/bin", "/bin"]),
         "HOME": str(tmp / "home"),
@@ -788,6 +794,18 @@ def test_the_token_is_only_the_report_steps(tmp_path: Path, github: StubGitHub) 
     assert run.ran[-2:] == ["check", "report"]
     holders = [step for step, env in run.envs.items() if any(TOKEN in v for v in env.values())]
     assert holders == ["report"]
+    steps = cast(list[dict[str, Any]], _action()["runs"]["steps"])
+    inputs = {name: "set" for name in cast(dict[str, Any], _action()["inputs"])}
+    context = _context(inputs, tmp_path)
+    given = {
+        str(step.get("id", step["name"])): [
+            _expand(str(value), context)
+            for value in [*step.get("env", {}).values(), *step.get("with", {}).values()]
+        ]
+        for step in steps
+    }
+    assert len(given) == len(steps)
+    assert [step for step, values in given.items() if any(TOKEN in v for v in values)] == ["report"]
 
 
 def test_the_comment_names_the_head_commit() -> None:

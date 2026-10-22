@@ -40,8 +40,11 @@
   line does not confirm). A comment that cannot be posted, as on a pull
   request from a fork, is a warning; the verdict stands. On GitHub-hosted
   Linux runners it allows unprivileged user namespaces so the flows run
-  isolated. Only the step that posts the comment gets the token, after the
-  flows have run, and the comment names the pull request's head commit;
+  isolated. Of the action's own steps only the one that posts the comment
+  is given the token, after the flows have run; with `python-version` set,
+  actions/setup-python also receives it through its own `token` input
+  default and exits before the check step, so no process holds the token
+  while the flows run. The comment names the pull request's head commit;
   on a `pull_request` event GitHub checks out the merge of that head into
   the base branch, so the tree judged is that merge commit. At a ref
   between releases, where the recorded weir-run needs a newer weir-scan
