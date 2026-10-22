@@ -4,7 +4,7 @@
 
 ![Weir plants fake keys in your agent, lets its telemetry flow, and checks every span, log and metric for those exact values: leak, clean or incomplete.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/weir-flow.svg)
 
-Plant fake credentials where your real ones live, run your agent, and find out exactly where they ended up, before a real key does.
+Plant fake credentials where your real ones live, run your agent, and find every place it exposed them: its telemetry, the model it calls, or any other service.
 
 ```sh
 pip install weir-scan
@@ -17,8 +17,8 @@ weir canary judge --sample
 
 Weir is two packages that work together, in CI or on your laptop:
 
-- **weir-run is the test rig.** It plants a unique fake credential wherever a real one would live, runs your agent's own flows against a fake model on 127.0.0.1, and captures everything the agent exports.
-- **weir-scan is the inspector.** It reads that capture and gives the verdict: leak, clean or incomplete. It also works on its own, on traces you already have.
+- **weir-run is the test rig.** It plants a unique fake credential wherever a real one would live and runs your agent's own flows against a local mock on 127.0.0.1: an OpenAI-compatible fake model, OAuth endpoints, a telemetry receiver and stand-ins for your own APIs. It captures everything the agent sends out: its telemetry, its console output, and every request the mock receives, refused ones included. On Linux the flows run in a network namespace whose only network is loopback, so a client that ignores the proxy settings reaches nothing, and the attempt is reported.
+- **weir-scan is the inspector.** `weir canary judge` searches that capture for every planted value and gives the verdict: leak, clean or incomplete. Each placement names its own provider: a key in a credential field of a request to its own provider is the key being used, and the same key anywhere else is a leak that names where it went, such as `sink="model"` for a key in a prompt. weir-scan also works on its own, on traces you already have.
 
 ```sh
 pip install weir-scan weir-run
@@ -31,9 +31,10 @@ pip install weir-scan weir-run
 
 ## Why it's different
 
-- **It doesn't guess.** It looks for the exact values it planted, so a hit is a real leak, and a key is found even when it doesn't look like a key, raw or encoded.
-- **Offline and deterministic.** No AI model decides anything, and Weir sends nothing anywhere. The scanner opens no sockets and starts no processes, and CI enforces that.
-- **No false all-clear.** If a run didn't exercise something you marked required, Weir says "incomplete", not "clean", and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
+- **It doesn't guess.** It looks for the exact values it planted, so a hit is a real leak, and a key is found even when it doesn't look like a key, in any of seven forms, raw or encoded.
+- **It checks every way out.** Spans, logs and metrics, the agent's console output, the prompts and messages it sends the model, the requests it makes to your other APIs, and requests to any other host, which the mock refuses and records.
+- **Offline and deterministic.** No AI model decides anything. The judge opens no sockets and starts no processes, and CI enforces that. The rig's mock listens on 127.0.0.1 only and forwards nothing.
+- **No false all-clear.** If a run didn't exercise something you marked required, or a flow crashed, or a flow tried to connect around the mock, Weir says "incomplete", not "clean", and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
 
 ## Proof
 
@@ -59,7 +60,22 @@ On your own agent:
 weir-run run --config canary.toml
 ```
 
-The config names where your credentials live and which flows to run. The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
+The config names where your credentials live, the provider each one belongs to, and which flows to run:
+
+```toml
+[[placement]]
+id = "env.OPENAI_API_KEY"
+kind = "env"
+shape = "openai"
+required = true
+provider = "model"   # its own provider: the mock's model API
+
+[[flow]]
+id = "quickstart"
+command = ["{python}", "examples/quickstart.py"]
+```
+
+The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
 
 ## Also included: the flow scan and `weir inventory` (experimental)
 
@@ -103,7 +119,7 @@ They find strings that look like secrets in code and files. Weir proves whether 
 No. It uses fake values by design, and a real key should never be in a run.
 
 **Does it send anything anywhere?**
-No. The analysis opens no sockets, and a test enforces it. The rig's fake model listens on `127.0.0.1` only and refuses every proxied request to another host.
+No. The analysis opens no sockets, and a test enforces it. The rig's mock listens on `127.0.0.1` only and refuses every proxied request to another host, and on Linux the flows have no route out.
 
 **Which frameworks?**
 Any that can export OpenTelemetry spans to a file.
@@ -113,9 +129,11 @@ Any that can export OpenTelemetry spans to a file.
 A clean result is evidence about the flows that ran and the credentials planted, not a statement that the program is safe.
 
 - It finds whole values only. A truncated, split or partly masked value, a hashed, encrypted or compressed one, and encodings beyond those [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md#the-encoded-forms) lists (URL-encoded base64, UTF-16, line-wrapped base64) are not matched.
-- It sees only what reached the capture: telemetry, each flow's output, and the requests the rig's mock received.
+- It sees only what reached the capture: telemetry, each flow's output, and the requests the rig's mock received. A refused HTTPS `CONNECT` has no visible content, because the mock refuses the tunnel before any byte goes through it: it is listed as a blocked connection, never judged a leak.
+- A placement without a `provider` belongs in no request, so any request that holds it counts as a leak, its own auth header included. weir-run warns about each one before any flow runs.
+- When placements that belong to different endpoints (or one with no provider) share one `provider_host`, their credential fields are merged for refused requests to that host, so one placement's value in the other's declared field counts as evidence, not a leak.
 - This release plants environment variables, values passed in code, and OAuth tokens. Model APIs must be OpenAI-compatible.
-- The rig isolates the network only on Linux, where it can make an unprivileged network namespace. Elsewhere a client that ignores the proxy settings and has a hard-coded host can reach that host directly, and the report says the network was not isolated ([network isolation](https://github.com/IdoGol24/weir/tree/main/packages/weir-run#network-isolation)).
+- The rig isolates the network only on Linux, where it can make an unprivileged network namespace. Elsewhere, or where unprivileged user namespaces are disabled or restricted, the run goes ahead, a client that ignores the proxy settings and has a hard-coded host can reach that host directly, and the report says `network not isolated: direct connections were not observed`. `--require-isolation` makes such a run incomplete. Even isolated, some paths are not observed, such as a name lookup through a host resolver socket ([network isolation](https://github.com/IdoGol24/weir/tree/main/packages/weir-run#network-isolation)).
 - The flow scan needs content capture switched on in your instrumentation; `weir gauge` tells you whether it is.
 
 ## License

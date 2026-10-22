@@ -61,6 +61,10 @@
   credential, sent to the wrong one of the program's APIs or sent in a
   plain-HTTP request to another host is a leak. A token the mock's OAuth
   endpoints issue belongs to them and to every declared endpoint.
+- **weir-run: a warning for each placement without a provider.** Before
+  any flow runs, `weir-run run` and the pytest plugin print `placement
+  <id> has no provider: any request holding it counts as a leak` to
+  stderr for every such placement. It names the id, never a value.
 
 ### Changed
 - **weir-run: a placement without `provider` belongs in no request.** Any

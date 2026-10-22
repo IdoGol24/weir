@@ -1,7 +1,7 @@
 [project]
 name = "weir-scan"
 version = "0.5.0"
-description = "Leak tests for AI agents: find planted fake credentials in your agent's traces, logs and metrics. Offline and deterministic."
+description = "Leak tests for AI agents: deterministically find planted credentials in your agent's telemetry, model requests and outbound calls."
 license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.12"
