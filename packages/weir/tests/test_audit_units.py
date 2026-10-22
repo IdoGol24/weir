@@ -916,3 +916,43 @@ def test_a_subagent_sidecar_that_is_not_a_json_object_is_unparsed(tmp_path: Path
         (u["reason"], u["subject"]) for u in run.report["unknown"]  # type: ignore[union-attr,index]
     ]
     assert run.exit_code == 3
+
+
+def test_a_chat_log_with_a_session_id_is_still_not_a_session(tmp_path: Path) -> None:
+    """docs/audit.md: a Claude Code message record has a `message` object; a
+    `user` record with only `type`, `sessionId` and `content` is not one."""
+    setup = fx.build(tmp_path)
+    path = tmp_path / "home" / "projects" / "chatbot" / "chat.jsonl"
+    path.parent.mkdir(parents=True)
+    record = {"type": "user", "sessionId": "s1", "content": f"my key is {setup.values[fx.ACME]}"}
+    cfx.write(path, json.dumps(record) + "\n")
+    run = setup.audit([path])
+    assert run.report["files"][0]["format"] == "unknown"  # type: ignore[index]
+    assert _only_hit(run, setup)["kind"] == "unknown"
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+
+
+@pytest.mark.parametrize(
+    ("where", "kind", "exit_code"),
+    [
+        ({"cwd": "{v}"}, "stored", 0),
+        ({"futureField": "{v}"}, "unknown", 3),
+        ({"message": {"role": "user", "content": "x", "futureField": "{v}"}}, "unknown", 3),
+        ({"message": {"role": "assistant", "content": "x", "model": "{v}"}}, "stored", 0),
+    ],
+)
+def test_a_message_record_field_is_stored_only_when_the_contract_names_it(
+    tmp_path: Path, where: dict[str, object], kind: str, exit_code: int
+) -> None:
+    setup = fx.build(tmp_path)
+    record: dict[str, object] = {
+        "type": "user", "sessionId": fx.SESSION_ID, "uuid": "00000000-0000-4000-8000-000000000001",
+        "message": {"role": "user", "content": "hello"},
+    }
+    record.update(json.loads(json.dumps(where).replace("{v}", setup.values[fx.ACME])))
+    session = fx.Session()
+    line = session.record(record)
+    run = setup.audit([session.write(tmp_path / "s.jsonl")])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["line"], hit["record"]) == (kind, line, "user")
+    assert run.exit_code == exit_code

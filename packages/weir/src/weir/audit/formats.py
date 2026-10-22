@@ -118,7 +118,12 @@ def unparsed_sites(line: Line, place: Place) -> Iterator[Site]:
 
 
 def _is_claude_code(obj: dict[str, Json]) -> bool:
-    return obj.get("type") in ("user", "assistant") and isinstance(obj.get("sessionId"), str)
+    """A Claude Code message record: `user` or `assistant`, a string
+    `sessionId` and a `message` object. Two fields alone are not the shape."""
+    return (
+        obj.get("type") in ("user", "assistant") and isinstance(obj.get("sessionId"), str)
+        and isinstance(obj.get("message"), dict)
+    )
 
 
 def _in_claude_projects(where: PurePath, projects_dirs: Sequence[PurePath]) -> bool:
@@ -207,6 +212,20 @@ _USER_BLOCKS = frozenset({"text", "image", "document", "tool_result"})
 _ASSISTANT_BLOCKS = frozenset({"text", "thinking", "redacted_thinking"})
 _TOOL_BLOCKS = frozenset({"tool_use", "server_tool_use"})
 
+# docs/audit.md, "Claude Code session files": the bookkeeping fields of a
+# `user` or `assistant` record, and of its `message` object outside `content`.
+_RECORD_FIELDS = frozenset({
+    "parentUuid", "logicalParentUuid", "isSidechain", "type", "uuid", "timestamp", "cwd",
+    "sessionId", "version", "gitBranch", "userType", "entrypoint", "message", "toolUseResult",
+    "requestId", "isMeta", "isCompactSummary", "isVisibleInTranscriptOnly", "isApiErrorMessage",
+    "error", "promptId", "permissionMode", "promptSource", "turnOrigin", "turnPosition",
+    "perTurnEffort", "sourceToolAssistantUUID", "sourceToolUseID", "agentId", "slug",
+})
+_MESSAGE_FIELDS = frozenset({
+    "role", "model", "id", "type", "content", "stop_reason", "stop_sequence", "stop_details",
+    "usage", "container", "diagnostics", "context_management",
+})
+
 _CONTEXT = Place(Kind.CONTEXT)
 _STORED = Place(Kind.STORED)
 _UNKNOWN = Place(Kind.UNKNOWN)
@@ -289,7 +308,13 @@ def claude_code_place(record: dict[str, Json], path: Path_, tools: dict[str, str
         if len(path) == 2 and not isinstance(content, str):
             return _STORED
         return _content_place(record_type, content, path, tools)
-    return _STORED
+    # Anything else in a message record is bookkeeping only under a field the
+    # contract names; an unnamed field may carry text the agent sees.
+    if path[:1] == ("message",):
+        known = len(path) == 1 or path[1] in _MESSAGE_FIELDS
+    else:
+        known = path[0] in _RECORD_FIELDS
+    return _STORED if known else _UNKNOWN
 
 
 def note_tools(record: dict[str, Json], tools: dict[str, str]) -> None:
