@@ -725,6 +725,78 @@ def test_messages_unaccounted_x_api_key_is_recorded_without_its_value(rig: Rig) 
     assert stranger not in rig.ledger.path.read_text()
 
 
+# Shapes observed from Claude Code in headless mode (`claude -p`).
+CLAUDE_CODE_FIELDS: dict[str, Any] = {
+    "max_tokens": 128000,
+    "system": [
+        {"type": "text", "text": "You are a coding agent.", "cache_control": {"type": "ephemeral"}}
+    ],
+    "metadata": {"user_id": "{}"},
+    "thinking": {"type": "adaptive"},
+    "output_config": {"effort": "medium"},
+    "context_management": {},
+}
+SYSTEM_NOTE = {"role": "system", "content": "a note between turns"}
+
+
+def test_messages_beta_query_and_unknown_fields_are_served(rig: Rig) -> None:
+    reply = rig.post_json(
+        "/v1/messages?beta=true",
+        {"model": "claude-mock", "messages": [HELLO], "stream": True, **CLAUDE_CODE_FIELDS},
+        {**ANTHROPIC_VERSION, "anthropic-beta": "a-beta", "x-api-key": rig.key},
+    )
+    assert reply.status == 200
+    text = "".join(
+        data["delta"]["text"] for name, data in _events(reply.body) if name == "content_block_delta"
+    )
+    assert text == SPEC.model_reply
+    [record] = rig.requests()
+    assert (record["endpoint"], record["path"], record["query"]) == (
+        "model",
+        "/v1/messages",
+        "beta=true",
+    )
+    assert rig.unexpected() == [] and rig.mock.unmocked == {}
+
+
+def test_messages_system_entries_between_turns(rig: Rig) -> None:
+    tools = [CLAUDE_LOOKUP]
+    first = _messages(rig, {"messages": [HELLO, SYSTEM_NOTE], "tools": tools}).json()
+    assert first["stop_reason"] == "tool_use"
+    [use] = first["content"]
+    # The tool results are in the last user message, not the last message.
+    conversation = [
+        HELLO,
+        SYSTEM_NOTE,
+        {"role": "assistant", "content": first["content"]},
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": use["id"], "content": "1\tok"}],
+        },
+        SYSTEM_NOTE,
+    ]
+    second = _messages(rig, {"messages": conversation, "tools": tools}).json()
+    assert second["content"] == [{"type": "text", "text": SPEC.model_reply}]
+    assert second["stop_reason"] == "end_turn"
+
+
+def test_messages_stream_pings_after_message_start(rig: Rig) -> None:
+    body = _messages(rig, {"messages": [HELLO], "stream": True}).body
+    names = re.findall(r"^event: (\S+)$", body.decode(), re.MULTILINE)
+    assert names[:2] == ["message_start", "ping"]
+
+
+@pytest.mark.parametrize("method", ["HEAD", "GET"])
+def test_the_api_preflight_is_answered_by_the_model_api(rig: Rig, method: str) -> None:
+    reply = rig.request(method, "/api/hello", headers={"x-api-key": rig.key})
+    assert reply.status == 200
+    assert rig.mock.unmocked == {}
+    [record] = rig.requests()
+    assert record["endpoint"] == "model"
+    assert ["header", "x-api-key"] in record["credential_fields"]
+    assert rig.unexpected() == []
+
+
 # -- OAuth -------------------------------------------------------------
 
 
