@@ -14,6 +14,7 @@ import json
 import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import PurePath
 
 from weir.audit._types import Format, Kind
@@ -120,13 +121,25 @@ def _is_claude_code(obj: dict[str, Json]) -> bool:
     return obj.get("type") in ("user", "assistant") and isinstance(obj.get("sessionId"), str)
 
 
+def _in_claude_projects(where: PurePath) -> bool:
+    """Inside a `.claude/projects` directory, or the `projects` directory of
+    the Claude config directory `CLAUDE_CONFIG_DIR` names."""
+    if (".claude", "projects") in pairwise(where.parent.parts):
+        return True
+    config = os.environ.get("CLAUDE_CONFIG_DIR")
+    return bool(config) and where.is_relative_to(PurePath(os.path.abspath(config), "projects"))
+
+
 def _is_session(where: PurePath, lines: list[Line]) -> bool:
-    """A record with a session id, or, under a `projects` directory, records
-    whose types are all Claude Code record types."""
+    """A record with a session id, or, inside a Claude Code projects
+    directory, records whose types are all bookkeeping types."""
     records = [line.parsed for line in lines if line.parsed is not None]
     if any(_is_claude_code(record) for record in records):
         return True
-    return "projects" in where.parent.parts and bool(records) and all(map(recognised, records))
+    return (
+        bool(records) and all(_str(r.get("type")) in _BOOKKEEPING_TYPES for r in records)
+        and _in_claude_projects(where)
+    )
 
 
 _SIGNAL_LISTS = frozenset({"resourceSpans", "resourceLogs", "resourceMetrics"})
@@ -182,6 +195,8 @@ _STORED_TYPES = frozenset({
     "custom-title", "agent-name", "tag", "permission-mode", "pr-link", "worktree-state",
 })
 _MESSAGE_TYPES = frozenset({"user", "assistant", "attachment", "summary"})
+# The types of a file of bookkeeping records beside a session, with no session id
+_BOOKKEEPING_TYPES = _STORED_TYPES | {"summary"}
 _RECOGNISED_TYPES = _MESSAGE_TYPES | _STORED_TYPES
 _USER_BLOCKS = frozenset({"text", "image", "document", "tool_result"})
 _ASSISTANT_BLOCKS = frozenset({"text", "thinking", "redacted_thinking"})

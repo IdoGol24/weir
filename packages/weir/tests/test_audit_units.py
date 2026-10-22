@@ -712,11 +712,19 @@ def _bookkeeping(setup: fx.Setup, kind: str) -> dict[str, object]:
          0),
     ],
 )
-def test_a_projects_file_of_bookkeeping_records_only_is_a_session(
-    tmp_path: Path, kind: str, hit_kind: str, location: str, exit_code: int
+@pytest.mark.parametrize("config_dir", [None, "claude-config"])
+def test_a_claude_projects_file_of_bookkeeping_records_only_is_a_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config_dir: str | None, kind: str,
+    hit_kind: str, location: str, exit_code: int,
 ) -> None:
     setup = fx.build(tmp_path)
-    path = tmp_path / "projects" / "-fake-home-work-proj" / "a.jsonl"
+    claude = tmp_path / "home" / ".claude"
+    if config_dir is None:
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    else:
+        claude = tmp_path / config_dir
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude))
+    path = claude / "projects" / "-fake-home-work-proj" / "a.jsonl"
     path.parent.mkdir(parents=True)
     cfx.write(path, json.dumps(_bookkeeping(setup, kind)) + "\n")
     run = setup.audit([path])
@@ -733,17 +741,40 @@ def test_a_projects_file_of_bookkeeping_records_only_is_a_session(
 @pytest.mark.parametrize(
     ("where", "extra"),
     [
-        ("projects/p/a.jsonl", {"type": "future-record", "data": "x"}),
-        ("notes/p/a.jsonl", None),
+        ("home/.claude/projects/p/a.jsonl", {"type": "future-record", "data": "x"}),
+        ("home/.claude/projects/p/a.jsonl", {"type": "user", "content": "hello"}),
+        ("home/.claude/projects/p/a.jsonl", {"type": "attachment", "rendered": "hello"}),
+        ("home/projects/p/a.jsonl", None),
+        ("home/.claude/notes/p/a.jsonl", None),
     ],
 )
-def test_bookkeeping_records_with_an_unknown_type_or_outside_projects_stay_unknown(
-    tmp_path: Path, where: str, extra: dict[str, object] | None
+def test_bookkeeping_records_with_another_type_or_outside_claude_projects_stay_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str, extra: dict[str, object] | None
 ) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     setup = fx.build(tmp_path)
     path = tmp_path / where
     path.parent.mkdir(parents=True)
     records = [_bookkeeping(setup, "summary"), *([extra] if extra else [])]
+    cfx.write(path, "".join(json.dumps(r) + "\n" for r in records))
+    run = setup.audit([path])
+    assert run.report["files"][0]["format"] == "unknown"  # type: ignore[index]
+    assert _only_hit(run, setup)["kind"] == "unknown"
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+
+
+def test_a_chat_log_under_a_projects_directory_is_unknown_not_a_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    setup = fx.build(tmp_path)
+    path = tmp_path / "home" / "projects" / "chatbot" / "data" / "chat.jsonl"
+    path.parent.mkdir(parents=True)
+    records = [
+        {"type": "user", "content": f"deploy with {setup.values[fx.ACME]}"},
+        {"type": "assistant", "content": "done"},
+        {"type": "summary", "summary": "a deploy"},
+    ]
     cfx.write(path, "".join(json.dumps(r) + "\n" for r in records))
     run = setup.audit([path])
     assert run.report["files"][0]["format"] == "unknown"  # type: ignore[index]
