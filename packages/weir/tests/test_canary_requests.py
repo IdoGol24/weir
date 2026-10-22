@@ -79,9 +79,7 @@ def test_a_model_key_in_the_prompt_of_its_own_model_request_is_a_leak_to_the_mod
     record = fx.request(headers=[("Authorization", f"Bearer {value}")], body=body.encode())
     run = _run(tmp_path, [record], [fx.placement("env.MODEL_KEY", value, providers=["model"])])
     assert run.exit_code == 1, run.stdout
-    assert _hits(run) == [
-        ("env.MODEL_KEY", "requests", "model", "body.messages[0].content", "raw")
-    ]
+    assert _hits(run) == [("env.MODEL_KEY", "requests", "model", "body.messages[0].content", "raw")]
     assert _state(run, "env.MODEL_KEY")["state"] == "leaked"
     # Its auth header is still its own provider's credential field.
     assert _state(run, "env.MODEL_KEY")["evidence"] == ["request"]
