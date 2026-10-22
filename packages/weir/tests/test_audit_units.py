@@ -662,3 +662,115 @@ def test_a_markdown_file_outside_the_memory_layout_is_unrecognised(
     run = setup.audit([path])
     assert run.report["files"][0]["format"] == "unknown"  # type: ignore[index]
     assert (run.report["result"], run.exit_code) == ("unknown", 3)
+
+
+def test_a_whole_file_request_with_a_one_line_attribute_object_is_one_record(
+    tmp_path: Path,
+) -> None:
+    setup = fx.build(tmp_path)
+    arguments = json.dumps({"command": f"curl -H 'x: {setup.values[fx.ACME]}'"})
+    attributes = [
+        cfx.kv("gen_ai.tool.name", "Bash"), cfx.kv("gen_ai.tool.call.arguments", arguments),
+    ]
+    request = json.loads(cfx.traces(cfx.span("execute_tool Bash", attributes=attributes)))
+    spans = request["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    spans[0]["attributes"] = [f"@{i}@" for i in range(len(attributes))]
+    text = json.dumps(request, indent=2)
+    for i, attribute in enumerate(attributes):
+        text = text.replace(f'"@{i}@"', json.dumps(attribute))
+    path = tmp_path / "otlp.json"
+    cfx.write(path, text + "\n")
+    assert json.dumps(attributes[-1]) in [line.strip() for line in text.splitlines()]
+
+    run = setup.audit([path])
+    (row,) = run.report["files"]  # type: ignore[misc]
+    assert (row["format"], row["records"], row["unparsed_lines"]) == ("otlp", 1, 0)
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["tool"], hit["argument"], hit["line"]) == (
+        "tool_call", "Bash", "command", 1,
+    )
+    assert run.exit_code == 1
+
+
+def _bookkeeping(setup: fx.Setup, kind: str) -> dict[str, object]:
+    value = setup.values[fx.ACME]
+    if kind == "summary":
+        return {"type": "summary", "summary": f"Set token {value}", "leafUuid": "00000000-0000"}
+    return {
+        "type": "file-history-snapshot", "messageId": "00000000-0001",
+        "snapshot": {"messageId": "00000000-0001", "trackedFileBackups": {
+            "/fake/.env": {"backupFileName": f"{value}@v1", "version": 1}}},
+        "isSnapshotUpdate": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kind", "hit_kind", "location", "exit_code"),
+    [
+        ("summary", "context", "summary", 1),
+        ("file-history-snapshot", "stored", "snapshot.trackedFileBackups./fake/.env.backupFileName",
+         0),
+    ],
+)
+def test_a_projects_file_of_bookkeeping_records_only_is_a_session(
+    tmp_path: Path, kind: str, hit_kind: str, location: str, exit_code: int
+) -> None:
+    setup = fx.build(tmp_path)
+    path = tmp_path / "projects" / "-fake-home-work-proj" / "a.jsonl"
+    path.parent.mkdir(parents=True)
+    cfx.write(path, json.dumps(_bookkeeping(setup, kind)) + "\n")
+    run = setup.audit([path])
+    assert run.report["files"][0]["format"] == "claude-code"  # type: ignore[index]
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["record"], hit["location"], hit["line"]) == (
+        hit_kind, kind, location, 1,
+    )
+    state = {"context": "in_context"}.get(hit_kind, hit_kind)
+    assert fx.credential(run.report, setup.ids[fx.ACME])["state"] == state
+    assert (run.report["unknown"], run.exit_code) == ([], exit_code)
+
+
+@pytest.mark.parametrize(
+    ("where", "extra"),
+    [
+        ("projects/p/a.jsonl", {"type": "future-record", "data": "x"}),
+        ("notes/p/a.jsonl", None),
+    ],
+)
+def test_bookkeeping_records_with_an_unknown_type_or_outside_projects_stay_unknown(
+    tmp_path: Path, where: str, extra: dict[str, object] | None
+) -> None:
+    setup = fx.build(tmp_path)
+    path = tmp_path / where
+    path.parent.mkdir(parents=True)
+    records = [_bookkeeping(setup, "summary"), *([extra] if extra else [])]
+    cfx.write(path, "".join(json.dumps(r) + "\n" for r in records))
+    run = setup.audit([path])
+    assert run.report["files"][0]["format"] == "unknown"  # type: ignore[index]
+    assert _only_hit(run, setup)["kind"] == "unknown"
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+
+
+def test_a_type_that_is_not_a_string_is_unknown_not_a_crash(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    session = fx.Session()
+    session.prompt("hello")
+    block_line = session.record({
+        "type": "assistant", "sessionId": fx.SESSION_ID,
+        "message": {"role": "assistant", "content": [
+            {"type": ["tool_use"], "id": "toolu_1", "name": "Bash",
+             "input": {"command": setup.values[fx.ACME]}}]},
+    })
+    record_line = session.record(
+        {"type": {"kind": "user"}, "sessionId": fx.SESSION_ID, "data": setup.values[fx.GH]}
+    )
+    run = setup.audit([session.write(tmp_path / "s.jsonl")])
+    block = _only_hit(run, setup)
+    assert (block["kind"], block["line"], block["location"]) == (
+        "unknown", block_line, "message.content[0].input.command",
+    )
+    record = _only_hit(run, setup, fx.GH)
+    assert (record["kind"], record["line"], record["record"]) == ("unknown", record_line, None)
+    (row,) = run.report["files"]  # type: ignore[misc]
+    assert (row["records"], row["unrecognised_records"]) == (3, 1)
+    assert run.exit_code == 3

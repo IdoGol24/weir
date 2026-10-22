@@ -86,10 +86,10 @@ report still prints the path as given:
 
 | format | recognised when | read as |
 | --- | --- | --- |
-| `claude-code` | a JSON Lines file whose parsed lines are JSON objects, at least one with `type` `user` or `assistant` and a string `sessionId` | a Claude Code session file: the main transcript or a subagent's (`<session>/subagents/*.jsonl`) |
+| `claude-code` | a JSON Lines file whose parsed lines are JSON objects, at least one with `type` `user` or `assistant` and a string `sessionId`; or a JSON Lines file below a directory named `projects` with at least one record, every record's `type` a record `type` the Claude Code table below names (a file of `summary` or `file-history-snapshot` records only, say) | a Claude Code session file: the main transcript or a subagent's (`<session>/subagents/*.jsonl`), or a file of bookkeeping records beside them |
 | `claude-code-tool-results` | a file whose parent directory is named `tool-results` | a large tool output Claude Code saved beside a session (`<session>/tool-results/`): text |
 | `claude-code-memory` | a file named `CLAUDE.md`, or a `.md` file in a directory named `memory` two levels below a directory named `projects` (`projects/<project>/memory/*.md`, `MEMORY.md` included) | a file Claude Code loads into the agent's context: a `CLAUDE.md` or an auto-memory file. Text |
-| `otlp` | a JSON Lines file whose parsed lines are OTLP/JSON export requests (an object holding `resourceSpans`, `resourceLogs` or `resourceMetrics`), or a whole file that is one such request | exported telemetry |
+| `otlp` | a JSON Lines file whose parsed lines are OTLP/JSON export requests (an object holding `resourceSpans`, `resourceLogs` or `resourceMetrics`), or, when no line is an export request, a whole file that is one such request (pretty-printed, say) | exported telemetry |
 | `unknown` | anything else | searched as text, line by line; a line that is a JSON value is walked as one |
 
 The first rule that holds wins. A `claude-code` or `otlp` file's lines are
@@ -187,7 +187,7 @@ Every hit has a **kind**:
 | --- | --- |
 | `context` | the value entered the agent's context: the agent read it |
 | `tool_call` | the value was sent out in a tool call: it is in the arguments of a tool the agent called |
-| `stored` | the value is in the file but not in the agent's context: bookkeeping the agent never reads |
+| `stored` | the value is stored locally, in the file, but neither entered the agent's context nor was sent out: bookkeeping the agent never reads (a `file-history-snapshot` record, say) |
 | `unknown` | the audit cannot tell whether the agent read it |
 
 A `tool_call` value was in the context as well, since the agent wrote it;

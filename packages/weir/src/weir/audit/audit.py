@@ -31,7 +31,6 @@ from weir.audit._types import (
     UnknownReason,
 )
 from weir.audit.formats import (
-    RECOGNISED_TYPES,
     Line,
     Place,
     Site,
@@ -41,6 +40,7 @@ from weir.audit.formats import (
     note_tools,
     otlp_sites,
     recognise,
+    recognised,
     text_sites,
     unparsed_sites,
     whole_otlp,
@@ -102,14 +102,14 @@ class _Auditor:
                 self._unparsed(file, line)
                 continue
             file.records += 1
-            if line.parsed.get("type") not in RECOGNISED_TYPES:
+            if not recognised(line.parsed):
                 file.unrecognised += 1
             for site in claude_code_sites(line.parsed, tools):
                 self.search(file, line.number, site)
             note_tools(line.parsed, tools)
 
     def otlp(self, file: _File, data: bytes, lines: list[Line]) -> None:
-        whole = None if any(line.parsed for line in lines) else whole_otlp(data)
+        whole = whole_otlp(data, lines)
         if whole is not None:
             file.records += 1
             for site in otlp_sites(whole):

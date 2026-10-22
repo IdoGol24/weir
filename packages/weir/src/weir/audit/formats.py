@@ -120,6 +120,15 @@ def _is_claude_code(obj: dict[str, Json]) -> bool:
     return obj.get("type") in ("user", "assistant") and isinstance(obj.get("sessionId"), str)
 
 
+def _is_session(where: PurePath, lines: list[Line]) -> bool:
+    """A record with a session id, or, under a `projects` directory, records
+    whose types are all Claude Code record types."""
+    records = [line.parsed for line in lines if line.parsed is not None]
+    if any(_is_claude_code(record) for record in records):
+        return True
+    return "projects" in where.parent.parts and bool(records) and all(map(recognised, records))
+
+
 _SIGNAL_LISTS = frozenset({"resourceSpans", "resourceLogs", "resourceMetrics"})
 
 
@@ -140,22 +149,25 @@ def _is_claude_code_memory(path: PurePath) -> bool:
 
 
 def recognise(path: str, data: bytes, lines: list[Line]) -> Format:
-    if any(line.parsed is not None and _is_claude_code(line.parsed) for line in lines):
-        return Format.CLAUDE_CODE
     where = PurePath(os.path.abspath(path))
+    if _is_session(where, lines):
+        return Format.CLAUDE_CODE
     if where.parent.name == "tool-results":
         return Format.CLAUDE_CODE_TOOL_RESULTS
     if _is_claude_code_memory(where):
         return Format.CLAUDE_CODE_MEMORY
     if any(is_otlp(line.parsed) for line in lines):
         return Format.OTLP
-    if whole_otlp(data) is not None:
+    if whole_otlp(data, lines) is not None:
         return Format.OTLP
     return Format.UNKNOWN
 
 
-def whole_otlp(data: bytes) -> dict[str, Json] | None:
-    """A whole file that is one export request (pretty-printed, say)."""
+def whole_otlp(data: bytes, lines: list[Line]) -> dict[str, Json] | None:
+    """A whole file that is one export request (pretty-printed, say), when
+    no line is an export request of its own."""
+    if any(is_otlp(line.parsed) for line in lines):
+        return None
     try:
         value: Json = json.loads(_text(data))
     except (ValueError, RecursionError):
@@ -170,7 +182,7 @@ _STORED_TYPES = frozenset({
     "custom-title", "agent-name", "tag", "permission-mode", "pr-link", "worktree-state",
 })
 _MESSAGE_TYPES = frozenset({"user", "assistant", "attachment", "summary"})
-RECOGNISED_TYPES = _MESSAGE_TYPES | _STORED_TYPES
+_RECOGNISED_TYPES = _MESSAGE_TYPES | _STORED_TYPES
 _USER_BLOCKS = frozenset({"text", "image", "document", "tool_result"})
 _ASSISTANT_BLOCKS = frozenset({"text", "thinking", "redacted_thinking"})
 _TOOL_BLOCKS = frozenset({"tool_use", "server_tool_use"})
@@ -184,6 +196,11 @@ def _str(value: Json) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def recognised(record: dict[str, Json]) -> bool:
+    """A record whose `type` is one the Claude Code table names."""
+    return _str(record.get("type")) in _RECOGNISED_TYPES
+
+
 def _content_place(
     record_type: str, content: Json, path: Path_, tools: dict[str, str]
 ) -> Place:
@@ -192,7 +209,7 @@ def _content_place(
     if len(path) < 3 or not isinstance(path[2], int) or not isinstance(content, list):
         return _STORED
     block = content[path[2]]
-    btype = block.get("type") if isinstance(block, dict) else None
+    btype = _str(block.get("type")) if isinstance(block, dict) else None
     if not isinstance(block, dict):
         return _UNKNOWN
     if record_type == "user" and btype in _USER_BLOCKS:
@@ -211,7 +228,7 @@ def _content_place(
 def claude_code_place(record: dict[str, Json], path: Path_, tools: dict[str, str]) -> Place:
     """docs/audit.md, "Claude Code session files"."""
     record_type = record.get("type")
-    if not isinstance(record_type, str) or record_type not in RECOGNISED_TYPES:
+    if not isinstance(record_type, str) or record_type not in _RECOGNISED_TYPES:
         return _UNKNOWN
     if record_type in _STORED_TYPES:
         return _STORED
@@ -239,7 +256,7 @@ def note_tools(record: dict[str, Json], tools: dict[str, str]) -> None:
     if not isinstance(content, list):
         return
     for block in content:
-        if isinstance(block, dict) and block.get("type") in _TOOL_BLOCKS:
+        if isinstance(block, dict) and _str(block.get("type")) in _TOOL_BLOCKS:
             tool_id, name = _str(block.get("id")), _str(block.get("name"))
             if tool_id is not None and name is not None:
                 tools[tool_id] = name
