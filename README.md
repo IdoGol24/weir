@@ -77,6 +77,24 @@ command = ["{python}", "examples/quickstart.py"]
 
 The [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) covers the config, the fake model, a `canary_check` pytest fixture and a demo. The judge's contract, including every encoding it matches, is [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
 
+## Run it in CI
+
+On a pull request, one step runs your weir-run config and posts the verdict as one comment, updated in place on every re-run:
+
+```yaml
+- uses: IdoGol24/weir@<ref>   # a release tag, or better its full commit SHA
+```
+
+Put it after the steps that check out your code and install your project. It runs `canary.toml` (`with: config: <path>` for another), fails the job on a leak or an incomplete run, and passes on a clean one; a usage or configuration error fails it as an error. The comment shows the report's lines, which never hold a value. The job needs:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+```
+
+The inputs, the outputs and a whole workflow are in [the action's README](https://github.com/IdoGol24/weir/tree/main/action).
+
 ## Also included: the flow scan, `weir inventory` and `weir audit` (experimental)
 
 ### The flow scan

@@ -363,7 +363,7 @@ class Run:
 def _resolve(expr: str, context: dict[str, Any]) -> str:
     value: Any = context
     for part in expr.strip().split("."):
-        value = value.get(part, "") if isinstance(value, dict) else ""
+        value = cast(dict[str, Any], value).get(part, "") if isinstance(value, dict) else ""
     return "" if value is None else str(value)
 
 
@@ -440,7 +440,8 @@ def run_action(
         "RUNNER_OS": "Linux",
     }
     (tmp / "home").mkdir(exist_ok=True)
-    code, stdout, stderr, ran = 0, "", "", []
+    code, stdout, stderr = 0, "", ""
+    ran: list[str] = []
     for index, step in enumerate(cast(list[dict[str, Any]], action["runs"]["steps"])):
         if "uses" in step or ("if" in step and not _condition(str(step["if"]), context)):
             continue
@@ -470,7 +471,8 @@ def run_action(
         code = done.returncode
         if code != 0:
             break
-    return Run(code, stdout, stderr, context["steps"], summary.read_text("utf-8"), ran)
+    outputs = {name: step["outputs"] for name, step in context["steps"].items()}
+    return Run(code, stdout, stderr, outputs, summary.read_text("utf-8"), ran)
 
 
 def _config(tmp: Path, mode: str = "") -> tuple[Path, Path]:
@@ -679,3 +681,25 @@ def test_the_token_never_reaches_the_flow(tmp_path: Path, github: StubGitHub) ->
     _pr_run(tmp_path, github, config="canary.toml")
     seen = json.loads(dump.read_text("utf-8"))
     assert TOKEN not in json.dumps(seen)
+
+
+def test_the_token_never_reaches_weir_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict[str, str]] = []
+
+    def fake_run(command: list[str], env: dict[str, str]) -> tuple[int, str]:
+        seen.append(env)
+        return 0, _report("clean")
+
+    monkeypatch.setattr(weir_action, "_run_weir", fake_run)
+    for name, value in {
+        "WEIR_GITHUB_TOKEN": TOKEN,
+        "WEIR_CONFIG": "canary.toml",
+        "WEIR_COMMENT": "false",
+        "RUNNER_TEMP": str(tmp_path),
+    }.items():
+        monkeypatch.setenv(name, value)
+    for name in ("GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY", "GITHUB_EVENT_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    assert weir_action.main(["check"]) == 0
+    (env,) = seen
+    assert TOKEN not in env.values()

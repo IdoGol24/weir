@@ -28,6 +28,19 @@
   under the fingerprint key, so a reader can tell the store's key from
   another one. `weir audit` refuses a store without it: run
   `weir inventory --store` again.
+- **A GitHub Action: `uses: IdoGol24/weir@<ref>`.** One step in a pull
+  request job installs weir-scan and weir-run at exact versions (by
+  default the versions at the action's ref, wheels only), runs
+  `weir-run run --config` (`canary.toml` by default, `require-isolation`
+  optional) and posts the verdict as one PR comment, updated in place on a
+  re-run, with the job's own `GITHUB_TOKEN` and `pull-requests: write`
+  only. The comment and the step summary show the result and the report's
+  own lines, never a value. The job passes on clean (0) and fails on leak
+  (1), incomplete (3) and error (2, or an exit code the report's result
+  line does not confirm). A comment that cannot be posted, as on a pull
+  request from a fork, is a warning; the verdict stands. On GitHub-hosted
+  Linux runners it allows unprivileged user namespaces so the flows run
+  isolated. Its README is `action/README.md`.
 
 ## [0.6.0] - 2026-10-22
 
