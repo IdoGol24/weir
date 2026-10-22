@@ -163,6 +163,91 @@ def test_a_credential_in_an_otlp_output_tool_call_part_was_sent_out(tmp_path: Pa
     )
 
 
+# --- 2b. a tool call that names an environment credential sent it ------------
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["$" + fx.GH, "${" + fx.GH + "}", "${" + fx.GH + ":-none}", "$env:" + fx.GH],
+)
+def test_a_tool_call_that_references_an_environment_credential_sent_it_by_name(
+    tmp_path: Path, reference: str
+) -> None:
+    setup = fx.build(tmp_path)
+    session = fx.Session()
+    session.prompt("call the api")
+    command = f'curl -H "X-Token: {reference}" api.invalid'
+    line = session.tool_use("Bash", {"command": command}, "t1")
+    path = session.write(tmp_path / "s.jsonl")
+
+    run = setup.audit([path])
+
+    assert run.exit_code == 1
+    cid = setup.ids[fx.GH]
+    row = fx.credential(run.report, cid)
+    assert (row["state"], row["tool_call"], row["context"]) == ("in_tool_call", 1, 0)
+    (hit,) = fx.hits(run.report, cid)
+    assert (hit["kind"], hit["form"], hit["line"], hit["tool"], hit["argument"]) == (
+        "tool_call", "name", line, "Bash", "command",
+    )
+    assert "TOOL_CALL" in setup.audit([path], as_json=False).stdout
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\\$" + fx.GH,  # escaped: the shell does not expand it
+        "$" + fx.GH + "_OLD",  # another variable
+        "$X" + fx.GH,  # another variable
+        "$$" + fx.GH,  # the process id, then text
+    ],
+)
+def test_text_that_only_resembles_a_reference_is_not_one(tmp_path: Path, text: str) -> None:
+    setup = fx.build(tmp_path)
+    session = fx.Session()
+    session.prompt("call the api")
+    session.tool_use("Bash", {"command": f"echo {text}"}, "t1")
+    path = session.write(tmp_path / "s.jsonl")
+
+    run = setup.audit([path])
+
+    assert run.exit_code == 0
+    assert fx.credential(run.report, setup.ids[fx.GH])["state"] == "not_found"
+
+
+def test_a_reference_outside_a_tool_call_or_to_a_file_credential_is_not_a_hit(
+    tmp_path: Path,
+) -> None:
+    setup = fx.build(tmp_path)
+    session = fx.Session()
+    session.prompt(f"why is ${fx.GH} unset?")  # a prompt: no tool expands it
+    session.tool_use("Bash", {"command": f"echo ${fx.AWS_SECRET}"}, "t1")  # not an env credential
+    path = session.write(tmp_path / "s.jsonl")
+
+    run = setup.audit([path])
+
+    assert run.exit_code == 0
+    for name in (fx.GH, fx.AWS_SECRET):
+        assert fx.credential(run.report, setup.ids[name])["state"] == "not_found"
+
+
+def test_a_dynamic_environment_credential_is_found_by_name(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path, bashrc='export DYN_TOKEN="$(pass show acme/dyn)"\n')
+    report = json.loads(setup.report.read_text())
+    (dyn,) = [c for c in report["credentials"] if c["name"] == "DYN_TOKEN"]
+    assert (dyn["source"], dyn["value_state"]) == ("environment", "dynamic")
+    session = fx.Session()
+    session.prompt("deploy")
+    session.tool_use("Bash", {"command": "deploy --token \"$DYN_TOKEN\""}, "t1")
+    path = session.write(tmp_path / "s.jsonl")
+
+    run = setup.audit([path])
+
+    assert run.exit_code == 1
+    row = fx.credential(run.report, dyn["id"])
+    assert (row["state"], row["tool_call"]) == ("in_tool_call", 1)
+
+
 # --- 3. every encoded form is found -----------------------------------------
 
 
