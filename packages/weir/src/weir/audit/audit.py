@@ -3,7 +3,8 @@
 
 Reads the inventory's report, store and key, then every file given, and
 returns a value-free report. Pure: no socket, no process, no clock, no
-randomness; the same input bytes give the same report.
+randomness; the same input bytes at the same paths, under the same
+`CLAUDE_CONFIG_DIR`, give the same report.
 """
 
 from __future__ import annotations

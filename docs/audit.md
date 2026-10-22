@@ -25,7 +25,8 @@ exact, so a hit is the credential itself, not a pattern guess.
 
 It runs offline: it opens no socket, starts no process, reads no clock and
 uses no randomness. It reads only the files it is given, and the same input
-bytes always give the same output bytes.
+bytes at the same paths, under the same `CLAUDE_CONFIG_DIR` (see
+[Files and formats](#files-and-formats)), always give the same output bytes.
 
 ## Running it
 
