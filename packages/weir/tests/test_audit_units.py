@@ -871,3 +871,47 @@ def test_no_environment_variable_changes_the_report(
     assert with_env.stdout == without.stdout
     assert (without.report["files"][0]["format"], without.exit_code) == ("unknown", 3)  # type: ignore[index]
     assert (flagged.report["files"][0]["format"], flagged.exit_code) == ("claude-code", 1)  # type: ignore[index]
+
+
+def test_a_subagent_sidecar_is_bookkeeping_and_an_unknown_key_stays_unknown(
+    tmp_path: Path,
+) -> None:
+    """docs/audit.md: `subagents/*.meta.json` is a Claude Code sidecar. A value
+    under one of its keys is stored locally; under any other key, unknown."""
+    setup = fx.build(tmp_path)
+    sub = tmp_path / "home" / ".claude" / "projects" / "-fake-proj" / fx.SESSION_ID / "subagents"
+    sub.mkdir(parents=True)
+    known = sub / "agent-a1.meta.json"
+    cfx.write(known, json.dumps({
+        "agentType": "general-purpose", "description": f"check {setup.values[fx.ACME]}",
+        "finished": True, "spawnDepth": 1, "toolUseId": "toolu_01",
+    }))
+    run = setup.audit([known])
+    (row,) = run.report["files"]  # type: ignore[misc]
+    assert (row["format"], row["records"]) == ("claude-code-subagent-meta", 1)
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["location"], hit["line"]) == ("stored", "description", 1)
+    assert (run.report["result"], run.exit_code, run.report["unknown"]) == ("clean", 0, [])
+    text = setup.audit([known], as_json=False)
+    assert " 1 file (1 claude-code-subagent-meta), " in text.lines[-2]
+
+    other = sub / "agent-b2.meta.json"
+    cfx.write(other, json.dumps({"agentType": "x", "futureField": setup.values[fx.GH]}))
+    run = setup.audit([other])
+    gh = _only_hit(run, setup, fx.GH)
+    assert (gh["kind"], gh["location"]) == ("unknown", "futureField")
+    assert (run.report["result"], run.exit_code) == ("unknown", 3)
+
+
+def test_a_subagent_sidecar_that_is_not_a_json_object_is_unparsed(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    sub = tmp_path / "subagents"
+    sub.mkdir()
+    broken = sub / "agent-c3.meta.json"
+    cfx.write(broken, '{"agentType": "x", "description": "trunc')
+    run = setup.audit([broken])
+    assert run.report["files"][0]["format"] == "claude-code-subagent-meta"  # type: ignore[index]
+    assert ("unparsed_line", f"{broken}:1") in [
+        (u["reason"], u["subject"]) for u in run.report["unknown"]  # type: ignore[union-attr,index]
+    ]
+    assert run.exit_code == 3

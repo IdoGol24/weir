@@ -91,6 +91,7 @@ report still prints the path as given:
 | --- | --- | --- |
 | `claude-code` | a JSON Lines file whose parsed lines are JSON objects, at least one with `type` `user` or `assistant` and a string `sessionId`; or, with no such record, a JSON Lines file inside a Claude Code projects directory with at least one record, every record's `type` a bookkeeping type: `summary`, or a type the Claude Code table below makes `stored` at every location (`file-history-snapshot`, say). A Claude Code projects directory is a directory `projects` directly inside a directory named `.claude` (`~/.claude/projects/`), or the `projects` directory of a Claude config directory given with `--claude-config-dir`; any other directory named `projects` is not one. A `user` or `assistant` record without a string `sessionId`, or a record of any other type, makes such a file `unknown` | a Claude Code session file: the main transcript or a subagent's (`<session>/subagents/*.jsonl`), or a file of bookkeeping records beside them |
 | `claude-code-tool-results` | a file whose parent directory is named `tool-results` | a large tool output Claude Code saved beside a session (`<session>/tool-results/`): text |
+| `claude-code-subagent-meta` | a file named `*.meta.json` in a directory named `subagents` | the sidecar Claude Code keeps beside a subagent's transcript (`<session>/subagents/agent-*.meta.json`): one JSON object |
 | `claude-code-memory` | a file named `CLAUDE.md`, or a `.md` file in a directory named `memory` two levels below a directory named `projects` (`projects/<project>/memory/*.md`, `MEMORY.md` included) | a file Claude Code loads into the agent's context: a `CLAUDE.md` or an auto-memory file. Text |
 | `otlp` | a JSON Lines file whose parsed lines are OTLP/JSON export requests (an object holding `resourceSpans`, `resourceLogs` or `resourceMetrics`), or, when no line is an export request, a whole file that is one such request (pretty-printed, say) | exported telemetry |
 | `unknown` | anything else | searched as text, line by line; a line that is a JSON value is walked as one |
@@ -228,6 +229,13 @@ A `claude-code-memory` file is `context`: Claude Code loads `CLAUDE.md` and
 its auto-memory files into the agent's context. Each line is a string, with
 no location.
 
+A `claude-code-subagent-meta` file is one record, on line 1. It is
+bookkeeping: a string under one of its top-level keys `agentType`,
+`description`, `finished`, `launchedWithDefaults`, `requestNonInteractive`,
+`requestShape`, `spawnDepth` or `toolUseId` is `stored`, and a string under
+any other key is `unknown`. A file that is not one JSON object is read as
+unparsed lines.
+
 #### OTLP telemetry
 
 Kinds follow the OpenTelemetry GenAI semantic conventions, and, in a log
@@ -360,7 +368,8 @@ Precisely:
   `signal=<signal>` alone for an OTLP string outside any record (a
   resource or scope attribute), or `format=<format>` for a text line (an
   `unknown`, `claude-code-tool-results` or `claude-code-memory` file, or an
-  unparsed line) or an export request member outside the signals, then
+  unparsed line), a `claude-code-subagent-meta` file or an export request
+  member outside the signals, then
   `tool=<quoted name>` and
   `argument=<location>` when there is one, then `at=<location>` when there
   is one, then `form=<form>`; `<KIND>` is `TOOL_CALL`, `CONTEXT`, `UNKNOWN`
@@ -374,7 +383,7 @@ Precisely:
 - `coverage: <N> credentials (<K> checkable), <F> files (<groups>), <X> not scanned, <R> records (<U> unrecognised), <P> unparsed lines, <S> strings`,
   `<F>` the files read and `<groups>` the count of each format among them,
   in the order `claude-code`, `claude-code-tool-results`,
-  `claude-code-memory`, `otlp`, `unknown`,
+  `claude-code-memory`, `claude-code-subagent-meta`, `otlp`, `unknown`,
   joined by `, ` (so the groups add up to `<F>`; `0 files` with no groups
   when none was read), and `<X>` the files not scanned. A count of 1
   takes the singular: `1 credential`, `1 file`, `1 record`,
@@ -401,7 +410,7 @@ drift-tested: [`packages/weir/schema_artifacts/audit.v1.schema.json`](../package
 | `hits` | array | one per hit and credential (below) |
 | `files` | array | `{file, format, records, unrecognised_records, unparsed_lines, strings, bytes, not_scanned}`, sorted by file; `not_scanned` is `compressed`, `symlink`, `missing` or null, and `format` is null for a file not scanned |
 | `unknown` | array | `{reason, subject}`; `subject` is null for `no_files_read` |
-| `coverage` | object | `credentials`, `checkable`, `not_checkable`, `files` (files read), `claude_code_files`, `claude_code_tool_results_files`, `claude_code_memory_files`, `otlp_files`, `unknown_files`, `not_scanned`, `records`, `unrecognised_records`, `unparsed_lines`, `strings`, `bytes` |
+| `coverage` | object | `credentials`, `checkable`, `not_checkable`, `files` (files read), `claude_code_files`, `claude_code_tool_results_files`, `claude_code_memory_files`, `claude_code_subagent_meta_files`, `otlp_files`, `unknown_files`, `not_scanned`, `records`, `unrecognised_records`, `unparsed_lines`, `strings`, `bytes` |
 
 A credential:
 

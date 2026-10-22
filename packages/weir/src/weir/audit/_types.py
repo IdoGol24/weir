@@ -53,6 +53,7 @@ class Format(enum.Enum):
     CLAUDE_CODE = "claude-code"
     CLAUDE_CODE_TOOL_RESULTS = "claude-code-tool-results"
     CLAUDE_CODE_MEMORY = "claude-code-memory"
+    CLAUDE_CODE_SUBAGENT_META = "claude-code-subagent-meta"
     OTLP = "otlp"
     UNKNOWN = "unknown"
 
@@ -152,6 +153,7 @@ class Coverage(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     claude_code_files: int
     claude_code_tool_results_files: int
     claude_code_memory_files: int
+    claude_code_subagent_meta_files: int
     otlp_files: int
     unknown_files: int
     not_scanned: int

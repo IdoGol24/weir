@@ -44,8 +44,10 @@ from weir.audit.formats import (
     otlp_sites,
     recognise,
     recognised,
+    subagent_meta_sites,
     text_sites,
     unparsed_sites,
+    whole_json,
     whole_otlp,
 )
 from weir.audit.inputs import AuditInputError, Credential, load_inputs
@@ -135,6 +137,16 @@ class _Auditor:
     def text(self, file: _File, data: bytes, place: Place) -> None:
         for number, site in text_sites(data.decode("utf-8", "surrogateescape"), place):
             self.search(file, number, site)
+
+    def subagent_meta(self, file: _File, data: bytes, lines: list[Line]) -> None:
+        meta = whole_json(data)
+        if meta is None:
+            for line in lines:
+                self._unparsed(file, line)
+            return
+        file.records += 1
+        for site in subagent_meta_sites(meta):
+            self.search(file, 1, site)
 
     def unknown(self, file: _File, lines: list[Line]) -> None:
         for line in lines:
@@ -268,6 +280,8 @@ def audit_files(
             auditor.text(file, data, _STORED)
         elif file.format is Format.CLAUDE_CODE_MEMORY:
             auditor.text(file, data, _CONTEXT)
+        elif file.format is Format.CLAUDE_CODE_SUBAGENT_META:
+            auditor.subagent_meta(file, data, lines)
         elif file.format is Format.OTLP:
             auditor.otlp(file, data, lines)
         else:
@@ -344,6 +358,9 @@ def audit_files(
             f.format is Format.CLAUDE_CODE_TOOL_RESULTS for f in scanned
         ),
         claude_code_memory_files=sum(f.format is Format.CLAUDE_CODE_MEMORY for f in scanned),
+        claude_code_subagent_meta_files=sum(
+            f.format is Format.CLAUDE_CODE_SUBAGENT_META for f in scanned
+        ),
         otlp_files=sum(f.format is Format.OTLP for f in scanned),
         unknown_files=sum(f.format is Format.UNKNOWN for f in scanned),
         not_scanned=len(not_scanned),

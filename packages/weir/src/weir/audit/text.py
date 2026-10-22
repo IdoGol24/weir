@@ -16,6 +16,7 @@ _FORMATS = (
     (Format.CLAUDE_CODE, "claude_code_files"),
     (Format.CLAUDE_CODE_TOOL_RESULTS, "claude_code_tool_results_files"),
     (Format.CLAUDE_CODE_MEMORY, "claude_code_memory_files"),
+    (Format.CLAUDE_CODE_SUBAGENT_META, "claude_code_subagent_meta_files"),
     (Format.OTLP, "otlp_files"),
     (Format.UNKNOWN, "unknown_files"),
 )

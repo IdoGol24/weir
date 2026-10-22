@@ -172,6 +172,8 @@ def recognise(
         return Format.CLAUDE_CODE_TOOL_RESULTS
     if _is_claude_code_memory(where):
         return Format.CLAUDE_CODE_MEMORY
+    if where.parent.name == "subagents" and where.name.endswith(".meta.json"):
+        return Format.CLAUDE_CODE_SUBAGENT_META
     if any(is_otlp(line.parsed) for line in lines):
         return Format.OTLP
     if whole_otlp(data, lines) is not None:
@@ -212,6 +214,31 @@ _UNKNOWN = Place(Kind.UNKNOWN)
 
 def _str(value: Json) -> str | None:
     return value if isinstance(value, str) else None
+
+
+# docs/audit.md, "Claude Code session files": the keys of the sidecar Claude
+# Code keeps beside a subagent's transcript. Bookkeeping: none of it is sent
+# to the model as it is written there.
+_SUBAGENT_META_KEYS = frozenset({
+    "agentType", "description", "finished", "launchedWithDefaults", "requestNonInteractive",
+    "requestShape", "spawnDepth", "toolUseId",
+})
+
+
+def subagent_meta_sites(meta: dict[str, Json]) -> Iterator[Site]:
+    """A subagent sidecar: stored under its known keys, unknown under any other."""
+    for string, path in strings(meta):
+        known = path[0] in _SUBAGENT_META_KEYS
+        yield Site(string, path, _STORED if known else _UNKNOWN)
+
+
+def whole_json(data: bytes) -> dict[str, Json] | None:
+    """A whole file that is one JSON object."""
+    try:
+        value: Json = json.loads(_text(data))
+    except (ValueError, RecursionError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def recognised(record: dict[str, Json]) -> bool:

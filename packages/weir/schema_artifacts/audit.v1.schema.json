@@ -15,6 +15,9 @@
         "claude_code_memory_files": {
           "type": "integer"
         },
+        "claude_code_subagent_meta_files": {
+          "type": "integer"
+        },
         "claude_code_tool_results_files": {
           "type": "integer"
         },
@@ -57,6 +60,7 @@
         "claude_code_files",
         "claude_code_tool_results_files",
         "claude_code_memory_files",
+        "claude_code_subagent_meta_files",
         "otlp_files",
         "unknown_files",
         "not_scanned",
@@ -202,6 +206,7 @@
       "enum": [
         "claude-code",
         "claude-code-memory",
+        "claude-code-subagent-meta",
         "claude-code-tool-results",
         "otlp",
         "unknown"
