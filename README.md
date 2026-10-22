@@ -115,7 +115,7 @@ A clean result is evidence about the flows that ran and the credentials planted,
 - It finds whole values only. A truncated, split or partly masked value, a hashed, encrypted or compressed one, and encodings beyond those [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md#the-encoded-forms) lists (URL-encoded base64, UTF-16, line-wrapped base64) are not matched.
 - It sees only telemetry that reached the capture.
 - This release plants environment variables, values passed in code, and OAuth tokens. Model APIs must be OpenAI-compatible.
-- The rig does not sandbox the network. A client that ignores the proxy settings and has a hard-coded host can reach that host directly; run such flows in a container or network namespace with no route out.
+- The rig isolates the network on Linux only. Elsewhere, a client that ignores the proxy settings and has a hard-coded host can reach that host directly; run such flows in a container with no route out, and use `--require-isolation` where a run must not pass unisolated ([network isolation](https://github.com/IdoGol24/weir/blob/main/docs/canary.md#network-isolation)).
 - The flow scan needs content capture switched on in your instrumentation; `weir gauge` tells you whether it is.
 
 ## License
