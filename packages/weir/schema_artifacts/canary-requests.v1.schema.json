@@ -1,0 +1,139 @@
+{
+  "$defs": {
+    "Request": {
+      "additionalProperties": false,
+      "description": "One request the mock received (docs/canary.md, \"The request capture\").\n\n    Every field is required: a record that leaves one out is not a request\n    record, so the judge cannot attribute it.",
+      "properties": {
+        "body": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "headers": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "host": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "connect",
+            "refused",
+            "served"
+          ]
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unread": {
+          "anyOf": [
+            {
+              "enum": [
+                "encoding",
+                "too_large"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "outcome",
+        "endpoint",
+        "host",
+        "port",
+        "method",
+        "path",
+        "query",
+        "headers",
+        "body",
+        "unread"
+      ],
+      "title": "Request",
+      "type": "object"
+    },
+    "RequestsHeader": {
+      "additionalProperties": false,
+      "description": "The first line of every request capture file.",
+      "properties": {
+        "schema": {
+          "enum": [
+            "canary-requests/1"
+          ]
+        }
+      },
+      "required": [
+        "schema"
+      ],
+      "title": "RequestsHeader",
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/RequestsHeader"
+    },
+    {
+      "$ref": "#/$defs/Request"
+    }
+  ]
+}

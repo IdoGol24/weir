@@ -20,6 +20,7 @@ import msgspec
 
 from weir.canary._types import (
     RECORD_TYPES,
+    RUN,
     Direct,
     Exercised,
     Flow,
@@ -32,7 +33,6 @@ from weir.canary._types import (
 )
 
 _ID = re.compile(r"[A-Za-z0-9._:#/-]{1,128}", re.ASCII)
-_RUN = 8  # an id may hold no run of this many consecutive characters of a value
 _BY_TAG: dict[str, type[LedgerRecord]] = {
     str(cls.__struct_config__.tag): cls for cls in RECORD_TYPES
 }
@@ -153,14 +153,14 @@ def parse_ledger(data: bytes, name: str) -> Ledger:
                 )
             seen_values.add(record.value)
 
-    runs = {v[i : i + _RUN] for v in seen_values for i in range(len(v) - _RUN + 1)}
+    runs = {v[i : i + RUN] for v in seen_values for i in range(len(v) - RUN + 1)}
     unique: dict[type, set[str]] = {}
     for number, record in records:
         for record_id in _ids(record):
-            windows = (record_id[i : i + _RUN] for i in range(len(record_id) - _RUN + 1))
+            windows = (record_id[i : i + RUN] for i in range(len(record_id) - RUN + 1))
             if any(w in runs for w in windows):
                 raise LedgerError(
-                    f"ledger {name} line {number}: an id holds 8 or more consecutive"
+                    f"ledger {name} line {number}: an id holds {RUN} or more consecutive"
                     " characters of a ledger value"
                 )
         if isinstance(record, (Exercised, Network, Direct)):

@@ -28,7 +28,7 @@ from weir.cli.main import main
 _ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 # docs/canary.md "Canary values": a value never holds these words.
 _DEMOTED = ("FAKE", "TEST", "EXAMPLE", "DEMO", "PLACEHOLDER", "REDACTED")
-RUN = 8  # the contract's "run of 8 or more consecutive characters"
+RUN = 6  # the contract's "run of 6 or more consecutive characters"
 
 
 def fake_value(seed: str, length: int = 24) -> str:
@@ -93,6 +93,42 @@ def gauge(name: str, points: int = 1, **fields: object) -> dict[str, object]:
     }
 
 
+def request(
+    outcome: str = "served",
+    endpoint: str | None = "model",
+    *,
+    host: str = "127.0.0.1",
+    port: int = 4318,
+    method: str = "POST",
+    path: str | None = "/v1/chat/completions",
+    query: str | None = "",
+    headers: Sequence[tuple[str, str]] = (),
+    body: bytes | None = b"",
+    unread: str | None = None,
+) -> dict[str, object]:
+    """One request record (docs/canary.md, "The request capture")."""
+    if outcome == "connect":
+        path = query = body = None
+    return {
+        "outcome": outcome,
+        "endpoint": endpoint if outcome == "served" else None,
+        "host": host,
+        "port": port,
+        "method": "CONNECT" if outcome == "connect" else method,
+        "path": path,
+        "query": query,
+        "headers": [list(h) for h in headers],
+        "body": None if body is None else base64.b64encode(body).decode(),
+        "unread": unread,
+    }
+
+
+def write_requests(path: Path, records: Iterable[dict[str, object]]) -> Path:
+    lines = [{"schema": "canary-requests/1"}, *records]
+    write(path, "".join(json.dumps(r) + "\n" for r in lines))
+    return path
+
+
 # --- the encoded forms, built from the contract's definitions -------------
 
 
@@ -133,10 +169,13 @@ def judge(
     swept: Sequence[Path | str] = (),
     *,
     as_json: bool = False,
+    requests: Sequence[Path | str] = (),
 ) -> Run:
     args = ["canary", "judge", "--ledger", str(ledger)]
     for path in otlp:
         args += ["--otlp", str(path)]
+    for path in requests:
+        args += ["--requests", str(path)]
     if as_json:
         args.append("--json")
     args += [str(p) for p in swept]
@@ -145,7 +184,7 @@ def judge(
 
 
 def assert_value_free(text: str, values: Iterable[str]) -> None:
-    """No value and no run of 8 consecutive characters of one is printed."""
+    """No value and no run of 6 consecutive characters of one is printed."""
     for value in values:
         for i in range(len(value) - RUN + 1):
             assert value[i : i + RUN] not in text, "output holds a fragment of a canary"

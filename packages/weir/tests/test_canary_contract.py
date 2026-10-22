@@ -22,6 +22,8 @@ import pytest
 
 from weir.canary import (
     EXIT_CODES,
+    Blocked,
+    BlockedKind,
     Coverage,
     Direct,
     DirectEntry,
@@ -35,6 +37,7 @@ from weir.canary import (
     Placement,
     PlacementState,
     Report,
+    Request,
     State,
     Unexpected,
 )
@@ -521,3 +524,230 @@ def test_two_runs_with_fresh_values_print_identical_reports(
         as_json = fx.judge(ledger.relative_to(root), otlp, swept, as_json=True).stdout
         outputs.append((text, as_json))
     assert outputs[0] == outputs[1]
+
+
+# --- the request capture ----------------------------------------------------
+
+_REQUESTS_SECTION = "The request capture (`canary-requests/1`)"
+
+
+def test_request_record_fields_match_the_contract_table() -> None:
+    rows = _table(_section(_REQUESTS_SECTION), 0)
+    assert _first_ticked(rows) == [f.name for f in msgspec.structs.fields(Request)]
+    meaning = {_ticked(row[0])[0]: row[2] for row in rows}
+    # The outcomes, then the reasons a body is unread, each in the order
+    # the table gives them.
+    outcomes = _literal_args(Request, "outcome")
+    assert [t for t in _ticked(meaning["outcome"]) if t in outcomes] == [
+        "served",
+        "refused",
+        "connect",
+    ]
+    assert set(_ticked(meaning["outcome"])) >= outcomes
+    unread_hint = typing.get_type_hints(Request)["unread"]
+    reasons = {a for arg in typing.get_args(unread_hint) for a in typing.get_args(arg)}
+    assert [t for t in _ticked(meaning["unread"]) if t in reasons] == ["encoding", "too_large"]
+    assert reasons == {"encoding", "too_large"}
+
+
+def test_blocked_entries_match_the_contract_table() -> None:
+    top = _table(_section("The JSON report (`canary-report/1`)"), 0)
+    meaning = {_ticked(row[0])[0]: row[2] for row in top}
+    fields = re.search(r"`\{([^}]*)\}`", meaning["blocked"])
+    assert fields
+    assert [f.strip() for f in fields.group(1).split(",")] == [
+        f.name for f in msgspec.structs.fields(Blocked)
+    ]
+    assert set(_ticked(meaning["blocked"])) >= {k.value for k in BlockedKind}
+
+
+def _request_run(
+    tmp_path: Path, record: dict[str, object], value: str, **placement: object
+) -> fx.Run:
+    ledger = fx.write_ledger(tmp_path / "ledger.jsonl", [fx.placement("p.one", value, **placement)])
+    otlp = tmp_path / "otlp.jsonl"
+    fx.write(otlp, fx.traces(fx.span("clean")) + "\n")
+    requests = fx.write_requests(tmp_path / "requests.jsonl", [record])
+    run = fx.judge(ledger, [otlp], requests=[requests], as_json=True)
+    fx.assert_value_free(run.stdout, [value])
+    return run
+
+
+def _sink_records(template: str, value: str) -> list[tuple[dict[str, object], str]]:
+    """Requests that the sink row `template` names, each with the sink the
+    report must print for it."""
+    headers = [("X-Key", value)]
+    if template in ("model", "oauth", "otlp"):
+        return [(fx.request("served", template, headers=headers), template)]
+    if template == "unmocked":
+        return [(fx.request("served", None, path="/elsewhere", headers=headers), "unmocked")]
+    if template == "<declared api>":
+        return [(fx.request("served", "billing", path="/ep/billing", headers=headers), "billing")]
+    if template == "<host> (blocked)":
+        return [
+            (
+                fx.request(outcome, None, host="Far.Away.invalid", headers=headers),
+                "far.away.invalid (blocked)",
+            )
+            for outcome in ("refused", "connect")
+        ]
+    raise AssertionError(f"teach _sink_records the sink row {template!r}")
+
+
+def _sink_rows() -> list[str]:
+    section = _section("Attribution")
+    return _first_ticked(_table(section, 0))
+
+
+def test_the_sink_table_is_the_sinks_the_judge_prints() -> None:
+    assert "model" in _sink_rows() and "<host> (blocked)" in _sink_rows()
+
+
+@pytest.mark.parametrize("template", _sink_rows())
+def test_every_sink_in_the_contract_table_is_reported(tmp_path: Path, template: str) -> None:
+    for index, (record, sink) in enumerate(_sink_records(template, fx.fake_value(template))):
+        root = tmp_path / str(index)
+        root.mkdir()
+        value = fx.fake_value(f"{template} {index}")
+        record = {**record, "headers": [["X-Key", value]]}
+        # Its own provider is somewhere else entirely.
+        run = _request_run(root, record, value, providers=["search"], provider_host="own.invalid")
+        hits = typing.cast(list[dict[str, object]], run.report["hits"])
+        assert [(h["signal"], h["sink"], h["location"]) for h in hits] == [
+            ("requests", sink, "headers.x-key")
+        ]
+
+
+def _located(template: str, value: str) -> dict[str, object]:
+    """A request that holds `value` at the location row `template` only."""
+    if template == "method":
+        return fx.request(method=value)
+    if template == "host":
+        return fx.request("refused", None, host=f"{value}.invalid")
+    if template == "path":
+        return fx.request(path=f"/files/{value}")
+    if template == "query.<name>":
+        return fx.request(query=f"a=1&k1={value}")
+    if template == "query":
+        # Split across two parameters: only the whole query holds it.
+        return fx.request(query=f"k1={value[:8]}&{value[9:]}")
+    if template == "headers.<name>":
+        return fx.request(headers=[("K1", value)])
+    if template == "body.<path>":
+        return fx.request(body=json.dumps({"messages": [{"content": value}]}).encode())
+    if template == "body.<name>":
+        form = [("Content-Type", "application/x-www-form-urlencoded")]
+        return fx.request(headers=form, body=f"a=1&k1={value}".encode())
+    if template == "body":
+        return fx.request(body=f"plain {value} text".encode())
+    raise AssertionError(f"teach _located the location row {template!r}")
+
+
+_LOCATED = {
+    "query.<name>": "query.k1",
+    "headers.<name>": "headers.k1",
+    "body.<path>": "body.messages[0].content",
+    "body.<name>": "body.k1",
+}
+
+
+def _request_location_rows() -> list[str]:
+    section = _section(_REQUESTS_SECTION)
+    rows = _table(section, 2)
+    return _first_ticked(rows)
+
+
+@pytest.mark.parametrize("template", _request_location_rows())
+def test_every_request_location_in_the_contract_table_is_reported(
+    tmp_path: Path, template: str
+) -> None:
+    value = fx.fake_value(f"location {template}")
+    if template == "query":
+        value = value[:8] + "&" + value[9:]
+    run = _request_run(tmp_path, _located(template, value), value)
+    hits = typing.cast(list[dict[str, object]], run.report["hits"])
+    assert [(h["signal"], h["location"]) for h in hits] == [
+        ("requests", _LOCATED.get(template, template))
+    ]
+
+
+def test_the_body_path_example_is_the_one_the_judge_prints() -> None:
+    example = re.search(r"as in `(body\.[^`]+)`", _section(_REQUESTS_SECTION))
+    assert example and example.group(1) == _LOCATED["body.<path>"]
+
+
+_REQUEST_LEAK = re.compile(
+    r"LEAK (?P<placement>\S+) file=(?P<file>\S+):(?P<line>\d+) signal=requests"
+    r" sink=(?P<sink>\"[^\"]*\") at=(?P<at>\S+) form=(?P<form>\w+)"
+)
+_BLOCKED = re.compile(r"blocked (?P<kind>\w+): (?P<host>[^:]+):(?P<port>\d+) \((?P<count>\d+)x\)")
+
+
+def _request_example() -> list[str]:
+    blocks = re.findall(r"```text\n(.*?)```", _section("The text report"), re.DOTALL)
+    assert len(blocks) == 2, "the text report has a main example and a request excerpt"
+    return blocks[1].splitlines()
+
+
+def _excerpt_record(sink: str, location: str, value: str) -> dict[str, object]:
+    blocked = re.fullmatch(r"(.+) \(blocked\)", sink)
+    target: dict[str, object] = (
+        {"outcome": "refused", "endpoint": None, "host": blocked.group(1), "port": 80}
+        if blocked
+        else {"endpoint": sink}
+    )
+    if location == "headers.authorization":
+        record = fx.request(headers=[("Authorization", f"Bearer {value}")])
+    elif location.startswith("body."):
+        tokens = _tokens(location)[1:]
+        node: object = value
+        for token in reversed(tokens):
+            node = (
+                [*([{}] * typing.cast(int, token)), node]
+                if isinstance(token, int)
+                else {token: node}
+            )
+        record = fx.request(body=json.dumps(node).encode())
+    else:
+        raise AssertionError(f"teach _excerpt_record the location {location!r}")
+    return {**record, **target}
+
+
+def test_the_request_excerpt_prints_as_the_contract_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    lines = _request_example()
+    leaks = [m.groupdict() for m in map(_REQUEST_LEAK.fullmatch, lines) if m]
+    blocked = [m.groupdict() for m in map(_BLOCKED.fullmatch, lines) if m]
+    assert leaks and blocked
+    assert len(leaks) + len(blocked) == len(lines), "a line of the excerpt is not understood"
+    [placement] = {leak["placement"] for leak in leaks}
+    [path] = {leak["file"] for leak in leaks}
+    value = fx.fake_value("excerpt")
+    records: dict[int, dict[str, object]] = {}
+    for leak in leaks:
+        assert leak["form"] == "raw"
+        records[int(leak["line"])] = _excerpt_record(json.loads(leak["sink"]), leak["at"], value)
+    for entry in blocked:
+        for _ in range(int(entry["count"])):
+            outcome = "connect" if entry["kind"] == "connection" else "refused"
+            record = fx.request(outcome, None, host=entry["host"], port=int(entry["port"]))
+            if outcome == "refused" and any(
+                r.get("host") == entry["host"] and r["outcome"] == "refused"
+                for r in records.values()
+            ):
+                continue  # the leaking refused request is this destination's record
+            free = next(n for n in range(2, 100) if n not in records)
+            records[free] = record
+    filler = fx.request(headers=[("Authorization", "Bearer none")])
+    ordered = [records.get(n, filler) for n in range(2, max(records) + 1)]
+    (tmp_path / Path(path).parent).mkdir(parents=True, exist_ok=True)
+    fx.write_requests(tmp_path / path, ordered)
+    fx.write_ledger(tmp_path / "ledger.jsonl", [fx.placement(placement, value)])
+    otlp = tmp_path / "otlp.jsonl"
+    fx.write(otlp, fx.traces(fx.span("clean")) + "\n")
+    run = fx.judge(Path("ledger.jsonl"), ["otlp.jsonl"], requests=[path])
+    printed = [ln for ln in run.lines if ln.startswith(("LEAK ", "blocked "))]
+    assert printed == lines
+    fx.assert_value_free(run.stdout, [value])

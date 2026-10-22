@@ -186,18 +186,20 @@ handled by the first rule that applies:
    placement's own provider is the judge's call, from the request capture.
    A received value is never added as a placement, so a composite such as
    a cookie or a Basic value never enters the ledger.
-2. **Anything else** is never written by the mock, to the ledger or to any
-   record of its own. The mock writes an `unexpected` record naming only
-   its endpoint and field, and the run is incomplete
-   (`unexpected_credential`). A flow that sends a credential no canary
+2. **Anything else** is never written to the ledger. The mock writes an
+   `unexpected` record naming only its endpoint and field, and the run is
+   incomplete (`unexpected_credential`). A flow that sends a credential no canary
    accounts for has left the check's premise, so it fails visibly instead
    of passing.
 
 Separately from these rules, the mock records every request it receives,
 headers and body included, in the request capture (see
 [The request capture](#the-request-capture-canary-requests1)): the one
-record of request content the mock keeps, read by the judge and deleted by
-the runner with the rest of the capture. If the program itself logs or
+record of request content the mock keeps. Like every capture file it holds
+what the program sent, an unaccounted credential included; it is read
+only by the judge, which prints from it only a host and the names of
+headers, parameters and fields, under the printing rule; and the runner
+deletes it with the rest of the capture. If the program itself logs or
 exports a credential, it is in the program's own capture files and output
 like anything else the program emits.
 
@@ -414,7 +416,7 @@ first line is the header; every other line is one request:
 ```json
 {"schema": "canary-requests/1"}
 {"outcome": "served", "endpoint": "model", "host": "127.0.0.1", "port": 41817, "method": "POST", "path": "/v1/chat/completions", "query": "", "headers": [["Host", "127.0.0.1:41817"], ["Authorization", "Bearer <fake value>"]], "body": "<base64>", "unread": null}
-{"outcome": "refused", "endpoint": null, "host": "collector.example", "port": 80, "method": "POST", "path": "/ingest", "query": "", "headers": [["Host", "collector.example"]], "body": "<base64>", "unread": null}
+{"outcome": "refused", "endpoint": null, "host": "collector.example", "port": 80, "method": "POST", "path": "http://collector.example/ingest", "query": "", "headers": [["Host", "collector.example"]], "body": "<base64>", "unread": null}
 {"outcome": "connect", "endpoint": null, "host": "api.example", "port": 443, "method": "CONNECT", "path": null, "query": null, "headers": [["Host", "api.example:443"]], "body": null, "unread": null}
 ```
 
@@ -422,11 +424,11 @@ first line is the header; every other line is one request:
 | --- | --- | --- |
 | `outcome` | string | `served` (the mock answered as itself: a mocked endpoint, or a 404 for a path it does not mock), `refused` (a plain-HTTP request for another host, refused with 403 and forwarded nowhere) or `connect` (a `CONNECT` for another host, refused with 403 before any byte of the tunnel) |
 | `endpoint` | string or null | for `served`, the endpoint that answered: `model`, `oauth`, `otlp` or a declared endpoint's id; null for a path the mock does not mock, and for `refused` and `connect` |
-| `host` | string | the destination host, in lower case: the mock's own address for `served`, the requested host otherwise |
+| `host` | string | the destination host as received, letter case kept: the mock's own address for `served`, the requested host otherwise |
 | `port` | integer | the destination port |
 | `method` | string | the request method |
-| `path` | string or null | the path as received, percent-escapes kept; null for `connect` |
-| `query` | string or null | the query string as received, without the `?`, empty when there is none; null for `connect` |
+| `path` | string or null | the request target as received, up to its first `?`, percent-escapes kept: the path, or for an absolute-form request the whole URL, userinfo included; null for `connect` |
+| `query` | string or null | the request target after its first `?`, empty when there is none; null for `connect` |
 | `headers` | array | every header as a `[name, value]` pair of strings, in the order received |
 | `body` | string or null | the body after its `Content-Encoding` is removed, base64-encoded (standard alphabet, padded); empty when there is no body. Null for a `connect`, for an OTLP export (its content is the telemetry capture) and for a declared endpoint that keeps its bodies as swept capture files: a body judged elsewhere is not judged twice |
 | `unread` | string or null | why the body could not be judged in full: `encoding` (a `Content-Encoding` the mock cannot remove; `body` holds the bytes as received) or `too_large` (over the mock's 64 MiB limit; `body` is null); null otherwise |
@@ -458,7 +460,7 @@ query; and every body is also searched as a whole. Then:
 | `otlp` | to the mock's telemetry receiver: a header or the query of an export |
 | `<declared api>` | to an endpoint the runner's configuration declares, by its id: a credential sent to the wrong service |
 | `unmocked` | to the mock, at a path it does not mock |
-| `<host> (blocked)` | a `refused` plain-HTTP request, or a `connect`, for another host; `<host>` is the record's host under the printing rule |
+| `<host> (blocked)` | a `refused` plain-HTTP request, or a `connect`, for another host; `<host>` is the record's host in lower case, under the printing rule |
 
 A `connect` has no visible content: the mock refuses the tunnel before
 the client sends any byte through it. It is reported as a **blocked
@@ -473,7 +475,7 @@ A hit in a request is located by part:
 | --- | --- |
 | `method` | the method |
 | `host` | the destination host |
-| `path` | the path, as received or percent-decoded |
+| `path` | the request target up to its `?`, as received or percent-decoded |
 | `query.<name>` | a query parameter, by its percent-decoded name |
 | `query` | the whole query, where no parameter of the request held a needle of the placement |
 | `headers.<name>` | a header, by its name in lower case |
@@ -481,8 +483,10 @@ A hit in a request is located by part:
 | `body.<name>` | a field of a form body, by its percent-decoded name |
 | `body` | the body as a whole, where no JSON string or form field of the request held a needle of the placement |
 
-A name is printed under the printing rule, so a name that itself holds a
-needle reads `[withheld]` in the location.
+A name or host is printed under the printing rule, so one that itself
+holds a needle reads `[withheld]`. One printed in another form than it was
+received (a header name or host in lower case, a parameter or field name
+percent-decoded) is withheld when either form would be.
 
 The judge exits 2, naming the file, when a request capture file is empty
 or its first line is not the header. A later line that is not a request

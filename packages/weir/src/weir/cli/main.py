@@ -442,7 +442,7 @@ def inventory_command(
 
 @main.group("canary")
 def canary_group() -> None:
-    """Canary checks: did a planted fake credential reach the telemetry?"""
+    """Canary checks: did a planted fake credential leave the user's control?"""
 
 
 _CANARY_SAMPLE = "canary-sample"
@@ -482,6 +482,15 @@ def _judge_canary_sample() -> Report:
     " (repeatable). Only these count toward completeness. Required unless --sample.",
 )
 @click.option(
+    "--requests",
+    "request_paths",
+    metavar="PATH",
+    multiple=True,
+    help="A request capture file or directory (canary-requests/1): every request the"
+    " mock received (repeatable). A planted value in a request to anything but its"
+    " own provider is a leak to that request's sink.",
+)
+@click.option(
     "--sample",
     is_flag=True,
     help="Judge the bundled sample (a fake ledger and a capture with one leak) - zero setup.",
@@ -491,25 +500,27 @@ def _judge_canary_sample() -> Report:
 def canary_judge_command(
     ledger_path: str | None,
     otlp_paths: tuple[str, ...],
+    request_paths: tuple[str, ...],
     sample: bool,
     as_json: bool,
     paths: tuple[str, ...],
 ) -> None:
     """Report every placement whose value, or an encoded form of it, appears
-    in the capture. PATHS are further files or directories swept for
-    canaries. Prints placement ids and locations, never a value.
+    in the capture, or in a request to anything but its own provider. PATHS
+    are further files or directories swept for canaries. Prints placement
+    ids, locations and sinks, never a value.
 
     Exit 0 clean, 1 leak, 2 unusable input, 3 incomplete."""
     if sample:
-        if ledger_path is not None or otlp_paths or paths:
-            raise click.UsageError("--sample takes no --ledger, --otlp or PATH")
+        if ledger_path is not None or otlp_paths or request_paths or paths:
+            raise click.UsageError("--sample takes no --ledger, --otlp, --requests or PATH")
         judge = _judge_canary_sample
     elif ledger_path is None:
         raise click.UsageError("Missing option '--ledger' (or use --sample).")
     elif not otlp_paths:
         raise click.UsageError("Missing option '--otlp' (or use --sample).")
     else:
-        judge = functools.partial(judge_paths, ledger_path, otlp_paths, paths)
+        judge = functools.partial(judge_paths, ledger_path, otlp_paths, paths, request_paths)
     try:
         report = judge()
     except (LedgerError, CaptureError) as exc:

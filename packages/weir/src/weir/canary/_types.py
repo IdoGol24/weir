@@ -1,12 +1,14 @@
-"""Canary ledger (canary-ledger/1) and report (canary-report/1) records.
+"""Canary ledger (canary-ledger/1), request capture (canary-requests/1) and
+report (canary-report/1) records.
 
-The contract for both is docs/canary.md. The JSON Schema artifacts in
-packages/weir/schema_artifacts/ (canary-ledger.v1, canary-report.v1) are
-generated from these structs and drift-tested.
+The contract for all three is docs/canary.md. The JSON Schema artifacts in
+packages/weir/schema_artifacts/ (canary-ledger.v1, canary-requests.v1,
+canary-report.v1) are generated from these structs and drift-tested.
 
 Every report struct is VALUE-FREE by construction: no field can hold a
 canary value, a fragment of one, a masked form, a hash or a fingerprint.
-Only the ledger's `Placement.value` holds a value, and the ledger is input.
+Only the ledger's `Placement.value` and a request record hold a value, and
+both are input.
 """
 
 from __future__ import annotations
@@ -17,16 +19,24 @@ from typing import Annotated, Literal
 import msgspec
 
 LEDGER_SCHEMA = "canary-ledger/1"
+REQUESTS_SCHEMA = "canary-requests/1"
 REPORT_SCHEMA = "canary-report/1"
 
 # An id is printed in both reports, so it is restricted to characters that
-# can neither break a line nor quote anything. The no-value rule (no run of 8
-# consecutive characters of any ledger value) is checked across the whole
-# ledger, so it is not expressible here.
+# can neither break a line nor quote anything. The no-value rule (no run of
+# RUN consecutive characters of any ledger value) is checked across the
+# whole ledger, so it is not expressible here.
 ID_PATTERN = "^[A-Za-z0-9._:#/-]{1,128}$"
+ENDPOINT_PATTERN = "^[A-Za-z0-9_-]{1,40}$"
+HOST_PATTERN = "^[A-Za-z0-9._:-]{1,253}$"
 MIN_VALUE_LENGTH = 16
+# docs/canary.md: nothing printed holds a run of this many consecutive
+# characters of any ledger value.
+RUN = 6
 
 Id = Annotated[str, msgspec.Meta(min_length=1, max_length=128, pattern=ID_PATTERN)]
+EndpointId = Annotated[str, msgspec.Meta(min_length=1, max_length=40, pattern=ENDPOINT_PATTERN)]
+Host = Annotated[str, msgspec.Meta(min_length=1, max_length=253, pattern=HOST_PATTERN)]
 
 Kind = Literal["env", "code", "mock-oauth"]
 Evidence = Literal["request", "minted", "egress"]
@@ -53,6 +63,9 @@ class Placement(msgspec.Struct, tag_field="type", tag="placement", forbid_unknow
     kind: Kind
     value: Annotated[str, msgspec.Meta(min_length=MIN_VALUE_LENGTH)]
     required: bool = False
+    # Its own provider (docs/canary.md, "A placement's own provider").
+    providers: list[EndpointId] = []
+    provider_host: Host | None = None
 
 
 class Exercised(msgspec.Struct, tag_field="type", tag="exercised", forbid_unknown_fields=True):
@@ -99,6 +112,31 @@ RECORD_TYPES: tuple[type[LedgerRecord], ...] = (
 )
 
 
+class RequestsHeader(msgspec.Struct, forbid_unknown_fields=True):
+    """The first line of every request capture file."""
+
+    schema: Literal["canary-requests/1"]
+
+
+class Request(msgspec.Struct, forbid_unknown_fields=True):
+    """One request the mock received (docs/canary.md, "The request capture").
+
+    Every field is required: a record that leaves one out is not a request
+    record, so the judge cannot attribute it.
+    """
+
+    outcome: Literal["served", "refused", "connect"]
+    endpoint: EndpointId | None
+    host: str
+    port: Annotated[int, msgspec.Meta(ge=0, le=65535)]
+    method: str
+    path: str | None
+    query: str | None
+    headers: list[tuple[str, str]]
+    body: str | None
+    unread: Literal["encoding", "too_large"] | None
+
+
 class Ledger(msgspec.Struct, frozen=True):
     """A parsed, validated ledger. Record order is ledger line order."""
 
@@ -128,6 +166,7 @@ class Signal(enum.StrEnum):
     TRACES = "traces"
     LOGS = "logs"
     METRICS = "metrics"
+    REQUESTS = "requests"
     RAW = "raw"
 
 
@@ -152,6 +191,11 @@ class NotScannedReason(enum.StrEnum):
     SYMLINK = "symlink"
 
 
+class BlockedKind(enum.StrEnum):
+    CONNECTION = "connection"
+    REQUEST = "request"
+
+
 class IncompleteReason(enum.StrEnum):
     REQUIRED_NOT_EXERCISED = "required_not_exercised"
     FLOW_NOT_OK = "flow_not_ok"
@@ -173,6 +217,7 @@ class Hit(msgspec.Struct, frozen=True):
     span_id: str | None
     log_record: int | None
     metric: str | None
+    sink: str | None
     location: str | None
     form: Form
 
@@ -196,6 +241,15 @@ class NotScanned(msgspec.Struct, frozen=True):
     reason: NotScannedReason
 
 
+class Blocked(msgspec.Struct, frozen=True):
+    """A destination the mock refused, by kind; never a leak by itself."""
+
+    kind: BlockedKind
+    host: str
+    port: int
+    count: int
+
+
 class Incomplete(msgspec.Struct, frozen=True):
     reason: IncompleteReason
     subject: str | None
@@ -217,6 +271,10 @@ class Coverage(msgspec.Struct, frozen=True):
     unparsed_records: int
     strings: int
     bytes: int
+    request_files: int
+    requests: int
+    requests_refused: int
+    connections_blocked: int
 
 
 class DirectEntry(msgspec.Struct, frozen=True):
@@ -242,6 +300,7 @@ class Report(msgspec.Struct, frozen=True):
     placements: list[PlacementState]
     flows: list[FlowState]
     not_scanned: list[NotScanned]
+    blocked: list[Blocked]
     incomplete: list[Incomplete]
     coverage: Coverage
     network: NetworkState
@@ -256,6 +315,13 @@ def ledger_json_schema() -> dict[str, object]:
     (header_ref, record_ref), components = msgspec.json.schema_components(
         [LedgerHeader, LedgerRecord]
     )
+    return {"$defs": components, "anyOf": [header_ref, record_ref]}
+
+
+def requests_json_schema() -> dict[str, object]:
+    """The committed JSON Schema artifact for one request capture line
+    (canary-requests/1): the header or one request record."""
+    (header_ref, record_ref), components = msgspec.json.schema_components([RequestsHeader, Request])
     return {"$defs": components, "anyOf": [header_ref, record_ref]}
 
 
