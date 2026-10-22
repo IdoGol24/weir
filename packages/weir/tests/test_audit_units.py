@@ -52,6 +52,12 @@ def _session(setup: fx.Setup, path: Path, text: str = "README.md\n") -> Path:
     return session.write(path)
 
 
+def _shown(given: Path | str, path: Path) -> str:
+    """The name the report gives a file found under the directory `given`:
+    the path as given, then the names below it joined by `/`."""
+    return f"{given}/{path.relative_to(given).as_posix()}"
+
+
 def _rewrite_json(path: Path, change: object) -> None:
     data = json.loads(path.read_text())
     change(data)  # type: ignore[operator]
@@ -246,21 +252,24 @@ def test_a_session_directory_is_read_with_its_subagents_and_tool_results(
     cfx.write(spill, f"line one\n{fx.ACME}={setup.values[fx.ACME]}\n")
     os.symlink(spill, project / "linked.jsonl")
 
-    run = setup.audit([tmp_path / "projects"])
+    given = tmp_path / "projects"
+    run = setup.audit([given])
 
     report = run.report
     formats = {f["file"]: (f["format"], f["not_scanned"]) for f in report["files"]}  # type: ignore[union-attr,index]
     assert formats == {
-        str(project / f"{fx.SESSION_ID}.jsonl"): ("claude-code", None),
-        str(sub_path): ("claude-code", None),
-        str(spill): ("claude-code-tool-results", None),
-        str(project / "linked.jsonl"): (None, "symlink"),
+        _shown(given, project / f"{fx.SESSION_ID}.jsonl"): ("claude-code", None),
+        _shown(given, sub_path): ("claude-code", None),
+        _shown(given, spill): ("claude-code-tool-results", None),
+        _shown(given, project / "linked.jsonl"): (None, "symlink"),
     }
-    assert _only_hit(run, setup, fx.GH)["file"] == str(sub_path)
+    assert _only_hit(run, setup, fx.GH)["file"] == _shown(given, sub_path)
     assert _only_hit(run, setup, fx.GH)["line"] == sub_line
     spilled = _only_hit(run, setup)
-    assert (spilled["kind"], spilled["file"], spilled["line"]) == ("stored", str(spill), 2)
-    assert ("not_scanned", str(project / "linked.jsonl")) in [
+    assert (spilled["kind"], spilled["file"], spilled["line"]) == (
+        "stored", _shown(given, spill), 2,
+    )
+    assert ("not_scanned", _shown(given, project / "linked.jsonl")) in [
         (u["reason"], u["subject"]) for u in report["unknown"]  # type: ignore[union-attr,index]
     ]
     assert run.exit_code == 1
@@ -577,13 +586,14 @@ def _memory_tree(setup: fx.Setup, tmp_path: Path) -> dict[str, Path]:
 def test_clean_claude_code_memory_and_claude_md_files_are_clean(tmp_path: Path) -> None:
     setup = fx.build(tmp_path)
     files = _memory_tree(setup, tmp_path)
-    run = setup.audit([tmp_path / "claude"])
+    given = tmp_path / "claude"
+    run = setup.audit([given])
     formats = {f["file"]: f["format"] for f in run.report["files"]}  # type: ignore[union-attr,index]
     assert formats == {
-        str(files["session"]): "claude-code",
-        str(files["index"]): "claude-code-memory",
-        str(files["topic"]): "claude-code-memory",
-        str(files["claude_md"]): "claude-code-memory",
+        _shown(given, files["session"]): "claude-code",
+        _shown(given, files["index"]): "claude-code-memory",
+        _shown(given, files["topic"]): "claude-code-memory",
+        _shown(given, files["claude_md"]): "claude-code-memory",
     }
     assert (run.report["result"], run.exit_code, run.report["unknown"]) == ("clean", 0, [])
 
@@ -594,10 +604,11 @@ def test_a_value_in_a_memory_or_claude_md_file_is_in_context(tmp_path: Path, nam
     path = _memory_tree(setup, tmp_path)[name]
     before = path.read_text()
     cfx.write(path, before + f"token: {setup.values[fx.ACME]}\n")
-    run = setup.audit([tmp_path / "claude"])
+    given = tmp_path / "claude"
+    run = setup.audit([given])
     hit = _only_hit(run, setup)
     assert (hit["kind"], hit["file"], hit["line"], hit["format"], hit["location"]) == (
-        "context", str(path), before.count("\n") + 1, "claude-code-memory", None,
+        "context", _shown(given, path), before.count("\n") + 1, "claude-code-memory", None,
     )
     assert fx.credential(run.report, setup.ids[fx.ACME])["state"] == "in_context"
     assert run.exit_code == 1
@@ -617,19 +628,19 @@ def test_memory_and_tool_results_files_are_recognised_from_a_relative_path(
     monkeypatch.chdir(project.parent)
     run = setup.audit(["."])
     formats = {f["file"]: f["format"] for f in run.report["files"]}  # type: ignore[union-attr,index]
-    given = {
-        os.path.join(".", os.path.relpath(path, project.parent)): path
+    shown = {
+        _shown(".", path.relative_to(project.parent)): path
         for path in (files["session"], files["index"], files["topic"], spill)
     }
     assert formats == {
         name: {spill: "claude-code-tool-results", files["session"]: "claude-code"}.get(
             path, "claude-code-memory"
         )
-        for name, path in given.items()
+        for name, path in shown.items()
     }
     hit = _only_hit(run, setup)
     assert (hit["kind"], hit["file"]) == (
-        "context", os.path.join(".", os.path.relpath(files["index"], project.parent)),
+        "context", _shown(".", files["index"].relative_to(project.parent)),
     )
     assert run.report["unknown"] == []
 
