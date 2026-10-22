@@ -33,7 +33,9 @@ from weir.statusline.files import write_private
 CACHE_SCHEMA = "weir-statusline-cache/1"
 # A step reads at least one whole line and stops at the first line end past this.
 CHUNK_BYTES = 64 * 1024
-# The bytes before the offset whose MAC proves a file only grew.
+# The bytes at the start of a file, and the bytes before the offset, whose
+# MACs show a file only grew: the read part is checked at both ends, never
+# read whole again.
 _PREFIX_BYTES = 4096
 # Formats whose lines are read each on their own: a chunk of whole lines
 # gives the hits those lines give in the whole file.
@@ -73,8 +75,9 @@ def tally(report: Report) -> Tally:
 
 def value_groups(inputs: Inputs) -> dict[str, str]:
     """Credential id -> the credential it stands for: records that share a
-    fingerprint are one value, and environment records that share a
-    variable name are one variable; each is counted once. In memory only."""
+    fingerprint are one value, and records of an environment variable
+    assignment (the launch environment, a shell startup file) that share a
+    name are one variable; each is counted once. In memory only."""
     out = {c.id: c.id for c in inputs.credentials}
 
     def find(cid: str) -> str:
@@ -84,7 +87,7 @@ def value_groups(inputs: Inputs) -> dict[str, str]:
 
     names: dict[str, list[str]] = {}
     for c in inputs.credentials:
-        if c.source == "environment":
+        if c.variable:
             names.setdefault(c.name, []).append(c.id)
     for ids in [*inputs.by_fingerprint.values(), *names.values()]:
         for cid in ids[1:]:
@@ -168,6 +171,9 @@ class _Entry(msgspec.Struct):
     # record, so whatever is appended, it stays one.
     certain: bool
     offset: int
+    # MACs of the file's first bytes up to the offset (at most
+    # _PREFIX_BYTES), and of the _PREFIX_BYTES before the offset.
+    head_mac: str
     prefix_mac: str
     lines: Tally
     # What the bytes after the last line end held, at this size and time.
@@ -272,36 +278,36 @@ class Reader:
             )
         with open(path, "rb") as handle:
             if cached is not None and cached.certain and cached.same_file(st):
-                # A session file for sure, and its read part unchanged: read
-                # only what was appended.
+                # A session file for sure: when its read part is unchanged at
+                # both ends, read only what was appended.
+                head = handle.read(min(cached.offset, _PREFIX_BYTES))
                 start = max(0, cached.offset - _PREFIX_BYTES)
                 handle.seek(start)
                 data = handle.read()
-                if self._mac("prefix", data[: cached.offset - start]) == cached.prefix_mac:
+                if self._read_part_unchanged(cached, head, data[: cached.offset - start]):
                     return self._lines(path, st, cached, data, start)
                 handle.seek(0)
             data = handle.read()
-        lines = json_lines(data)
-        fmt = recognise(path, data, lines, self._projects)
-        certain = fmt is Format.CLAUDE_CODE and any(
-            is_session_record(line.parsed) for line in lines
-        )
+        fmt, certain = self._recognise(path, data)
         resume = (
             cached is not None and cached.format is fmt and fmt in _LINEWISE
             and cached.same_file(st)
-            and self._mac("prefix", data[max(0, cached.offset - _PREFIX_BYTES) : cached.offset])
-            == cached.prefix_mac
+            and self._read_part_unchanged(
+                cached, data[: min(cached.offset, _PREFIX_BYTES)],
+                data[max(0, cached.offset - _PREFIX_BYTES) : cached.offset],
+            )
         )
         entry = cached if resume and cached is not None else _Entry(
             dev=st.st_dev, ino=st.st_ino, size=st.st_size, mtime_ns=st.st_mtime_ns, format=fmt,
-            certain=certain, offset=0, prefix_mac=self._mac("prefix", b""), lines=Tally(),
-            tail=None,
+            certain=certain, offset=0, head_mac=self._mac("head", b""),
+            prefix_mac=self._mac("prefix", b""), lines=Tally(), tail=None,
         )
         entry.certain = certain
         if fmt not in _LINEWISE:
             # A whole-file format: one step, all or nothing.
             entry.lines = self._audit(path, data, fmt)
             entry.offset = len(data)
+            entry.head_mac = self._mac("head", data[:_PREFIX_BYTES])
             entry.prefix_mac = self._mac("prefix", data[-_PREFIX_BYTES:])
             entry.tail = Tally()
             self._stamp(entry, st)
@@ -309,6 +315,28 @@ class Reader:
             self.save()
             return entry, len(data), len(data)
         return self._lines(path, st, entry, data, 0)
+
+    def _read_part_unchanged(self, cached: _Entry, head: bytes, before_offset: bytes) -> bool:
+        return (
+            hmac.compare_digest(self._mac("head", head), cached.head_mac)
+            and hmac.compare_digest(self._mac("prefix", before_offset), cached.prefix_mac)
+        )
+
+    def _recognise(self, path: str, data: bytes) -> tuple[Format, bool]:
+        """The file's format, and whether it is a Claude Code session for
+        sure. A message record in the first whole lines settles both
+        without parsing the rest, so a first read of a long transcript
+        costs its auditing steps, which the deadline bounds."""
+        first = data.find(b"\n", CHUNK_BYTES - 1)
+        if first >= 0 and any(
+            is_session_record(line.parsed) for line in json_lines(data[: first + 1])
+        ):
+            return Format.CLAUDE_CODE, True
+        lines = json_lines(data)
+        fmt = recognise(path, data, lines, self._projects)
+        return fmt, fmt is Format.CLAUDE_CODE and any(
+            is_session_record(line.parsed) for line in lines
+        )
 
     def _lines(
         self, path: str, st: os.stat_result, entry: _Entry, data: bytes, base: int
@@ -327,6 +355,8 @@ class Reader:
             chunk = data[entry.offset - base : stop - base]
             entry.lines.add(self._audit(path, chunk, entry.format))
             entry.offset = stop
+            if base == 0:
+                entry.head_mac = self._mac("head", data[: min(stop, _PREFIX_BYTES)])
             window = data[max(0, stop - base - _PREFIX_BYTES) : stop - base]
             entry.prefix_mac = self._mac("prefix", window)
             self._stepped = True

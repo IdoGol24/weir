@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import msgspec
 
 from weir.inventory._types import INVENTORY_SCHEMA, STORE_SCHEMA, Inventory, Store, ValueState
+from weir.inventory.keyfile import key_file_problem
 
 # docs/inventory.md, "The store": the version of the fingerprint input and
 # algorithm this audit computes, and the key check's message. Both are
@@ -26,6 +28,11 @@ from weir.inventory._types import INVENTORY_SCHEMA, STORE_SCHEMA, Inventory, Sto
 FINGERPRINT_VERSION = 1
 KEY_CHECK_MESSAGE = b"weir-inventory-store key check"
 _KEY_BYTES = 32
+# docs/inventory.md, `detectors`: the detectors of a variable assignment in
+# the launch environment or a shell startup file. An environment record
+# without one is a credential shape found loose in a startup file (a
+# comment, a here-document), named after its shape, not a variable.
+_ASSIGNMENT_DETECTORS = frozenset({"launch_env", "startup_file"})
 
 
 class AuditInputError(Exception):
@@ -44,6 +51,8 @@ class Credential:
     scope: str | None
     value_state: str
     fingerprint: bytes | None
+    # An environment variable the agent's shell can expand by `name`.
+    variable: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,8 +78,16 @@ def _read(path: Path, label: str) -> bytes:
         raise AuditInputError(f"{label} {path}: cannot be read ({exc.strerror})") from None
 
 
-def _read_key(path: Path) -> bytes:
-    data = _read(path, "key")
+def read_key(path: Path) -> bytes:
+    """The fingerprint key, from a file only its owner can read."""
+    try:
+        with path.open("rb") as handle:
+            problem = key_file_problem(os.fstat(handle.fileno()))
+            data = handle.read()
+    except OSError as exc:
+        raise AuditInputError(f"key {path}: cannot be read ({exc.strerror})") from None
+    if problem is not None:
+        raise AuditInputError(f"key {path}: {problem}")
     try:
         key = bytes.fromhex(data.decode("ascii").strip())
     except (UnicodeDecodeError, ValueError):
@@ -104,7 +121,7 @@ def load_inputs(report_path: Path, store_path: Path, key_path: Path) -> Inputs:
         INVENTORY_SCHEMA,
     )
     store = _decode(_read(store_path, "store"), Store, store_path, "store", STORE_SCHEMA)
-    key = _read_key(key_path)
+    key = read_key(key_path)
     if not hmac.compare_digest(key_check(key), store.key_check):
         raise AuditInputError(
             f"key {key_path}: is not the key store {store_path} was written under"
@@ -129,6 +146,8 @@ def load_inputs(report_path: Path, store_path: Path, key_path: Path) -> Inputs:
         credentials.append(Credential(
             id=c.id, name=c.name, source=c.source.value, display=c.location.display,
             scope=c.scope, value_state=c.value_state.value, fingerprint=stored.get(c.id),
+            variable=c.source.value == "environment"
+            and not _ASSIGNMENT_DETECTORS.isdisjoint(c.detectors),
         ))
     if literal != set(stored):
         raise AuditInputError(

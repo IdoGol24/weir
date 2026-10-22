@@ -123,16 +123,17 @@ def status_json(transcript: Path, session_id: str) -> str:
 
 def groups(setup: fx.Setup) -> dict[str, str]:
     """Credential id -> the credential it stands for: ids whose stored
-    fingerprints are equal are one value, and environment records of the
-    inventory report that share a variable name are one variable. An id
-    linked to no other is its own group."""
+    fingerprints are equal are one value, and the inventory report's
+    records of an environment variable assignment (detector `launch_env` or
+    `startup_file`, docs/inventory.md) that share a name are one variable. An
+    id linked to no other is its own group."""
     store = json.loads(setup.store.read_text())
     report = json.loads(setup.report.read_text())
     links: dict[str, set[str]] = {}
     for record in store["records"]:
         links.setdefault("fingerprint:" + record["fingerprint"], set()).add(record["credential_id"])
     for c in report["credentials"]:
-        if c["source"] == "environment":
+        if c["source"] == "environment" and {"launch_env", "startup_file"} & set(c["detectors"]):
             links.setdefault("name:" + c["name"], set()).add(c["id"])
     group = {c["id"]: {c["id"]} for c in report["credentials"]}
     for ids in links.values():

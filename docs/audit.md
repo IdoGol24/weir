@@ -69,6 +69,9 @@ bytes is not scanned (`compressed`).
   before 0.7.0: run `weir inventory --store` again).
 - The key file is 64 hex characters (surrounding whitespace ignored), as
   `weir inventory` writes it. Anything else is exit 2.
+- The key file is its owner's alone, as `weir inventory` creates it (mode
+  0600): one another user owns, or that others can read or write, is
+  exit 2, never used or repaired.
 - A store record with a `fingerprint_v` other than 1 is exit 2.
 
 An error names the input, never content read from it.
@@ -80,7 +83,7 @@ value: the report's `value_state` is `literal`. Every other credential (a
 whole-file credential, a shell expansion, a scanner result the file does
 not hold, a value not fully read) is listed as **not checkable**, with its
 `value_state`, and is never reported as not found. An environment
-credential is also found by its name, whatever its `value_state` (see
+variable is also found by its name, whatever its `value_state` (see
 [References by name](#references-by-name)): one a tool call names is
 `in_tool_call`, not checkable or not.
 
@@ -194,15 +197,19 @@ first form in the table above that holds it.
 A tool call can send a credential without holding its value: a shell
 command that reads `$ACME_API_TOKEN` sends whatever the variable holds in
 the agent's environment. So a string in a `tool_call` place (below) is
-also searched for the names of the credentials whose inventory `source` is
-`environment` (the launch environment and the shell startup files that
-export into it). It holds a credential's name when it holds `$NAME`,
+also searched for the names of the **environment variables**: the
+credentials whose inventory `source` is `environment` and whose
+`detectors` hold `launch_env` or `startup_file`, the assignments in the
+launch environment and in the shell startup files that export into it. A
+credential shape found loose in a startup file (in a comment or a
+here-document) is named after its shape, not a variable, and is not one. It
+holds a credential's name when it holds `$NAME`,
 `${NAME` (`${NAME}`, `${NAME:-default}` and the other modifiers) or
 PowerShell's `$env:NAME`, with `NAME` exactly the credential's name (a
 shell variable name: a letter or `_`, then letters, digits or `_`), not
 followed by a letter, digit or `_`, and the `$` not just after a `\` or
 another `$`. Such a string is a hit of kind `tool_call` with form `name`
-for every environment credential of that name. A name in any other place
+for every environment variable of that name. A name in any other place
 (a prompt, a tool result) is not a hit: nothing there expands it.
 
 The audit reads the reference, not the shell: it does not parse quoting

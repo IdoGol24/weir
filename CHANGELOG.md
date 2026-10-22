@@ -24,11 +24,13 @@
   Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
   schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
 - **weir-scan: `weir audit` finds a credential a tool call sends by name.**
-  A string in a tool call's arguments that expands an environment
-  credential's variable name (`$NAME`, `${NAME}` with any modifier, or
-  PowerShell's `$env:NAME`) is a `tool_call` hit with the new form `name`,
-  since the tool's shell sends whatever the variable holds. It counts for
-  every environment credential, its value read or not, so one the store
+  A string in a tool call's arguments that expands the name of an
+  environment variable credential as `$NAME`, `${NAME}` with any modifier,
+  or PowerShell's `$env:NAME` is a `tool_call` hit with the new form
+  `name`, since the tool's shell sends whatever the variable holds. An
+  environment variable is an assignment in the launch environment or a
+  shell startup file, not a credential shape found loose there. It counts
+  for every such variable, its value read or not, so one the store
   holds no fingerprint of is `in_tool_call` when a tool call names it, and
   `not_checkable` only when none does. A name anywhere else, such as a
   prompt, is not a hit. The `weir-audit/1` schema's `form` gains `name`.
@@ -53,6 +55,13 @@
   `weir statusline undo` restores the files byte for byte, and refuses when
   one changed after setup. Display only, local and offline
   ([docs/statusline.md](docs/statusline.md)).
+- **weir-scan: a fingerprint key file others can read is refused.**
+  `weir inventory`, `weir audit` and `weir statusline` refuse (exit 2) a
+  key file another user owns or that others can read or write, instead of
+  using it; `weir inventory` still creates a missing key with mode 0600.
+  Anyone who can read the key can test guesses against every fingerprint
+  made under it. What to do: `chmod 600` the key file if it was made by
+  hand.
 - **weir-scan: the inventory store carries a key check.**
   `weir-inventory-store/1` gains `key_check`, an HMAC of a fixed message
   under the fingerprint key, so a reader can tell the store's key from

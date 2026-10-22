@@ -272,11 +272,11 @@ def _state(credential: Credential, counts: dict[Kind, int]) -> State:
 
 
 def _references(credentials: Sequence[Credential]) -> References:
-    """The environment credentials, by variable name (docs/audit.md,
-    "References by name"). Several records may share a name."""
+    """The environment variables, by name (docs/audit.md, "References by
+    name"). Several records may share a name."""
     names: dict[str, list[str]] = {}
     for c in credentials:
-        if c.source == "environment":
+        if c.variable:
             names.setdefault(c.name, []).append(c.id)
     return References({name: tuple(sorted(ids)) for name, ids in names.items()})
 

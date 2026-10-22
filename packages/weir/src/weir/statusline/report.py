@@ -146,25 +146,62 @@ def _times(count: int) -> str:
     return plural(count, "time")
 
 
-def _advice(c: CredentialResult, reached: bool, value_files: Sequence[str]) -> str:
+def _advice(
+    members: Sequence[CredentialResult], state: State, reached: bool, value_files: Sequence[str]
+) -> str:
     if not reached:
-        if c.state is State.UNKNOWN:
+        if state is State.UNKNOWN:
             return "open the place named above: the audit cannot tell whether the agent read it"
         return "nothing reached the agent; Claude Code keeps it in the bookkeeping named above"
     parts = ["rotate it at its issuer"]
-    if c.source == "environment":
-        parts.append(f"remove {c.name} from the environment Claude Code starts with")
-    else:
-        parts.append(f"take it out of {c.display}, or deny the agent read access to that file")
+    for c in members:
+        if c.source == "environment":
+            parts.append(f"remove {c.name} from the environment Claude Code starts with")
+        else:
+            parts.append(f"take it out of {c.display}, or deny the agent read access to that file")
     if value_files:
         parts.append("delete the session files above once it is rotated")
-    return "; ".join(parts)
+    return "; ".join(dict.fromkeys(parts))
 
 
-def _block(c: CredentialResult, hits: Sequence[Hit], turns: Turns) -> Iterator[str]:
+def _heading(members: Sequence[CredentialResult]) -> str:
+    """One record: the audit's label. Several: each name once, with every
+    place it was found."""
+    if len(members) == 1:
+        return label(members[0])
+    places: dict[str, list[str]] = {}
+    for c in members:
+        where = c.display if c.scope is None else f"{c.display} {c.scope}"
+        places.setdefault(c.name, []).append(where)
+    return ", ".join(f"{name} ({', '.join(where)})" for name, where in places.items())
+
+
+def _source(c: CredentialResult) -> str:
     scope = "" if c.scope is None else f" ({c.scope})"
-    yield label(c)
-    yield f"  source: {c.display}{scope}, {_SOURCES.get(c.source, c.source)}"
+    return f"{c.display}{scope}, {_SOURCES.get(c.source, c.source)}"
+
+
+def _one_per_place(hits: Sequence[Hit]) -> list[Hit]:
+    """One hit per place in the session: every record of one credential can
+    match the same string (a `$NAME` that names both, say). A hit by value
+    there wins over one by name."""
+    out: dict[tuple[object, ...], Hit] = {}
+    for hit in hits:
+        place = (
+            hit.kind, hit.file, hit.line, hit.location, hit.tool, hit.argument, hit.span_id,
+            hit.log_record,
+        )
+        if place not in out or out[place].form is Form.NAME:
+            out[place] = hit
+    return list(out.values())
+
+
+def _block(
+    members: Sequence[CredentialResult], state: State, all_hits: Sequence[Hit], turns: Turns
+) -> Iterator[str]:
+    hits = _one_per_place(all_hits)
+    yield _heading(members)
+    yield "  source: " + "; ".join(dict.fromkeys(_source(c) for c in members))
     entered = [
         h for h in hits
         if h.kind is Kind.CONTEXT or (h.kind is Kind.TOOL_CALL and h.form is not Form.NAME)
@@ -198,7 +235,7 @@ def _block(c: CredentialResult, hits: Sequence[Hit], turns: Turns) -> Iterator[s
     if tools:
         sits += "; and wherever the " + ", ".join(tools) + " tool call sent it"
     yield f"  now sits in: {sits}"
-    yield f"  advice: {_advice(c, bool(entered or sent), value_files)}"
+    yield f"  advice: {_advice(members, state, bool(entered or sent), value_files)}"
 
 
 def report_lines(
@@ -215,7 +252,8 @@ def report_lines(
         inputs.credentials, inputs.key, inputs.by_fingerprint, paths, claude_config_dirs
     )
     found = tally(report)
-    context, sent = counted(found, value_groups(inputs))
+    groups = value_groups(inputs)
+    context, sent = counted(found, groups)
     lines = [segment_text(context, sent, unknown=found.unknown)]
     shown = next((f.file for f in report.files if f.file == transcript), "[withheld]")
     lines.append(f"session: {shown} ({plural(report.coverage.files, 'file')} read)")
@@ -223,15 +261,24 @@ def report_lines(
     by_credential: dict[str, list[Hit]] = {}
     for hit in report.hits:
         by_credential.setdefault(hit.credential, []).append(hit)
-    rows = sorted(
-        (c for c in report.credentials if c.state in _STATE_ORDER),
-        key=lambda c: _STATE_ORDER[c.state],
-    )
-    for c in rows:
+    # One block per credential as the segment counts them: the records of
+    # one value or one variable together, in the audit's order.
+    members: dict[str, list[CredentialResult]] = {}
+    for c in report.credentials:
+        members.setdefault(groups.get(c.id, c.id), []).append(c)
+    reached = [m for m in members.values() if any(c.state in _STATE_ORDER for c in m)]
+    blocks: list[tuple[list[CredentialResult], State]] = []
+    for m in reached:
+        state = min((c.state for c in m if c.state in _STATE_ORDER), key=_STATE_ORDER.__getitem__)
+        blocks.append((m, state))
+    blocks.sort(key=lambda block: _STATE_ORDER[block[1]])
+    for m, state in blocks:
         lines.append("")
-        lines.extend(_block(c, by_credential.get(c.id, []), turns))
-    not_found = sum(c.state is State.NOT_FOUND for c in report.credentials)
-    not_checkable = sum(c.state is State.NOT_CHECKABLE for c in report.credentials)
+        hits = [h for c in m for h in by_credential.get(c.id, [])]
+        lines.extend(_block(m, state, hits, turns))
+    rest = [m for m in members.values() if m not in reached]
+    not_checkable = sum(all(c.state is State.NOT_CHECKABLE for c in m) for m in rest)
+    not_found = len(rest) - not_checkable
     lines.append("")
     lines.append(
         f"not found in this session: {plural(not_found, 'credential')};"

@@ -7,15 +7,18 @@ the exact change first and writes only after an explicit yes. Undo puts
 back the bytes setup replaced, and removes what setup created, refusing
 when a file changed after setup.
 
-The undo record lives in the weir state directory and holds paths and the
-SHA-256 of the bytes setup wrote, so undo can tell a file it may restore
-from one edited since. The bytes a file held before setup are kept beside
-it, as `<file>.weir-backup`, readable by the owner only.
+The undo record lives in the weir state directory and holds paths and an
+HMAC-SHA256, under the inventory's fingerprint key, of the bytes setup
+wrote, so undo can tell a file it may restore from one edited since, and
+the record holds no unkeyed hash of a settings file that may hold a
+credential. The bytes a file held before setup are kept beside it, as
+`<file>.weir-backup`, readable by the owner only.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import shlex
@@ -25,6 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from weir.audit.inputs import AuditInputError, read_key
 from weir.statusline.files import write_atomic, write_private
 
 UNDO_SCHEMA = "weir-statusline-undo/1"
@@ -219,19 +223,27 @@ def plural_lines(text: str) -> str:
     return f"{count} line" if count == 1 else f"{count} lines"
 
 
-def _digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def _digest(key: bytes, data: bytes) -> str:
+    message = b"weir-statusline undo\0" + data
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
-def apply_setup(paths: Paths, plan: Plan) -> None:
-    """Write the undo record first, then the backups, then the files."""
+def apply_setup(paths: Paths, plan: Plan, key: bytes) -> None:
+    """Write the undo record first, then the backups, then the files.
+    Refuses, writing nothing, when a file changed since the plan was shown
+    (Claude Code saving a setting while the prompt waited, say)."""
+    for change in plan.changes:
+        if _read(change.path) != change.before:
+            raise SetupError(f"{change.path} changed since the change was shown; nothing written")
     record = {
         "schema": UNDO_SCHEMA,
+        "key": str(paths.key.absolute()),
         "files": [
             {
                 "path": str(change.path.absolute()),
-                "backup": None if change.before is None else str(change.path) + BACKUP_SUFFIX,
-                "written_sha256": _digest(change.after),
+                "backup": None if change.before is None
+                else str(change.path.absolute()) + BACKUP_SUFFIX,
+                "written_mac": _digest(key, change.after),
             }
             for change in plan.changes
         ],
@@ -257,13 +269,28 @@ class Restore:
     # None: setup created the file; undo removes it
     backup: Path | None
     original: bytes | None
+    # The bytes setup wrote, as the record keeps them: keyed
+    written_mac: str
 
 
 @dataclass(frozen=True)
 class UndoPlan:
     record: Path
+    key: bytes
     restores: list[Restore]
     created_dirs: list[Path]
+
+
+def _changed_after_setup(key: bytes, path: Path, written_mac: str) -> bool:
+    current = _read(path)
+    return current is None or not hmac.compare_digest(_digest(key, current), written_mac)
+
+
+def _changed_error(path: Path, record_path: Path) -> SetupError:
+    return SetupError(
+        f"{path} changed after setup; nothing restored. Remove the weir part"
+        " of it by hand, then delete " + str(record_path)
+    )
 
 
 def plan_undo(cache: Path) -> UndoPlan | None:
@@ -275,24 +302,25 @@ def plan_undo(cache: Path) -> UndoPlan | None:
         record = json.loads(raw)
         if record.get("schema") != UNDO_SCHEMA:
             raise ValueError(record_path)
-        restores: list[Restore] = []
-        for entry in record["files"]:
-            path = Path(entry["path"])
-            current = _read(path)
-            if current is None or _digest(current) != entry["written_sha256"]:
-                raise SetupError(
-                    f"{path} changed after setup; nothing restored. Remove the weir part"
-                    " of it by hand, then delete " + str(record_path)
-                )
-            backup = None if entry["backup"] is None else Path(entry["backup"])
-            original = None if backup is None else _read(backup)
-            if backup is not None and original is None:
-                raise SetupError(f"{backup}: the backup setup kept is gone; nothing restored")
-            restores.append(Restore(path, backup, original))
+        key_path = Path(record["key"])
+        files = [(Path(e["path"]), e["backup"], str(e["written_mac"])) for e in record["files"]]
         dirs = [Path(d) for d in record["created_dirs"]]
     except (ValueError, KeyError, TypeError, AttributeError):
         raise SetupError(f"{record_path}: not an undo record weir wrote", 2) from None
-    return UndoPlan(record_path, restores, dirs)
+    try:
+        key = read_key(key_path)
+    except AuditInputError as exc:
+        raise SetupError(f"{exc}; the undo record needs the key setup used", 2) from None
+    restores: list[Restore] = []
+    for path, backup_name, written_mac in files:
+        if _changed_after_setup(key, path, written_mac):
+            raise _changed_error(path, record_path)
+        backup = None if backup_name is None else Path(backup_name)
+        original = None if backup is None else _read(backup)
+        if backup is not None and original is None:
+            raise SetupError(f"{backup}: the backup setup kept is gone; nothing restored")
+        restores.append(Restore(path, backup, original, written_mac))
+    return UndoPlan(record_path, key, restores, dirs)
 
 
 def describe_undo(plan: UndoPlan) -> list[str]:
@@ -308,6 +336,11 @@ def describe_undo(plan: UndoPlan) -> list[str]:
 
 
 def apply_undo(plan: UndoPlan) -> None:
+    """Refuses, writing nothing, when a file changed since the plan was
+    shown."""
+    for r in plan.restores:
+        if _changed_after_setup(plan.key, r.path, r.written_mac):
+            raise _changed_error(r.path, plan.record)
     for r in plan.restores:
         if r.original is None:
             r.path.unlink()

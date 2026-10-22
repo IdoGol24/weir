@@ -143,6 +143,7 @@ def test_nothing_the_inventory_produces_holds_a_value(tmp_path: Path) -> None:
     # key file is scanned too and the scan cannot pass or fail by chance.
     (fake.home / ".weir").mkdir()
     (fake.home / ".weir/fingerprint.key").write_text(fx.TEST_KEY_HEX + "\n")
+    (fake.home / ".weir/fingerprint.key").chmod(0o600)
     blobs: dict[str, str | bytes] = {}
     base = [
         "inventory", "--home", str(fake.home), "--project", str(fake.project),
@@ -170,6 +171,7 @@ def test_nothing_the_inventory_produces_holds_a_value(tmp_path: Path) -> None:
     bad_truffle.write_text(f'{{"DetectorName": "x", "Raw": "{fx.GITHUB_S04}"\n')
     bad_key = out / "bad.key"
     bad_key.write_text(fx.AWS_SECRET_S01)
+    bad_key.chmod(0o600)  # owner-only, so the key's content is what is refused
     errors = {
         "gitleaks": [*base, "--gitleaks", str(bad_gitleaks)],
         "trufflehog": [*base, "--trufflehog", str(bad_truffle)],

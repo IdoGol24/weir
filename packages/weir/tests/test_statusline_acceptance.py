@@ -90,9 +90,14 @@ def test_one_variable_in_two_environment_records_counts_once(tmp_path: Path) -> 
     assert run.stdout == sx.segment_for(expected) + "\n"
     assert shown.exit_code == 0, shown.stderr
     assert shown.lines[0] == sx.segment_for(expected)
+    # One block for the one credential, listing every place it was found.
+    places = ", ".join(c["location"]["display"] for c in records)
     blocks = _blocks(shown.stdout)
+    assert [h for h in blocks if h.startswith(fx.GH)] == [f"{fx.GH} ({places})"]
+    block = blocks[f"{fx.GH} ({places})"]
     for c in records:
-        assert f"{c['name']} ({c['location']['display']})" in blocks
+        assert c["location"]["display"] in _field(block, "source")
+    assert _field(block, "sent in a tool call").startswith("1 time by name, first at turn 1")
 
 
 def test_subagent_transcripts_and_saved_outputs_are_read(tmp_path: Path) -> None:

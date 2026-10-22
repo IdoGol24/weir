@@ -680,7 +680,11 @@ def statusline_setup_command(
     if not _confirmed():
         click.echo("not applied: nothing written")
         return
-    statusline_setup.apply_setup(paths, plan)
+    try:
+        statusline_setup.apply_setup(paths, plan, inputs.key)
+    except statusline_setup.SetupError as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(exc.code) from exc
     click.echo(f"applied; to undo: {undo}")
 
 
@@ -710,7 +714,11 @@ def statusline_undo_command(cache: Path | None, dry_run: bool) -> None:
     if not _confirmed():
         click.echo("not applied: nothing written")
         return
-    statusline_setup.apply_undo(plan)
+    try:
+        statusline_setup.apply_undo(plan)
+    except statusline_setup.SetupError as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(exc.code) from exc
     click.echo("restored")
 
 

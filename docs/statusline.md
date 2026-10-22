@@ -65,10 +65,13 @@ A credential sent by value is in both counts; one sent only by name is in
 S only, since its value never entered the context. `stored` hits are not
 counted. Credentials are counted, not inventory records: records whose
 stored fingerprints are equal (the same secret found in the launch
-environment and in a project `.env`, say) count once, and so do
-environment records that share a variable name (`GITHUB_TOKEN` in the
-launch environment and in `~/.bashrc`), whether the hit was by value or by
-name. The /weir report still lists each of those records.
+environment and in a project `.env`, say) count once, and so do the
+records of an environment variable that share its name (`GITHUB_TOKEN`
+assigned in the launch environment and in `~/.bashrc`: records whose
+`detectors` hold `launch_env` or `startup_file`), whether the hit was by
+value or by name. A credential shape found loose in a startup file is not
+a variable: two such shapes of one kind are two credentials. The /weir
+report lists every record of a credential in its one block.
 
 Some of the session is **unknown** when the audit of any of its files is
 incomplete ([docs/audit.md](audit.md#unknown): an unrecognised format, a
@@ -105,10 +108,21 @@ so the segment reads a session in steps and keeps what each step found:
   (default 500) has passed, and always takes at least one, so every run
   moves the reading on. A session not read in full shows `checking P%`.
 - A file is read again only from where the last run stopped, as long as it
-  is the same file (device and inode), it only grew, and the 4 KiB before
-  that point are unchanged. Anything else, and the file is read from the
-  start. A file unchanged since a run that read it in full (same size and
-  modification time) is not read at all.
+  is the same file (device and inode), it only grew, and the part already
+  read is unchanged at both ends: its first 4 KiB, and the 4 KiB before
+  that point. A refresh of a Claude Code session file then reads those two
+  windows and the bytes appended since, never the part already read.
+  Anything else (a file that shrank, was replaced, or changed at either
+  end), and the file is read from the start. A file unchanged since a run
+  that read it in full (same size and modification time) is not read at
+  all. A change inside the read part that leaves both ends, the size and
+  the inode as they were is not seen: Claude Code appends to a session
+  file, and reading the whole part again is what this avoids.
+- A first read takes the file's format from its first whole lines when
+  they hold a Claude Code message record (the file is then a session file
+  whatever the rest holds), so the time before the first step does not
+  grow with the file. Otherwise the whole file is recognised as
+  `weir audit` recognises it.
 - The bytes after a file's last line end (a line still being written) are
   audited as a whole line would be, and again once the file changes; they
   are never taken as read lines.
@@ -122,9 +136,9 @@ it for you.
 The cache is one file per session in `--cache`, written owner-only
 (0600, directory 0700). It holds credential ids, byte offsets, sizes,
 times, device and inode numbers, and HMAC-SHA256 values under the
-inventory's fingerprint key (of a file's path, of the 4 KiB before an
-offset, of the inventory inputs). It holds no value, no fragment of one,
-no file name and no unkeyed hash. A new inventory (other report or store
+inventory's fingerprint key (of a file's path, of a file's first 4 KiB and
+of the 4 KiB before an offset, of the inventory inputs). It holds no
+value, no fragment of one, no file name and no unkeyed hash. A new inventory (other report or store
 bytes) starts every cache over. Deleting the directory is always safe.
 
 ### Beside an existing status line
@@ -147,8 +161,9 @@ It audits the session's files in full, with no cache, and prints:
 
 1. the segment line, for the whole session;
 2. `session: <transcript> (<N> files read)`;
-3. one block per credential with a hit, most severe state first (sent,
-   then in context, unknown, stored), then by name:
+3. one block per credential with a hit, counted as the segment counts
+   them (the records of one value or one variable together), most severe
+   state first (sent, then in context, unknown, stored), then by name:
 
 ```text
 ACME_API_TOKEN (launch env)
@@ -160,19 +175,20 @@ ACME_API_TOKEN (launch env)
 ```
 
 4. `not found in this session: N credentials; not checkable: M credentials`,
-   then the audit's `unknown:` lines.
+   counted the same way (a credential is not checkable when none of its
+   records is), then the audit's `unknown:` lines.
 
 The lines of a block:
 
 | line | what it says |
 | --- | --- |
-| heading | the credential as the audit prints it: inventory name, location and scope |
-| `source` | where the inventory found it: the location and scope, and the source in words |
-| `entered the context` | how many hits put the value in the context, and the first: its turn, what it sat in (a tool result, a prompt, the model's own text, a subagent's), its file and line |
-| `sent in a tool call` | how many `tool_call` hits, `by value`, `by name` or both, and the first: its turn, the tool, the argument, its file and line |
+| heading | the credential as the audit prints it: inventory name, location and scope; for several records, each name once with every place it was found, `GH_TOKEN (launch env, ~/.bashrc)` |
+| `source` | where the inventory found it: the location and scope, and the source in words, for each record, separated by `;` |
+| `entered the context` | how many places in the session put the value in the context, and the first: its turn, what it sat in (a tool result, a prompt, the model's own text, a subagent's), its file and line. A place every record of the credential matches (a `$NAME` that names both) is one place; one held by value and named there counts by value |
+| `sent in a tool call` | how many places in tool calls, `by value`, `by name` or both, and the first: its turn, the tool, the argument, its file and line |
 | `unknown` | hits whose kind the audit cannot tell, and the first |
 | `now sits in` | the session files that hold the value, then the conversation the model received when the value entered the context, and wherever each tool sent it; for a credential sent by name only, that no session file holds the value |
-| `advice` | rotate it at its issuer; remove it from the launch environment, or take it out of the file it came from or deny the agent read access to that file; delete the session files that hold it once it is rotated. A credential only `stored` or `unknown` gets what to check instead |
+| `advice` | rotate it at its issuer; for each record, remove it from the launch environment, or take it out of the file it came from or deny the agent read access to that file; delete the session files that hold it once it is rotated. A credential only `stored` or `unknown` gets what to check instead |
 
 
 Every string in it comes from the audit report, which already applied the
@@ -235,7 +251,10 @@ the answer is exactly `yes`, lower-case; any other answer (`y`, `YES`),
 or no input, writes nothing. When it writes, it writes first the undo record,
 `<cache>/setup-undo.json`, then a copy of the settings file's bytes before
 setup, `settings.json.weir-backup` beside it (owner-only), then the files,
-each atomically, keeping the settings file's permissions.
+each atomically, keeping the settings file's permissions. Just before it
+writes, it reads each file again, and refuses, writing nothing, when one
+changed since the change was shown (Claude Code saving a setting while
+the prompt waited, say).
 
 Setup refuses, and writes nothing, when an undo record exists (it is
 already set up), when the settings file is not a JSON object or its
@@ -246,15 +265,23 @@ segment, or when a different `commands/weir.md` exists.
 setup changed back to its bytes before setup, from its backup, and remove
 each file and directory setup created. With `--dry-run` it stops there;
 otherwise it asks, as setup does. It refuses, and writes nothing, when a
-file changed after setup (its SHA-256 is not the one the record holds for
-the bytes setup wrote), naming the file: restoring the old bytes would
-throw that change away. After undo the files are byte for byte what they
+file changed after setup (its keyed MAC is not the one the record holds
+for the bytes setup wrote), naming the file, and checks again just before
+it writes: restoring the old bytes would throw that change away. After undo the files are byte for byte what they
 were, and the backup and the record are gone. With no undo record it says
 there is nothing to undo.
 
-The undo record holds paths, the directories setup created, and the
-SHA-256 of each file's bytes as setup wrote them; the backup holds the
-settings file's own bytes, beside it, as private as the file.
+The undo record holds paths (the fingerprint key's among them), the
+directories setup created, and an HMAC-SHA256 under the fingerprint key of
+each file's bytes as setup wrote them: no unkeyed hash of a settings file,
+which may hold a credential. Undo needs the key setup used. The backup
+holds the settings file's own bytes, beside it, as private as the file.
+
+**The key.** Every command here reads the fingerprint key from a file
+only its owner can read, as `weir inventory` creates it (mode 0600). A key
+file another user owns, or that others can read or write, is refused
+(`weir: error, run /weir` on the line, exit 2 from the report and setup),
+never used and never repaired.
 
 ## What it does not claim
 
@@ -276,3 +303,12 @@ the segment should show is read from a real `weir audit --json` run over
 the same files through the rule in [What is counted](#what-is-counted),
 and checked against where the fixture put each value. No fixture is built
 from a real session, setting or credential.
+
+`packages/weir/tests/test_statusline_large_session.py` generates a fake
+transcript of about 50 MB and checks the incremental read: a first refresh
+reads the whole file, and a refresh after a few appended records reads
+only those bytes and the two 4 KiB windows, counted outside the code under
+test (every read the process makes, and the kernel's `rchar` where it
+keeps one), with both timings printed. It also scans every cache file for
+each planted value and every 6-character run of one, and checks the key
+file's mode.
