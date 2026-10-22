@@ -963,6 +963,7 @@ def test_a_message_record_field_is_stored_only_when_the_contract_names_it(
     [
         ("work/tool-results/out.txt", "token {v}\n"),
         ("work/subagents/x.meta.json", '{{"description": "key {v}"}}'),
+        ("home/projects/myapp/memory/notes.md", "token {v}\n"),
     ],
 )
 def test_claude_code_files_outside_a_projects_folder_are_unknown(
@@ -981,3 +982,12 @@ def test_claude_code_files_outside_a_projects_folder_are_unknown(
     assert _only_hit(run, setup)["kind"] == "unknown"
     assert (run.report["result"], run.exit_code) == ("unknown", 3)
 
+
+def test_a_claude_md_anywhere_is_context(tmp_path: Path) -> None:
+    setup = fx.build(tmp_path)
+    path = tmp_path / "work" / "repo" / "CLAUDE.md"
+    path.parent.mkdir(parents=True)
+    cfx.write(path, f"token {setup.values[fx.ACME]}\n")
+    run = setup.audit([path])
+    hit = _only_hit(run, setup)
+    assert (hit["kind"], hit["format"], run.exit_code) == ("context", "claude-code-memory", 1)

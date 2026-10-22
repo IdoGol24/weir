@@ -154,14 +154,14 @@ def is_otlp(obj: Json) -> bool:
     return isinstance(obj, dict) and any(key in obj for key in _SIGNAL_LISTS)
 
 
-def _is_claude_code_memory(path: PurePath) -> bool:
-    """A CLAUDE.md file, or a memory file `projects/<project>/memory/*.md`."""
+def _is_claude_code_memory(path: PurePath, projects_dirs: Sequence[PurePath]) -> bool:
+    """A CLAUDE.md file anywhere, or a memory file `<project>/memory/*.md`
+    inside a Claude Code projects directory."""
     if path.name == "CLAUDE.md":
         return True
-    parts = path.parts
     return (
         path.suffix == ".md" and path.parent.name == "memory"
-        and len(parts) >= 4 and parts[-4] == "projects"
+        and _in_claude_projects(path, projects_dirs)
     )
 
 
@@ -178,7 +178,7 @@ def recognise(
     claude = _in_claude_projects(where, projects_dirs)
     if claude and where.parent.name == "tool-results":
         return Format.CLAUDE_CODE_TOOL_RESULTS
-    if _is_claude_code_memory(where):
+    if _is_claude_code_memory(where, projects_dirs):
         return Format.CLAUDE_CODE_MEMORY
     if claude and where.parent.name == "subagents" and where.name.endswith(".meta.json"):
         return Format.CLAUDE_CODE_SUBAGENT_META
