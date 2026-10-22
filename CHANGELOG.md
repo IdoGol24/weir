@@ -3,6 +3,25 @@
 ## [Unreleased]
 
 ### Added
+- **weir-scan: `weir audit` checks your own credentials against your own
+  agent sessions (experimental).** Given the `weir-inventory/1` report, the
+  fingerprint store and the key from one `weir inventory --store` run, it
+  reads Claude Code session files (main transcripts, subagent transcripts
+  and saved tool outputs) and OTLP/JSON telemetry offline, and reports per
+  credential, by inventory name and never by value, whether it entered the
+  agent's context or was sent out in a tool call, with counts and the file,
+  line, field, tool and argument of each sighting. Strings are matched by
+  keyed fingerprint in every form the canary judge matches (raw, JSON, double
+  JSON, URL, base64, base64url, hex). An unrecognised file format, a line
+  that is not a record, a file not scanned or a sighting whose place it
+  cannot classify makes the result `unknown`, exit 3, never a false clean.
+  Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
+  schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
+- **weir-scan: the inventory store carries a key check.**
+  `weir-inventory-store/1` gains `key_check`, an HMAC of a fixed message
+  under the fingerprint key, so a reader can tell the store's key from
+  another one. `weir audit` refuses a store without it: run
+  `weir inventory --store` again.
 - **weir-run: flows run where the only network is loopback.** On Linux,
   `weir-run run` and the pytest plugin run the mock and every flow in an
   unprivileged user and network namespace with no route out, so a client

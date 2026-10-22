@@ -18,6 +18,9 @@ from pathlib import Path
 
 FINGERPRINT_VERSION = 1
 _KEY_BYTES = 32
+# The key check's message: a fixed string, so the check says nothing about
+# any value (docs/audit.md, "The three inventory inputs").
+KEY_CHECK_MESSAGE = b"weir-inventory-store key check"
 
 
 class FingerprintKeyError(Exception):
@@ -74,3 +77,8 @@ def _create_key(path: Path) -> bytes:
 
 def fingerprint(key: bytes, value: str) -> str:
     return hmac.new(key, value.encode("utf-8", "surrogateescape"), hashlib.sha256).hexdigest()
+
+
+def key_check(key: bytes) -> str:
+    """The store's key check: lowercase hex HMAC-SHA256 of a fixed message."""
+    return hmac.new(key, KEY_CHECK_MESSAGE, hashlib.sha256).hexdigest()

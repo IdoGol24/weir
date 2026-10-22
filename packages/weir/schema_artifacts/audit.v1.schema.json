@@ -1,0 +1,467 @@
+{
+  "$defs": {
+    "Coverage": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "type": "integer"
+        },
+        "checkable": {
+          "type": "integer"
+        },
+        "claude_code_files": {
+          "type": "integer"
+        },
+        "claude_code_tool_results_files": {
+          "type": "integer"
+        },
+        "credentials": {
+          "type": "integer"
+        },
+        "files": {
+          "type": "integer"
+        },
+        "not_checkable": {
+          "type": "integer"
+        },
+        "not_scanned": {
+          "type": "integer"
+        },
+        "otlp_files": {
+          "type": "integer"
+        },
+        "records": {
+          "type": "integer"
+        },
+        "strings": {
+          "type": "integer"
+        },
+        "unknown_files": {
+          "type": "integer"
+        },
+        "unparsed_lines": {
+          "type": "integer"
+        },
+        "unrecognised_records": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "credentials",
+        "checkable",
+        "not_checkable",
+        "files",
+        "claude_code_files",
+        "claude_code_tool_results_files",
+        "otlp_files",
+        "unknown_files",
+        "not_scanned",
+        "records",
+        "unrecognised_records",
+        "unparsed_lines",
+        "strings",
+        "bytes"
+      ],
+      "title": "Coverage",
+      "type": "object"
+    },
+    "CredentialResult": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "type": "integer"
+        },
+        "display": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        },
+        "stored": {
+          "type": "integer"
+        },
+        "tool_call": {
+          "type": "integer"
+        },
+        "unknown": {
+          "type": "integer"
+        },
+        "value_state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "source",
+        "display",
+        "scope",
+        "value_state",
+        "state",
+        "tool_call",
+        "context",
+        "stored",
+        "unknown"
+      ],
+      "title": "CredentialResult",
+      "type": "object"
+    },
+    "FileResult": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "type": "integer"
+        },
+        "file": {
+          "type": "string"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Format"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "not_scanned": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NotScannedReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "records": {
+          "type": "integer"
+        },
+        "strings": {
+          "type": "integer"
+        },
+        "unparsed_lines": {
+          "type": "integer"
+        },
+        "unrecognised_records": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file",
+        "format",
+        "records",
+        "unrecognised_records",
+        "unparsed_lines",
+        "strings",
+        "bytes",
+        "not_scanned"
+      ],
+      "title": "FileResult",
+      "type": "object"
+    },
+    "Form": {
+      "description": "The encoded forms, in the contract's table order (docs/canary.md).",
+      "enum": [
+        "base64",
+        "base64url",
+        "hex",
+        "json",
+        "json2",
+        "raw",
+        "url"
+      ],
+      "title": "Form"
+    },
+    "Format": {
+      "description": "A file's format (docs/audit.md, \"Files and formats\"), in report order.",
+      "enum": [
+        "claude-code",
+        "claude-code-tool-results",
+        "otlp",
+        "unknown"
+      ],
+      "title": "Format"
+    },
+    "Hit": {
+      "additionalProperties": false,
+      "properties": {
+        "argument": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "credential": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "form": {
+          "$ref": "#/$defs/Form"
+        },
+        "format": {
+          "$ref": "#/$defs/Format"
+        },
+        "kind": {
+          "$ref": "#/$defs/Kind"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log_record": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "record": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Signal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "span": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "credential",
+        "kind",
+        "file",
+        "line",
+        "format",
+        "record",
+        "signal",
+        "span",
+        "span_id",
+        "log_record",
+        "metric",
+        "tool",
+        "argument",
+        "location",
+        "form"
+      ],
+      "title": "Hit",
+      "type": "object"
+    },
+    "Kind": {
+      "description": "What a hit means (docs/audit.md, \"What a hit means\"). Declared most\n    severe first: hits sort in this order.",
+      "enum": [
+        "context",
+        "stored",
+        "tool_call",
+        "unknown"
+      ],
+      "title": "Kind"
+    },
+    "NotScannedReason": {
+      "enum": [
+        "compressed",
+        "symlink"
+      ],
+      "title": "NotScannedReason"
+    },
+    "Report": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "credentials": {
+          "items": {
+            "$ref": "#/$defs/CredentialResult"
+          },
+          "type": "array"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/FileResult"
+          },
+          "type": "array"
+        },
+        "hits": {
+          "items": {
+            "$ref": "#/$defs/Hit"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/$defs/Result"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "unknown": {
+          "items": {
+            "$ref": "#/$defs/Unknown"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema",
+        "result",
+        "exit_code",
+        "credentials",
+        "hits",
+        "files",
+        "unknown",
+        "coverage"
+      ],
+      "title": "Report",
+      "type": "object"
+    },
+    "Result": {
+      "enum": [
+        "clean",
+        "exposed",
+        "unknown"
+      ],
+      "title": "Result"
+    },
+    "Signal": {
+      "enum": [
+        "logs",
+        "metrics",
+        "raw",
+        "requests",
+        "traces"
+      ],
+      "title": "Signal"
+    },
+    "State": {
+      "description": "A credential's state, in precedence order (docs/audit.md).",
+      "enum": [
+        "in_context",
+        "in_tool_call",
+        "not_checkable",
+        "not_found",
+        "stored",
+        "unknown"
+      ],
+      "title": "State"
+    },
+    "Unknown": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/UnknownReason"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "subject"
+      ],
+      "title": "Unknown",
+      "type": "object"
+    },
+    "UnknownReason": {
+      "description": "Why the audit is incomplete, in report order.",
+      "enum": [
+        "not_scanned",
+        "unknown_kind",
+        "unparsed_line",
+        "unrecognised_format"
+      ],
+      "title": "UnknownReason"
+    }
+  },
+  "$ref": "#/$defs/Report"
+}

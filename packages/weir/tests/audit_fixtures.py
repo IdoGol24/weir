@@ -40,19 +40,20 @@ AWS_SECRET = "aws_secret_access_key"
 SESSION_ID = "4b9f0c1e-2d3a-4e5f-8a6b-7c8d9e0f1a2b"
 
 
-def _values() -> dict[str, str]:
+def _values(seed: str = "") -> dict[str, str]:
+    def fake(name: str, length: int = 24) -> str:
+        return cfx.fake_value(f"audit-{name}{seed}", length)
+
     special = (
-        cfx.fake_value("audit-special-a", 8) + "/" + cfx.fake_value("audit-special-b", 6)
-        + '"' + cfx.fake_value("audit-special-c", 6) + "+" + "é"
-        + cfx.fake_value("audit-special-d", 8) + "~" + cfx.fake_value("audit-special-e", 4)
+        fake("special-a", 8) + "/" + fake("special-b", 6) + '"' + fake("special-c", 6)
+        + "+" + "é" + fake("special-d", 8) + "~" + fake("special-e", 4)
     )
     return {
-        ACME: cfx.fake_value("audit-acme"),
+        ACME: fake("acme"),
         SPECIAL: special,
-        GH: cfx.fake_value("audit-gh"),
-        AWS_ID: cfx.fake_value("audit-aws-id", 20),
-        AWS_SECRET: cfx.fake_value("audit-aws-secret-a", 20) + "/"
-        + cfx.fake_value("audit-aws-secret-b", 19),
+        GH: fake("gh"),
+        AWS_ID: fake("aws-id", 20),
+        AWS_SECRET: fake("aws-secret-a", 20) + "/" + fake("aws-secret-b", 19),
     }
 
 
@@ -96,9 +97,13 @@ class Setup:
         return Run(result.exit_code, result.stdout, result.stderr)
 
 
-def build(root: Path) -> Setup:
-    """A fake home and launch environment, inventoried by `weir inventory`."""
-    values = _values()
+def build(
+    root: Path, *, seed: str = "", extra_env: str = "", bashrc: str | None = None,
+) -> Setup:
+    """A fake home and launch environment, inventoried by `weir inventory`.
+    `seed` gives other values in the same places; `extra_env` adds launch
+    environment lines and `bashrc` a shell startup file."""
+    values = _values(seed)
     home = root / "home"
     project = home / "work" / "proj"
     project.mkdir(parents=True)
@@ -111,8 +116,11 @@ def build(root: Path) -> Setup:
     env = root / "launch.env"
     cfx.write(
         env,
-        f"{ACME}={values[ACME]}\n{SPECIAL}='{values[SPECIAL]}'\n{GH}={values[GH]}\n",
+        f"{ACME}={values[ACME]}\n{SPECIAL}='{values[SPECIAL]}'\n{GH}={values[GH]}\n"
+        + extra_env,
     )
+    if bashrc is not None:
+        cfx.write(home / ".bashrc", bashrc)
     out = root / "inventory"
     out.mkdir()
     setup = Setup(
@@ -132,8 +140,10 @@ def build(root: Path) -> Setup:
     cfx.write(setup.report, result.stdout)
     report = json.loads(result.stdout)
     for credential in report["credentials"]:
-        assert credential["name"] not in setup.ids, credential["name"]
-        setup.ids[credential["name"]] = credential["id"]
+        name = credential["name"]
+        if name in setup.ids:
+            name = f"{name}@{credential['location']['display']}"
+        setup.ids[name] = credential["id"]
     assert set(values) <= set(setup.ids), "the inventory missed a planted credential"
     return setup
 

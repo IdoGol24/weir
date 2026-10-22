@@ -68,6 +68,7 @@ from weir.inventory.fingerprint import (
     FINGERPRINT_VERSION,
     FingerprintKeyError,
     fingerprint,
+    key_check,
     load_or_create_key,
 )
 from weir.inventory.gitignore import IGNORED_ROUTES
@@ -560,7 +561,8 @@ def _assemble(c: _Collector, key: bytes, reach: _MapRead, inputs: Inputs) -> Inv
         not_fully_read=not_fully_read,
     )
     store = Store(
-        schema=STORE_SCHEMA, records=sorted(records, key=lambda r: r.credential_id)
+        schema=STORE_SCHEMA, key_check=key_check(key),
+        records=sorted(records, key=lambda r: r.credential_id),
     )
     return InventoryResult(report=report, store=store)
 
