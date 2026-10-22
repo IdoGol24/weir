@@ -34,7 +34,7 @@ def exposure_gauge_lines(scan: ExposureScan) -> list[str]:
     if triage:
         classes = ", ".join(sorted({flatten_untrusted(h.source_class) for h in triage}))
         locations = len({(h.span_ref, h.location) for h in triage})
-        # "match" pluralises irregularly (matches, not matchs) - plural() only
+        # "match" pluralizes irregularly (matches, not matchs) - plural() only
         # handles the regular +s case, so this one stays a manual ternary.
         match_word = "match" if len(triage) == 1 else "matches"
         lines.append(

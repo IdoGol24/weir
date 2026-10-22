@@ -34,7 +34,7 @@ pip install weir-scan weir-run
 - **It doesn't guess.** It looks for the exact values it planted, so a hit is a real leak, and a key is found even when it doesn't look like a key, in any of seven forms, raw or encoded.
 - **It checks every way out.** Spans, logs and metrics, the agent's console output, the prompts and messages it sends the model, the requests it makes to your other APIs, and requests to any other host, which the mock refuses and records.
 - **Offline and deterministic.** No AI model decides anything. The judge opens no sockets and starts no processes, and CI enforces that. The rig's mock listens on 127.0.0.1 only and forwards nothing.
-- **No false all-clear.** If a run didn't exercise something you marked required, or a flow crashed, or a flow tried to connect around the mock, Weir says "incomplete", not "clean", and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
+- **No false all-clear.** If a run didn't exercise something you marked required, or a flow crashed, or, where the network is isolated, a flow tried to connect around the mock, Weir says "incomplete", not "clean", and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
 
 ## Proof
 
