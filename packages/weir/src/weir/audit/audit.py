@@ -3,7 +3,8 @@
 
 Reads the inventory's report, store and key, then every file given, and
 returns a value-free report. Pure: no socket, no process, no clock, no
-randomness, and no environment variable; the same inputs and flags give
+randomness, and no environment variable of its own: the command line hands
+in `CLAUDE_CONFIG_DIR`. The same inputs, flags and `CLAUDE_CONFIG_DIR` give
 the same report.
 """
 
@@ -381,9 +382,9 @@ def audit_paths(
     claude_config_dirs: Sequence[str] = (),
 ) -> Report:
     """Read the inventory inputs, then every file, and audit. Raises
-    `AuditInputError` (exit 2) on unusable input. `claude_config_dirs`
-    (`--claude-config-dir`) are Claude config directories whose `projects`
-    directory counts like `.claude/projects`."""
+    `AuditInputError` (exit 2) on unusable input. `claude_config_dirs` (the
+    command line passes `CLAUDE_CONFIG_DIR`) are Claude config directories
+    whose `projects` directory counts like `.claude/projects`."""
     inputs = load_inputs(report_path, store_path, key_path)
     return audit_files(
         inputs.credentials, inputs.key, inputs.by_fingerprint, paths, claude_config_dirs

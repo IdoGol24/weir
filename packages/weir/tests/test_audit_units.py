@@ -761,19 +761,19 @@ def _bookkeeping(setup: fx.Setup, kind: str) -> dict[str, object]:
 )
 @pytest.mark.parametrize("config_dir", [None, "claude-config"])
 def test_a_claude_projects_file_of_bookkeeping_records_only_is_a_session(
-    tmp_path: Path, config_dir: str | None, kind: str, hit_kind: str, location: str,
-    exit_code: int,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config_dir: str | None, kind: str,
+    hit_kind: str, location: str, exit_code: int,
 ) -> None:
     setup = fx.build(tmp_path)
     claude = tmp_path / "home" / ".claude"
-    extra: list[str] = []
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     if config_dir is not None:
         claude = tmp_path / config_dir
-        extra = ["--claude-config-dir", str(claude)]
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude))
     path = claude / "projects" / "-fake-home-work-proj" / "a.jsonl"
     path.parent.mkdir(parents=True)
     cfx.write(path, json.dumps(_bookkeeping(setup, kind)) + "\n")
-    run = setup.audit([path], extra=extra)
+    run = setup.audit([path])
     assert run.report["files"][0]["format"] == "claude-code"  # type: ignore[index]
     hit = _only_hit(run, setup)
     assert (hit["kind"], hit["record"], hit["location"], hit["line"]) == (
@@ -849,13 +849,12 @@ def test_a_type_that_is_not_a_string_is_unknown_not_a_crash(tmp_path: Path) -> N
     assert run.exit_code == 3
 
 
-def test_no_environment_variable_changes_the_report(
+def test_claude_config_dir_names_another_projects_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """docs/audit.md: only the inputs and flags decide the output. A summary-only
-    file in another Claude config directory is unknown unless that directory is
-    given with --claude-config-dir; CLAUDE_CONFIG_DIR pointing at it changes
-    nothing."""
+    """docs/audit.md: when CLAUDE_CONFIG_DIR is set, the projects folder of the
+    directory it names counts like ~/.claude/projects; unset, a summary-only
+    file there is unknown. There is no command-line flag for it."""
     setup = fx.build(tmp_path)
     config = tmp_path / "claude-config"
     path = config / "projects" / "-fake-home-work-proj" / "a.jsonl"
@@ -863,14 +862,16 @@ def test_no_environment_variable_changes_the_report(
     cfx.write(path, json.dumps(_bookkeeping(setup, "summary")) + "\n")
 
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    without = setup.audit([path])
+    unset = setup.audit([path])
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
-    with_env = setup.audit([path])
-    flagged = setup.audit([path], extra=["--claude-config-dir", str(config)])
+    named = setup.audit([path])
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "elsewhere"))
+    other = setup.audit([path])
 
-    assert with_env.stdout == without.stdout
-    assert (without.report["files"][0]["format"], without.exit_code) == ("unknown", 3)  # type: ignore[index]
-    assert (flagged.report["files"][0]["format"], flagged.exit_code) == ("claude-code", 1)  # type: ignore[index]
+    assert (unset.report["files"][0]["format"], unset.exit_code) == ("unknown", 3)  # type: ignore[index]
+    assert (named.report["files"][0]["format"], named.exit_code) == ("claude-code", 1)  # type: ignore[index]
+    assert other.stdout == unset.stdout
+    assert setup.audit([path], extra=["--claude-config-dir", str(config)]).exit_code == 2
 
 
 def test_a_subagent_sidecar_is_bookkeeping_and_an_unknown_key_stays_unknown(

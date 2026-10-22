@@ -19,8 +19,8 @@
   cannot classify makes the result `unknown`, exit 3, never a false clean,
   and so does an empty input: a missing or empty directory, or paths whose
   files were all skipped.
-  `--claude-config-dir PATH` names a Claude config directory other than
-  `~/.claude`; no environment variable changes the output.
+  When `CLAUDE_CONFIG_DIR` is set, the projects folder of the Claude config
+  directory it names counts like `~/.claude/projects`.
   Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
   schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
 - **weir-scan: the inventory store carries a key check.**

@@ -123,7 +123,7 @@ def _is_claude_code(obj: dict[str, Json]) -> bool:
 
 def _in_claude_projects(where: PurePath, projects_dirs: Sequence[PurePath]) -> bool:
     """Inside a `.claude/projects` directory, or inside the `projects`
-    directory of a Claude config directory given with `--claude-config-dir`."""
+    directory of the Claude config directory `CLAUDE_CONFIG_DIR` names."""
     if (".claude", "projects") in pairwise(where.parent.parts):
         return True
     return any(where.is_relative_to(projects) for projects in projects_dirs)

@@ -460,29 +460,24 @@ def inventory_command(
     required=True,
     help="The fingerprint key that run used. Never created: a new key matches nothing.",
 )
-@click.option(
-    "--claude-config-dir",
-    "claude_config_dir",
-    metavar="PATH",
-    default=None,
-    help="A Claude config directory other than ~/.claude: its projects folder counts"
-    " like a .claude/projects folder.",
-)
 @click.option("--json", "as_json", is_flag=True, help="Emit the weir-audit/1 JSON report.")
 @click.argument("paths", metavar="PATH...", nargs=-1, required=True)
 def audit_command(
-    report_path: Path, store_path: Path, key_path: Path, claude_config_dir: str | None,
-    as_json: bool, paths: tuple[str, ...],
+    report_path: Path, store_path: Path, key_path: Path, as_json: bool, paths: tuple[str, ...]
 ) -> None:
     """(experimental) Report which inventoried credentials entered an agent's
     context or were sent out in a tool call, in Claude Code session files or
     OTLP telemetry (PATH: files or directories). Never prints a value.
+    CLAUDE_CONFIG_DIR, when set, names a Claude config directory whose
+    projects folder counts like ~/.claude/projects.
 
     Exit 0 clean, 1 exposed, 2 unusable input, 3 unknown."""
     try:
+        # The command line reads the one variable the audit honours and hands
+        # it in, so weir.audit itself stays a function of its arguments.
+        config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
         report = audit_paths(
-            report_path, store_path, key_path, paths,
-            () if claude_config_dir is None else (claude_config_dir,),
+            report_path, store_path, key_path, paths, (config_dir,) if config_dir else ()
         )
     except AuditInputError as exc:
         click.echo(f"error: {exc}", err=True)
