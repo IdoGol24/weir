@@ -354,6 +354,7 @@ class Run:
     outputs: dict[str, dict[str, str]]
     summary: str
     ran: list[str]
+    envs: dict[str, dict[str, str]]
 
     @property
     def text(self) -> str:
@@ -417,6 +418,7 @@ def run_action(
     context: dict[str, Any] = {
         "inputs": defaults | inputs,
         "github": {"token": TOKEN, "action_path": str(ROOT)},
+        "secrets": {"GITHUB_TOKEN": TOKEN},
         "runner": {"os": "Linux", "environment": "self-hosted", "temp": str(runner_temp)},
         # The install step needs PyPI; the runner would set this output.
         "steps": {"install": {"outputs": {"python": sys.executable}}},
@@ -442,6 +444,7 @@ def run_action(
     (tmp / "home").mkdir(exist_ok=True)
     code, stdout, stderr = 0, "", ""
     ran: list[str] = []
+    envs: dict[str, dict[str, str]] = {}
     for index, step in enumerate(cast(list[dict[str, Any]], action["runs"]["steps"])):
         if "uses" in step or ("if" in step and not _condition(str(step["if"]), context)):
             continue
@@ -465,6 +468,7 @@ def run_action(
             check=False,
         )
         ran.append(step_id)
+        envs[step_id] = env
         stdout += done.stdout
         stderr += done.stderr
         context["steps"][step_id] = {"outputs": _parse_outputs(output)}
@@ -472,7 +476,7 @@ def run_action(
         if code != 0:
             break
     outputs = {name: step["outputs"] for name, step in context["steps"].items()}
-    return Run(code, stdout, stderr, outputs, summary.read_text("utf-8"), ran)
+    return Run(code, stdout, stderr, outputs, summary.read_text("utf-8"), ran, envs)
 
 
 def _config(tmp: Path, mode: str = "") -> tuple[Path, Path]:
@@ -776,12 +780,14 @@ def test_install_names_the_output_the_later_steps_read(
         assert step["env"]["WEIR_PYTHON"] == "${{ steps.install.outputs." + name + " }}"
 
 
-def test_the_token_is_only_the_report_steps() -> None:
-    steps = cast(list[dict[str, Any]], _action()["runs"]["steps"])
-    holders = [s.get("id") for s in steps if "github.token" in json.dumps(s)]
+@skip_windows
+def test_the_token_is_only_the_report_steps(tmp_path: Path, github: StubGitHub) -> None:
+    config, _ = _config(tmp_path)
+    run = _pr_run(tmp_path, github, config=config.name)
+    assert run.code == 0, run.stderr
+    assert run.ran[-2:] == ["check", "report"]
+    holders = [step for step, env in run.envs.items() if any(TOKEN in v for v in env.values())]
     assert holders == ["report"]
-    ids = [s.get("id") for s in steps]
-    assert ids.index("check") < ids.index("report")
 
 
 def test_the_comment_names_the_head_commit() -> None:
