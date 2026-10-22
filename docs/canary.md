@@ -263,7 +263,13 @@ were planted and the forms above. The judge does not match:
 - a value that was hashed, encrypted or compressed;
 - forms composed beyond those listed (URL-encoded base64, for example),
   other text encodings (UTF-16), line-wrapped base64 or HTML entities;
-- telemetry that never reached the capture.
+- telemetry that never reached the capture;
+- a value in another placement's declared field of a `refused` or
+  `connect` request: for such a request the credential fields of every
+  placement that shares the request's provider host are merged, so when
+  two placements share one `provider_host` but belong to different
+  endpoints (or one has no provider), one placement's value in the other's
+  declared field counts as `egress`, not a leak.
 
 ## The ledger (`canary-ledger/1`)
 
