@@ -197,8 +197,10 @@ class CheckRun:
         return self.verdict
 
     def redacted(self, data: bytes) -> str:
-        """Judge output is value-free by contract; redact it all the same."""
-        return self.ledger.redact(data).decode("utf-8", "replace")
+        """Judge output is value-free by contract; redact it all the same.
+        The judge ends its lines the way its platform does; the text here
+        ends them with `\n`, which the stream it is written to translates."""
+        return self.ledger.redact(data).decode("utf-8", "replace").replace("\r\n", "\n")
 
     def cleanup(self) -> list[str]:
         """Delete the ledger, the capture and the flows' homes. Returns the

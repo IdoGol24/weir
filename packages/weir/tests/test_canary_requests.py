@@ -429,5 +429,7 @@ def test_two_runs_with_fresh_values_print_identical_reports(tmp_path: Path) -> N
         requests = fx.write_requests(root / "requests.jsonl", records)
         for as_json in (False, True):
             run = fx.judge(ledger, [_otlp(root)], requests=[requests], as_json=as_json)
-            outputs.append(run.stdout.replace(str(root), "ROOT"))
+            # The JSON report escapes the path (a Windows path's backslashes).
+            escaped = json.dumps(str(root))[1:-1]
+            outputs.append(run.stdout.replace(escaped, "ROOT").replace(str(root), "ROOT"))
     assert outputs[:2] == outputs[2:]
