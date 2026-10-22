@@ -1,17 +1,19 @@
 """The GitHub Action's helper (action.yml at the repository root).
 
-Two steps call it, each with the interpreter weir-run is installed into:
+Three steps call it, each with the interpreter weir-run is installed into:
 
 - `install`: pip-installs weir-scan and weir-run at exact versions, by
   default the versions in this checkout of the action, so the action's ref
   is the pin;
-- `check`: runs `weir-run run`, writes the verdict to the step summary and
-  to one PR comment (updated in place on a re-run), and exits 0 on clean,
-  1 on leak, 3 on incomplete and 2 on any error.
+- `check`: runs `weir-run run` and keeps its report;
+- `report`: writes the verdict to the step summary and to one PR comment
+  (updated in place on a re-run), and exits 0 on clean, 1 on leak, 3 on
+  incomplete and 2 on any error.
 
 The comment shows only the judge's verdict lines, which name placements
 and locations, never a value (docs/canary.md, "The text report"). It is
-posted with the job's own GITHUB_TOKEN, which never reaches weir-run.
+posted with the job's own GITHUB_TOKEN, which only the `report` step gets:
+no process holds it while the flows run.
 
 Standard library only: it runs before anything else is installed, and
 under `python -I`, so nothing in the checked-out workspace can shadow it.
@@ -69,6 +71,8 @@ API_TIMEOUT_SECONDS = 30
 TOKEN_VARIABLE = "WEIR_GITHUB_TOKEN"
 PIN = re.compile(r"\d+(\.\d+)*((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+COMMIT = re.compile(r"[0-9a-f]{40}")
+SCAN_REQUIREMENT = re.compile(r"weir-scan\s*>=\s*(\d+(?:\.\d+)*)")
 
 
 class ActionError(Exception):
@@ -132,7 +136,15 @@ def _shown(lines: list[str], budget: int) -> tuple[list[str], int]:
     return kept + tail, len(head) - len(kept)
 
 
-def render(code: int | None, report: str, *, key: str, config: str, run_url: str | None) -> str:
+def render(
+    code: int | None,
+    report: str,
+    *,
+    key: str,
+    config: str,
+    run_url: str | None,
+    commit: str | None = None,
+) -> str:
     """The comment body: the marker, the headline, the verdict lines."""
     result = outcome(code, report).result
     parts = [marker(key), headline(result), ""]
@@ -149,6 +161,8 @@ def render(code: int | None, report: str, *, key: str, config: str, run_url: str
         if cut:
             parts.append(f"... and {cut} more lines in the job log.")
     footer = f"Config: `{shown_config}`."
+    if commit and COMMIT.fullmatch(commit):
+        footer += f" Commit: `{commit[:12]}`."
     if run_url:
         footer += f" [Job log]({run_url})."
     parts += ["", footer]
@@ -158,14 +172,43 @@ def render(code: int | None, report: str, *, key: str, config: str, run_url: str
 # ---------------------------------------------------------------- install
 
 
-def _pyproject_version(path: Path) -> str:
+def _project(action_path: Path, package: str) -> dict[str, Any]:
     import tomllib
 
+    path = action_path / "packages" / package / "pyproject.toml"
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-        return str(data["project"]["version"])
+        return cast(dict[str, Any], tomllib.loads(path.read_text(encoding="utf-8"))["project"])
     except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
-        raise ActionError(f"cannot read the version from {path}: {exc}") from None
+        raise ActionError(f"cannot read {path}: {exc}") from None
+
+
+def _pyproject_version(action_path: Path, package: str) -> str:
+    try:
+        return str(_project(action_path, package)["version"])
+    except KeyError:
+        raise ActionError(f"packages/{package}/pyproject.toml names no version") from None
+
+
+def _release(version: str) -> tuple[int, ...]:
+    match = re.match(r"\d+(\.\d+)*", version)
+    return tuple(int(part) for part in match.group(0).split(".")) if match else ()
+
+
+def check_recorded(action_path: Path, scan: str, run: str) -> None:
+    """Refuse recorded versions that cannot be what this ref's code is.
+
+    Between releases the recorded versions name the last release, and the
+    weir-run here may already need a newer weir-scan than the one recorded:
+    installing the recorded pair would then judge with older code than the
+    action documents."""
+    for dependency in _project(action_path, "weir-run").get("dependencies", []):
+        match = SCAN_REQUIREMENT.fullmatch(str(dependency).strip())
+        if match and _release(scan) < _release(match.group(1)):
+            raise ActionError(
+                f"this ref is between releases: its weir-run (recorded as {run}) needs"
+                f" weir-scan>={match.group(1)}, recorded as {scan}. Use a release tag of"
+                " the action, or pass weir-scan-version and weir-run-version"
+            )
 
 
 def pins(action_path: Path, scan: str, run: str) -> tuple[str, str]:
@@ -173,7 +216,7 @@ def pins(action_path: Path, scan: str, run: str) -> tuple[str, str]:
     versions in the action's own checkout."""
     chosen: list[str] = []
     for given, package, name in ((scan, "weir", "weir-scan"), (run, "weir-run", "weir-run")):
-        version = given or _pyproject_version(action_path / "packages" / package / "pyproject.toml")
+        version = given or _pyproject_version(action_path, package)
         if not PIN.fullmatch(version):
             raise ActionError(f"{name}-version {version!r} is not one exact version, such as 0.6.0")
         chosen.append(version)
@@ -201,14 +244,18 @@ def _install() -> int:
             f"weir-run needs Python 3.12 or later, and this is {sys.version.split()[0]};"
             " set the python-version input or set up Python first"
         )
-    scan, run = pins(
-        Path(_env("GITHUB_ACTION_PATH")),
-        os.environ.get("WEIR_SCAN_VERSION", ""),
-        os.environ.get("WEIR_RUN_VERSION", ""),
-    )
+    action_path = Path(_env("GITHUB_ACTION_PATH"))
+    given_scan = os.environ.get("WEIR_SCAN_VERSION", "")
+    given_run = os.environ.get("WEIR_RUN_VERSION", "")
+    scan, run = pins(action_path, given_scan, given_run)
+    if not (given_scan and given_run):
+        check_recorded(action_path, scan, run)
     command = install_command(sys.executable, scan, run)
     print("+ " + " ".join(command), flush=True)
-    done = subprocess.run(command, check=False)
+    # `-m` puts the working directory on sys.path, and the job's is the
+    # workspace: run pip from an empty one, so no file there can shadow it.
+    with tempfile.TemporaryDirectory(prefix="weir-pip-") as empty:
+        done = subprocess.run(command, cwd=empty, check=False)
     if done.returncode != 0:
         raise ActionError(f"pip could not install weir-scan=={scan} and weir-run=={run}")
     _output("python", sys.executable)
@@ -234,7 +281,11 @@ def _run_weir(command: list[str], env: dict[str, str]) -> tuple[int, str]:
     # A cancelled job stops this step: let weir-run stop the same way, so it
     # deletes the ledger and the capture.
     def forward(signum: int, frame: FrameType | None) -> None:
-        process.send_signal(signum)
+        try:
+            process.send_signal(signum)
+        except (ValueError, OSError):
+            # Windows sends no SIGINT to a child process.
+            process.terminate()
 
     stopping = (signal.SIGINT, signal.SIGTERM)
     previous = {signum: signal.signal(signum, forward) for signum in stopping}
@@ -253,21 +304,30 @@ def _run_weir(command: list[str], env: dict[str, str]) -> tuple[int, str]:
     return code, kept.decode("utf-8", "replace")
 
 
-def _pull_request() -> int | None:
+def _event_pull_request() -> dict[str, Any]:
     path = os.environ.get("GITHUB_EVENT_PATH")
     if not path:
-        return None
+        return {}
     try:
         event = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
+        return {}
     if not isinstance(event, dict):
-        return None
+        return {}
     pull_request = cast(dict[str, Any], event).get("pull_request")
-    if not isinstance(pull_request, dict):
-        return None
-    number = cast(dict[str, Any], pull_request).get("number")
+    return cast(dict[str, Any], pull_request) if isinstance(pull_request, dict) else {}
+
+
+def _pull_request() -> int | None:
+    number = _event_pull_request().get("number")
     return number if isinstance(number, int) else None
+
+
+def _commit() -> str | None:
+    """The commit judged: a pull request's head, else the pushed commit."""
+    head = _event_pull_request().get("head")
+    sha = cast(dict[str, Any], head).get("sha") if isinstance(head, dict) else None
+    return sha if isinstance(sha, str) else os.environ.get("GITHUB_SHA")
 
 
 def _run_url() -> str | None:
@@ -337,12 +397,14 @@ class GitHub:
 
 
 def _check() -> int:
-    token = os.environ.pop(TOKEN_VARIABLE, "")
+    """Run weir-run and keep its report for the `report` step."""
+    # The token is only the `report` step's; never pass one to weir-run.
+    os.environ.pop(TOKEN_VARIABLE, None)
     config = _env("WEIR_CONFIG")
-    key = os.environ.get("WEIR_COMMENT_KEY") or config
     require = _flag("WEIR_REQUIRE_ISOLATION")
     workdir = Path(tempfile.mkdtemp(prefix="weir-run-", dir=os.environ.get("RUNNER_TEMP")))
     report = workdir / "report.json"
+    verdict = workdir / "verdict.txt"
     command = weir_run_command(sys.executable, config, report, require)
     print("+ weir-run " + " ".join(command[4:]), flush=True)
     try:
@@ -350,12 +412,28 @@ def _check() -> int:
     except OSError as exc:
         print(f"::error::cannot start weir-run: {exc.strerror}", flush=True)
         code, text = None, ""
-    result = outcome(code, text)
-    _output("result", result.result)
+    verdict.write_text(text, encoding="utf-8")
+    _output("result", outcome(code, text).result)
     _output("exit-code", "" if code is None else str(code))
+    _output("verdict", str(verdict))
     if report.is_file():
         _output("report", str(report))
-    body = render(code, text, key=key, config=config, run_url=_run_url())
+    return 0
+
+
+def _report() -> int:
+    """The step summary, the PR comment, and the verdict's exit code."""
+    token = os.environ.pop(TOKEN_VARIABLE, "")
+    config = _env("WEIR_CONFIG")
+    key = os.environ.get("WEIR_COMMENT_KEY") or config
+    raw = os.environ.get("WEIR_EXIT_CODE", "")
+    code = int(raw) if re.fullmatch(r"-?\d+", raw) else None
+    try:
+        text = Path(_env("WEIR_VERDICT")).read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    result = outcome(code, text)
+    body = render(code, text, key=key, config=config, run_url=_run_url(), commit=_commit())
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as out:
@@ -415,9 +493,9 @@ def main(argv: list[str]) -> int:
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(encoding="utf-8", errors="replace")
-    commands = {"install": _install, "check": _check}
+    commands = {"install": _install, "check": _check, "report": _report}
     if len(argv) != 1 or argv[0] not in commands:
-        _fail("usage: weir_action.py install|check")
+        _fail("usage: weir_action.py install|check|report")
     try:
         return commands[argv[0]]()
     except ActionError as exc:

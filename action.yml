@@ -78,8 +78,9 @@ runs:
           echo "::error title=Weir leak check::no Python found; set the python-version input or set up Python first"
           exit 2
         fi
-        "$python" -I "$GITHUB_ACTION_PATH/action/weir_action.py" install
+        exec "$python" -I "$GITHUB_ACTION_PATH/action/weir_action.py" install
 
+    # No token here: no process holds one while the flows run.
     - name: Run the leak check
       id: check
       shell: bash
@@ -87,7 +88,17 @@ runs:
         WEIR_PYTHON: ${{ steps.install.outputs.python }}
         WEIR_CONFIG: ${{ inputs.config }}
         WEIR_REQUIRE_ISOLATION: ${{ inputs.require-isolation }}
+      run: 'exec "$WEIR_PYTHON" -I "$GITHUB_ACTION_PATH/action/weir_action.py" check'
+
+    - name: Report the verdict
+      id: report
+      shell: bash
+      env:
+        WEIR_PYTHON: ${{ steps.install.outputs.python }}
+        WEIR_CONFIG: ${{ inputs.config }}
+        WEIR_EXIT_CODE: ${{ steps.check.outputs.exit-code }}
+        WEIR_VERDICT: ${{ steps.check.outputs.verdict }}
         WEIR_COMMENT: ${{ inputs.comment }}
         WEIR_COMMENT_KEY: ${{ inputs.comment-key }}
         WEIR_GITHUB_TOKEN: ${{ github.token }}
-      run: '"$WEIR_PYTHON" -I "$GITHUB_ACTION_PATH/action/weir_action.py" check'
+      run: 'exec "$WEIR_PYTHON" -I "$GITHUB_ACTION_PATH/action/weir_action.py" report'

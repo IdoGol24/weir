@@ -23,6 +23,12 @@ permissions:
   contents: read
   pull-requests: write          # the comment; nothing else is written
 
+# One run per pull request at a time, so an older commit's run cannot
+# overwrite a newer one's verdict in the comment.
+concurrency:
+  group: weir-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   weir:
     runs-on: ubuntu-latest
@@ -58,8 +64,9 @@ write.
    `--require-isolation` when asked. The job log shows weir-run's output
    as usual: each flow's output with every planted value replaced, then
    the report.
-4. It writes the verdict to the job's step summary and, on a pull request,
-   to its comment, then ends the step with the verdict's exit code.
+4. In a separate step, the only one that gets the job's token, it writes
+   the verdict to the job's step summary and, on a pull request, to its
+   comment, then ends with the verdict's exit code.
 
 ## Inputs
 
@@ -82,9 +89,12 @@ up Python first or pass `python-version`.
 
 **Versions.** By default the action installs the weir-scan and weir-run
 versions recorded at the ref you use, so pinning the action pins them too.
-Pin a release tag or its commit SHA; between releases, the versions
-recorded on `main` are those of the last release. A version input takes
-one exact version, such as `0.6.0`, never a range.
+Pin a release tag or its commit SHA. Between releases, the versions
+recorded on `main` are those of the last release, while its code may be
+newer: when the recorded weir-run needs a newer weir-scan than the one
+recorded, the action stops with an error instead of installing older code
+than it documents. A version input takes one exact version, such as
+`0.6.0`, never a range.
 
 ## Outputs
 
@@ -122,7 +132,8 @@ incomplete reasons, and the coverage, network and result lines. Only lines
 of the judge's report are shown, and they name placements, locations and
 sinks, never a value or a fragment of one. A long report is cut after 60
 lines, the coverage, network and result lines kept, and the job log has the
-rest. An error shows weir-run's exit code and no report.
+rest. An error shows weir-run's exit code and no report. The footer names
+the config, the commit judged and the job log.
 
 ## Permissions and the token
 
@@ -130,17 +141,19 @@ rest. An error shows weir-run's exit code and no report.
   request from a fork, whose token is read-only, the action warns that no
   comment was posted, and the verdict and the job's result stand; the step
   summary still has the verdict.
-- The action uses the job's own `GITHUB_TOKEN` and no other secret. The
-  token is removed from the environment before weir-run starts, and every
-  flow starts from an empty environment anyway.
+- The action uses the job's own `GITHUB_TOKEN` and no other secret. Only
+  the step that posts the comment gets it, after the flows have run, so no
+  process holds it while they run. Every flow also starts from an empty
+  environment.
 - It makes no request but the comment's, to the GitHub API the job runs
   against, the PyPI install and, with `python-version`, the download
   actions/setup-python makes.
 
 ## Limits
 
-- Tested on Linux runners. macOS and Windows runners are untested, and
-  there the flows are never isolated from the network, so
+- Its steps have been run on Linux, outside GitHub's own runner, against
+  a stand-in for the GitHub API. macOS and Windows runners are untested,
+  and there the flows are never isolated from the network, so
   `require-isolation: true` makes every run incomplete.
 - pip installs weir-scan and weir-run at exact versions; their own
   dependencies, such as click and protobuf, are resolved by pip within the

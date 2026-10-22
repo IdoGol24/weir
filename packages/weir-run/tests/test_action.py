@@ -703,3 +703,119 @@ def test_the_token_never_reaches_weir_run(tmp_path: Path, monkeypatch: pytest.Mo
     assert weir_action.main(["check"]) == 0
     (env,) = seen
     assert TOKEN not in env.values()
+
+
+# ---------------------------------------------------------------- added after the lock
+
+
+def _fake_action(tmp: Path, scan: str, run: str, needs: str) -> Path:
+    for package, version, deps in (("weir", scan, []), ("weir-run", run, [f"weir-scan>={needs}"])):
+        (tmp / "packages" / package).mkdir(parents=True)
+        text = f'[project]\nname = "{package}"\nversion = "{version}"\n'
+        text += f"dependencies = {json.dumps(deps)}\n"
+        (tmp / "packages" / package / "pyproject.toml").write_text(text, encoding="utf-8")
+    return tmp
+
+
+@pytest.mark.parametrize(
+    ("scan", "needs", "refused"),
+    [("0.6.0", "0.6.0", False), ("0.7.1", "0.6.0", False), ("0.5.0", "0.6.0", True)],
+)
+def test_recorded_versions_between_releases_are_refused(
+    tmp_path: Path, scan: str, needs: str, refused: bool
+) -> None:
+    action = _fake_action(tmp_path, scan, "0.2.0", needs)
+    if refused:
+        with pytest.raises(weir_action.ActionError, match="between releases"):
+            weir_action.check_recorded(action, scan, "0.2.0")
+    else:
+        weir_action.check_recorded(action, scan, "0.2.0")
+
+
+def test_this_refs_recorded_versions_are_refused_exactly_when_they_disagree() -> None:
+    from packaging.requirements import Requirement
+
+    data = tomllib.loads((ROOT / "packages" / "weir-run" / "pyproject.toml").read_text("utf-8"))
+    deps = cast(list[str], data["project"]["dependencies"])
+    (needed,) = [Requirement(d) for d in deps if Requirement(d).name == "weir-scan"]
+    scan = _version("weir")
+    agrees = needed.specifier.contains(scan, prereleases=True)
+    try:
+        weir_action.check_recorded(ROOT, scan, _version("weir-run"))
+        refused = False
+    except weir_action.ActionError:
+        refused = True
+    assert refused == (not agrees)
+
+
+def test_install_names_the_output_the_later_steps_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[list[str], str]] = []
+
+    def fake_run(command: list[str], cwd: str, check: bool) -> subprocess.CompletedProcess[bytes]:
+        calls.append((command, cwd))
+        assert list(Path(cwd).iterdir()) == []
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(weir_action.subprocess, "run", fake_run)
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("GITHUB_ACTION_PATH", str(_fake_action(tmp_path, "0.6.0", "0.2.0", "0.6.0")))
+    monkeypatch.delenv("WEIR_SCAN_VERSION", raising=False)
+    monkeypatch.delenv("WEIR_RUN_VERSION", raising=False)
+    assert weir_action.main(["install"]) == 0
+    ((command, cwd),) = calls
+    assert "weir-scan==0.6.0" in command and "weir-run==0.2.0" in command
+    assert Path(cwd).resolve() != Path.cwd().resolve()
+    (name,) = _parse_outputs(output)
+    steps = cast(list[dict[str, Any]], _action()["runs"]["steps"])
+    readers = [s for s in steps if s.get("id") in ("check", "report")]
+    assert len(readers) == 2
+    for step in readers:
+        assert step["env"]["WEIR_PYTHON"] == "${{ steps.install.outputs." + name + " }}"
+
+
+def test_the_token_is_only_the_report_steps() -> None:
+    steps = cast(list[dict[str, Any]], _action()["runs"]["steps"])
+    holders = [s.get("id") for s in steps if "github.token" in json.dumps(s)]
+    assert holders == ["report"]
+    ids = [s.get("id") for s in steps]
+    assert ids.index("check") < ids.index("report")
+
+
+def test_the_comment_names_the_commit_it_judged() -> None:
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    body = weir_action.render(0, _report("clean"), key="k", config="c", run_url=None, commit=sha)
+    assert f"`{sha[:12]}`" in body
+    body = weir_action.render(0, _report("clean"), key="k", config="c", run_url=None, commit="x`y")
+    assert "Commit" not in body
+
+
+@skip_windows
+def test_a_pr_comment_names_the_pull_requests_head(tmp_path: Path, github: StubGitHub) -> None:
+    sha = "89abcdef0123456789abcdef0123456789abcdef"
+    config, _ = _config(tmp_path)
+    event = {"pull_request": {"number": PR, "head": {"sha": sha}}}
+    run = run_action(
+        tmp_path, {"config": config.name}, event=event, event_name="pull_request", api=github.url
+    )
+    assert run.code == 0, run.stderr
+    (body,) = _posted(github)
+    assert f"Commit: `{sha[:12]}`" in body
+
+
+def test_install_refuses_recorded_versions_between_releases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake_run(command: list[str], cwd: str, check: bool) -> subprocess.CompletedProcess[bytes]:
+        raise AssertionError("pip must not run")
+
+    monkeypatch.setattr(weir_action.subprocess, "run", fake_run)
+    monkeypatch.setenv("GITHUB_ACTION_PATH", str(_fake_action(tmp_path, "0.5.0", "0.2.0", "0.6.0")))
+    monkeypatch.delenv("WEIR_SCAN_VERSION", raising=False)
+    monkeypatch.delenv("WEIR_RUN_VERSION", raising=False)
+    with pytest.raises(SystemExit) as stopped:
+        weir_action.main(["install"])
+    assert stopped.value.code == 2
+    assert "between releases" in capsys.readouterr().out

@@ -40,7 +40,11 @@
   line does not confirm). A comment that cannot be posted, as on a pull
   request from a fork, is a warning; the verdict stands. On GitHub-hosted
   Linux runners it allows unprivileged user namespaces so the flows run
-  isolated. Its README is `action/README.md`.
+  isolated. Only the step that posts the comment gets the token, after the
+  flows have run, and the comment names the commit it judged. At a ref
+  between releases, where the recorded weir-run needs a newer weir-scan
+  than the one recorded, it stops with an error instead of installing
+  older code. Its README is `action/README.md`.
 
 ## [0.6.0] - 2026-10-22
 
