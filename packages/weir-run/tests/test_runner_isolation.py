@@ -247,6 +247,7 @@ CONFIG = """
 id = "env.APP_KEY"
 kind = "env"
 required = true
+provider = "model"
 
 [[flow]]
 id = "main"
@@ -375,7 +376,7 @@ def test_the_plugin_requires_isolation_when_asked(
     for require, code in ((False, 0), (True, 3)):
         check = CanaryCheck(judge, tmp_path, require_isolation=require)
         try:
-            check.env("APP_KEY", required=True)
+            check.env("APP_KEY", required=True, provider="model")
             check.run(["{python}", probe.as_posix()], env={"SIDE_FILE": str(tmp_path / "side")})
             result = check.judge()
         finally:

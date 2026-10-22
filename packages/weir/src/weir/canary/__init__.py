@@ -1,9 +1,10 @@
 """The canary judge: `weir canary judge` (docs/canary.md).
 
 A canary check plants unique fake credentials, runs a program's flows with
-its telemetry captured, and asks whether any planted value reached the
-capture. This package is the judge half only: it reads a ledger and capture
-files and reports placement ids and locations, never a value. It opens no
+its telemetry and outbound requests captured, and asks whether any planted
+value reached a place outside the user's control. This package is the judge
+half only: it reads a ledger and capture files and reports placement ids,
+locations and sinks, never a value. It opens no
 socket and starts no process; the runner that plants, mocks and captures is
 a separate package that weir never imports.
 """
@@ -12,6 +13,9 @@ from weir.canary._types import (
     EXIT_CODES,
     LEDGER_SCHEMA,
     REPORT_SCHEMA,
+    REQUESTS_SCHEMA,
+    Blocked,
+    BlockedKind,
     Coverage,
     Direct,
     DirectEntry,
@@ -31,12 +35,15 @@ from weir.canary._types import (
     Placement,
     PlacementState,
     Report,
+    Request,
+    RequestsHeader,
     Result,
     Signal,
     State,
     Unexpected,
     ledger_json_schema,
     report_json_schema,
+    requests_json_schema,
 )
 from weir.canary.capture import CaptureError, CaptureFile, Role, collect_capture
 from weir.canary.forms import needles
@@ -48,6 +55,9 @@ __all__ = [
     "EXIT_CODES",
     "LEDGER_SCHEMA",
     "REPORT_SCHEMA",
+    "REQUESTS_SCHEMA",
+    "Blocked",
+    "BlockedKind",
     "CaptureError",
     "CaptureFile",
     "Coverage",
@@ -70,6 +80,8 @@ __all__ = [
     "Placement",
     "PlacementState",
     "Report",
+    "Request",
+    "RequestsHeader",
     "Result",
     "Role",
     "Signal",
@@ -86,4 +98,5 @@ __all__ = [
     "read_ledger",
     "report_json_schema",
     "report_lines",
+    "requests_json_schema",
 ]

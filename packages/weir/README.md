@@ -97,7 +97,7 @@ Each check is a rule, and a rule is a short JSON file naming a source, a destina
 Redaction is worth doing. Weir checks whether it worked: it searches the exported output for the exact planted values, whatever path they took to get there.
 
 **How is this different from gitleaks or trufflehog?**
-They find strings that look like secrets in code and files. Weir proves whether a value you planted reached your telemetry, in any of the encodings [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md#the-encoded-forms) lists. It does not replace them.
+They find strings that look like secrets in code and files. Weir proves whether a value you planted reached your telemetry, console output or a request to anything but its own provider, in any of the encodings [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md#the-encoded-forms) lists. It does not replace them.
 
 **Does it need my real keys?**
 No. It uses fake values by design, and a real key should never be in a run.
@@ -113,9 +113,9 @@ Any that can export OpenTelemetry spans to a file.
 A clean result is evidence about the flows that ran and the credentials planted, not a statement that the program is safe.
 
 - It finds whole values only. A truncated, split or partly masked value, a hashed, encrypted or compressed one, and encodings beyond those [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md#the-encoded-forms) lists (URL-encoded base64, UTF-16, line-wrapped base64) are not matched.
-- It sees only telemetry that reached the capture.
+- It sees only what reached the capture: telemetry, each flow's output, and the requests the rig's mock received.
 - This release plants environment variables, values passed in code, and OAuth tokens. Model APIs must be OpenAI-compatible.
-- The rig does not sandbox the network. A client that ignores the proxy settings and has a hard-coded host can reach that host directly; run such flows in a container or network namespace with no route out.
+- The rig isolates the network only on Linux, where it can make an unprivileged network namespace. Elsewhere a client that ignores the proxy settings and has a hard-coded host can reach that host directly, and the report says the network was not isolated ([network isolation](https://github.com/IdoGol24/weir/tree/main/packages/weir-run#network-isolation)).
 - The flow scan needs content capture switched on in your instrumentation; `weir gauge` tells you whether it is.
 
 ## License

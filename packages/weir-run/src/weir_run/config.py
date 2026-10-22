@@ -27,7 +27,7 @@ from weir_run.spec import (
 _TOP = {"mock", "placement", "flow"}
 _MOCK = {"oauth", "model_reply", "tool_calls", "credential_fields", "endpoint"}
 _ENDPOINT = {"id", "credential_fields", "status", "reply", "content_type", "capture"}
-_PLACEMENT = {"id", "kind", "variable", "shape", "required", "provider_host"}
+_PLACEMENT = {"id", "kind", "variable", "shape", "required", "provider", "provider_host"}
 _FLOW = {"id", "command", "cwd", "timeout_seconds", "env", "skip"}
 
 
@@ -129,6 +129,7 @@ def _placement(t: dict[str, object]) -> PlacementSpec:
         shape=_str(t, "shape", where, "generic"),
         required=_bool(t, "required", where, False),
         provider_host=_opt_str(t, "provider_host", where),
+        provider=_opt_str(t, "provider", where),
     )
 
 

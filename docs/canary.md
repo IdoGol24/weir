@@ -6,19 +6,25 @@
 > this text disagree, one of them is a bug.
 
 A canary check plants unique fake credentials where real ones live, runs a
-program's own flows with its telemetry exported to a local receiver, and
-asks one question of the capture: did any planted value reach it? Because
-the check knows every value it planted, the answer is an exact match, not a
-pattern guess. The catalog's credential patterns play no part in the
-verdict.
+program's own flows with its telemetry exported to a local receiver and
+every outbound request sent to a local mock, and asks one question of the
+capture: did any planted value reach a place outside the user's control?
+Those places are the program's telemetry (traces, logs, metrics), its
+console output, the model provider (prompts and messages) and any other
+service or host. Because the check knows every value it planted, the
+answer is an exact match, not a pattern guess. The catalog's credential
+patterns play no part in the verdict.
 
 The check has two parts with a hard line between them:
 
 - **`weir canary judge`**, a command in weir-scan. It reads a canary
-  ledger (placement ids plus the fake values planted there) and the
-  captured telemetry, and reports every placement whose value, or an
-  encoded form of it, appears anywhere in the capture. It names the
-  placement and where it was found, never a value or any fragment of one.
+  ledger (placement ids plus the fake values planted there), the captured
+  telemetry and console output, and the mock's record of every request the
+  program sent, and reports every placement whose value, or an encoded
+  form of it, appears anywhere in the capture, or anywhere in a request
+  but a credential field of a request to the placement's own provider. It
+  names the placement and where it was found (for a request, the sink and
+  the field), never a value or any fragment of one.
 - **The canary runner** (`weir-run`, a separate package). It generates and
   plants the canaries, writes the ledger, runs the flows against a local
   mock, writes the capture, and calls the judge.
@@ -31,9 +37,9 @@ matches, the ledger and report schemas, coverage states and exit codes.
 | | the judge (`weir canary judge`, in weir-scan) | the canary runner (`weir-run`, a separate package) |
 | --- | --- | --- |
 | does | reads a ledger and capture files, prints a report | plants canaries, runs the mock and the flows, writes ledger and capture, calls the judge |
-| network | **none**: opens no socket, binds nothing, resolves nothing | a mock bound to `127.0.0.1` only, which flows reach through their proxy settings; every proxied request to another host is refused. On Linux, flows and the mock share a network namespace whose only network is loopback ([Network isolation](#network-isolation)) |
+| network | **none**: opens no socket, binds nothing, resolves nothing | a mock bound to `127.0.0.1` only, which flows reach through their proxy settings; every proxied request to another host is refused and recorded. On Linux, flows and the mock share a network namespace whose only network is loopback ([Network isolation](#network-isolation)) |
 | processes | starts none | runs each flow under `env -i` with an allowlisted environment |
-| writes | nothing but its report on stdout and errors on stderr | the ledger (mode 0600, in the job's temporary directory, deleted after judging), the capture, its own reports |
+| writes | nothing but its report on stdout and errors on stderr | the ledger (mode 0600, in the job's temporary directory, deleted after judging), the capture (telemetry, flow output and the request capture, deleted after judging), its own reports |
 | reads | only the ledger and the capture paths it is given, or with `--sample` the bundled sample; no environment variable changes its output | the maintainer's config and the flows' output |
 | determinism | a pure function of its input bytes; no clock, no randomness, no model | canary values are random per run (seedable for local reproduction); the mock's replies are scripted |
 
@@ -71,7 +77,7 @@ matches, the ledger and report schemas, coverage states and exit codes.
 ## Running it
 
 ```sh
-weir canary judge --ledger FILE --otlp PATH [--otlp PATH]... [--json] [PATH...]
+weir canary judge --ledger FILE --otlp PATH [--otlp PATH]... [--requests PATH]... [--json] [PATH...]
 weir canary judge --sample [--json]
 ```
 
@@ -79,11 +85,12 @@ weir canary judge --sample [--json]
 | --- | --- |
 | `--ledger` | **Required** unless `--sample`. The canary ledger (`canary-ledger/1`, below). |
 | `--otlp` | **Required** unless `--sample`; repeatable. A telemetry file, or a directory of them: OTLP/JSON export requests, one per line. Only these count toward completeness. |
+| `--requests` | Optional; repeatable. A request capture file (`canary-requests/1`, see [The request capture](#the-request-capture-canary-requests1)), or a directory of them: every request the mock received. Judged by the attribution rules there. Never counts toward completeness. |
 | `PATH` | Zero or more further capture files or directories, such as non-OTLP telemetry bodies and each flow's stdout and stderr. They are swept for canaries and never count toward completeness. |
 | `--json` | Print the `canary-report/1` JSON report instead of the text report. |
-| `--sample` | Judge the bundled sample instead of given files: a ledger of prefix-free fake values and one OTLP/JSON capture, shipped in the package, with one planted value in a span attribute. It exits `1` and shows what a leak report looks like with no other input. It takes no `--ledger`, `--otlp` or `PATH`. The sample ledger is package data, so the mode-0600 rule below does not apply to it. |
+| `--sample` | Judge the bundled sample instead of given files: a ledger of prefix-free fake values and one OTLP/JSON capture, shipped in the package, with one planted value in a span attribute. It exits `1` and shows what a leak report looks like with no other input. It takes no `--ledger`, `--otlp`, `--requests` or `PATH`. The sample ledger is package data, so the mode-0600 rule below does not apply to it. |
 
-A directory, under either role, is read recursively in sorted path order. A
+A directory, under any role, is read recursively in sorted path order. A
 symbolic link inside it is not followed, and is reported as not scanned.
 Every other entry must be a readable regular file or directory: an entry
 that cannot be opened or read in full, vanishes during the read, or is a
@@ -113,6 +120,31 @@ a reader what the hit means.
 | `env` | the flow's launch environment, under the variable the software reads | `request` or `egress` |
 | `code` | passed explicitly by the flow to a constructor or call; in subprocess mode the flow reads it from a variable the runner names | `request` or `egress` |
 | `mock-oauth` | a credential one of the mock's OAuth endpoints issued during the run: an authorization code, device code, access token, refresh token or ID token; ids `runtime.oauth.<token>#<n>`, `<token>` one of `code`, `device_code`, `access_token`, `refresh_token`, `id_token` | `minted` |
+
+### A placement's own provider
+
+A placement may name where it legitimately goes, its **own provider**, in
+two ways:
+
+- its **providers**: mocked endpoints by id, `model` (the mock's model
+  API), `oauth` (its OAuth endpoints), `otlp` (its telemetry receiver) or
+  the id of an endpoint the runner's configuration declares;
+- its **provider host**: the host name of its real provider, which the
+  mock refuses.
+
+A `served` request to one of its providers, and a `refused` or `connect`
+request whose host is its provider host, is a request to its own
+provider. Every other request is not (see
+[The request capture](#the-request-capture-canary-requests1)). Only the
+[credential fields](#runtime-values) of a request to its own provider are
+where the placement legitimately goes: the same value anywhere else in
+that request, such as the prompt or messages of a request to the model
+API, is a leak. A planted placement names at most one provider endpoint,
+from the runner's configuration. A `mock-oauth` placement's providers are
+`oauth` and every endpoint the configuration declares: the mock issued it to the program
+for the program's own APIs, so the model, the telemetry receiver and
+every other host are somewhere else. A placement with no provider belongs
+in no request: any request that holds it is a leak.
 
 **Reserved for a later release.** These kinds have no rules in this version,
 and a ledger that names one is rejected as an unknown `kind`: `tool-field`,
@@ -152,21 +184,28 @@ No other header, parameter or field is a credential field; a PKCE
 `code_verifier`, for example, is not. Each credential field value is
 handled by the first rule that applies:
 
-1. **It holds a needle** of one or more ledger values. The mock records
-   `request` evidence for each of those placements and stores nothing else:
-   a received value is never added as a placement, so a composite such as a
-   cookie or a Basic value never enters the ledger.
-2. **Anything else** is never written by the mock, to the ledger or to any
-   record of its own. The mock writes an `unexpected` record naming only
-   its endpoint and field, and the run is incomplete
-   (`unexpected_credential`). A flow that sends a credential no canary
+1. **It holds a needle** of one or more ledger values. The mock writes
+   nothing about it to the ledger: whether the request went to each
+   placement's own provider is the judge's call, from the request capture,
+   where the mock names each request's credential fields.
+   A received value is never added as a placement, so a composite such as
+   a cookie or a Basic value never enters the ledger.
+2. **Anything else** is never written to the ledger. The mock writes an
+   `unexpected` record naming only its endpoint and field, and the run is
+   incomplete (`unexpected_credential`). A flow that sends a credential no canary
    accounts for has left the check's premise, so it fails visibly instead
    of passing.
 
-The mock controls only its own records. Request headers never enter the
-capture, but if the program itself logs or exports a credential, it is in
-the program's own capture files and output like anything else the program
-emits.
+Separately from these rules, the mock records every request it receives,
+headers and body included, in the request capture (see
+[The request capture](#the-request-capture-canary-requests1)): the one
+record of request content the mock keeps. Like every capture file it holds
+what the program sent, an unaccounted credential included; it is read
+only by the judge, which prints from it only a host and the names of
+headers, parameters and fields, under the printing rule; and the runner
+deletes it with the rest of the capture. If the program itself logs or
+exports a credential, it is in the program's own capture files and output
+like anything else the program emits.
 
 ### Canary values
 
@@ -224,7 +263,13 @@ were planted and the forms above. The judge does not match:
 - a value that was hashed, encrypted or compressed;
 - forms composed beyond those listed (URL-encoded base64, for example),
   other text encodings (UTF-16), line-wrapped base64 or HTML entities;
-- telemetry that never reached the capture.
+- telemetry that never reached the capture;
+- a value in another placement's declared field of a `refused` or
+  `connect` request: for such a request the credential fields of every
+  placement that shares the request's provider host are merged, so when
+  two placements share one `provider_host` but belong to different
+  endpoints (or one has no provider), one placement's value in the other's
+  declared field counts as `egress`, not a leak.
 
 ## The ledger (`canary-ledger/1`)
 
@@ -238,8 +283,8 @@ The first line is the header; every other line is a record with a `type`:
 
 ```json
 {"schema": "canary-ledger/1"}
-{"type": "placement", "id": "env.SEARCH_API_KEY", "kind": "env", "value": "<fake value>", "required": true}
-{"type": "placement", "id": "runtime.oauth.access_token#1", "kind": "mock-oauth", "value": "<fake value>"}
+{"type": "placement", "id": "env.SEARCH_API_KEY", "kind": "env", "value": "<fake value>", "required": true, "providers": ["search"], "provider_host": "api.search.example"}
+{"type": "placement", "id": "runtime.oauth.access_token#1", "kind": "mock-oauth", "value": "<fake value>", "providers": ["oauth", "search"]}
 {"type": "exercised", "placement": "runtime.oauth.access_token#1", "evidence": "minted"}
 {"type": "unexpected", "id": "unexpected.search.authorization#1"}
 {"type": "flow", "id": "quickstart", "status": "ok"}
@@ -249,7 +294,7 @@ The first line is the header; every other line is a record with a `type`:
 
 Every **id** (a placement, flow or unexpected id) is 1 to 128 characters
 from `[A-Za-z0-9._:#/-]`, unique among the records of its type, and holds
-no run of 8 or more consecutive characters of any value in the ledger. Ids
+no run of 6 or more consecutive characters of any value in the ledger. Ids
 are printed in both reports, so this rule is what keeps them value-free and
 one line each.
 
@@ -260,8 +305,10 @@ one line each.
 | | `kind` | string | one of the kinds above |
 | | `value` | string | the fake value, at least 16 characters, unique in the ledger |
 | | `required` | boolean | optional, default `false`: the run is incomplete unless this placement is exercised or leaked |
+| | `providers` | array of strings | optional, default empty: the endpoint ids of the placement's [own provider](#a-placements-own-provider), each 1 to 40 characters from `[A-Za-z0-9_-]` |
+| | `provider_host` | string | optional: the host name of the placement's own provider, 1 to 253 characters from `[A-Za-z0-9._:-]`, matched without regard to letter case |
 | `exercised` | `placement` | string | a placement id defined in this ledger, on any line |
-| | `evidence` | string | `request` (a credential field the mock received holds a needle of the value), `minted` (the mock issued it), `egress` (the flow tried to reach the placement's provider host and was refused) |
+| | `evidence` | string | `request` (a credential field of a request to the placement's own provider held a needle of the value), `minted` (the mock issued it), `egress` (the flow tried to reach the placement's provider host and was refused). The judge also derives `request` and `egress` from the request capture; a runner without one may record them here |
 | `flow` | `id` | string | the flow's id, an id |
 | | `status` | string | `ok`, `failed` (crashed or exited non-zero), `timeout` or `skipped` |
 | `unexpected` | `id` | string | an id, `unexpected.<endpoint>.<field>#<n>`: a credential field the mock received that held no needle of any ledger value. The record never carries the value |
@@ -284,7 +331,8 @@ number, never content, when: the file cannot be read; it is readable by
 group or others on a POSIX system; the header is missing or names another
 schema; a line is not a JSON object or does not end in a newline; a record
 has an unknown `type`, an unknown field, a wrong type or an unknown
-`kind`, `evidence` or `status`; an id breaks the id rule; a value repeats
+`kind`, `evidence` or `status`; an id, provider or provider host breaks
+its rule; a value repeats
 or is shorter than 16 characters; an `exercised` record names no defined
 placement; a second `network` record; a `direct` record that names no
 defined flow, repeats another's flow, protocol and target, or appears
@@ -295,7 +343,7 @@ read in full would leave a value unsearched, so it is never read in part.
 ## The capture
 
 The capture is every file the runner hands the judge. Each file has one
-of two roles, fixed by the command line and never guessed from content:
+of three roles, fixed by the command line and never guessed from content:
 
 1. **Telemetry files** (`--otlp`): JSON Lines, every line one OTLP export
    request in the protobuf JSON mapping, a JSON object holding
@@ -306,8 +354,12 @@ of two roles, fixed by the command line and never guessed from content:
    request to a non-OTLP telemetry endpoint or a flow's captured stdout and
    stderr. A swept file is never parsed, whatever it holds, and nothing in
    it counts toward completeness.
+3. **Request files** (`--requests`): the mock's record of every request it
+   received, judged by the attribution rules of
+   [The request capture](#the-request-capture-canary-requests1). Nothing in
+   them counts toward completeness.
 
-Each file is read this way:
+Telemetry and swept files are read this way:
 
 - **The structured walk** (telemetry files). Each line is decoded, and
   every string field and every `stringValue`, plus every `bytesValue` after
@@ -328,10 +380,11 @@ covered by the raw sweep alone, counted under `unparsed_records`, and makes
 the run incomplete.
 
 The runner writes OTLP request bodies decompressed, one export request per
-line, and does not put request headers in the capture: a credential's
-legitimate use as a request header is evidence that it was exercised, not
-a leak. A capture file of either role that starts with the gzip magic bytes
-is not scanned and makes the run incomplete. A capture path, or any entry
+line, and keeps request headers out of the telemetry and swept files:
+every request's headers go to the request capture, where a credential's
+use in a credential field of a request to its own provider is evidence
+that it was exercised, not a leak. A capture file of any role that starts
+with the gzip magic bytes is not scanned and makes the run incomplete. A capture path, or any entry
 under a capture directory, that cannot be read in full or is not a regular
 file or directory is exit 2 (see [Running it](#running-it)).
 
@@ -354,14 +407,115 @@ version, schema URLs) are reported with no record and a location starting
 `attributes.app.config.headers[0]`.
 
 **Printing capture-derived text.** A span name, metric name, attribute key,
-path segment, capture file name or `direct` target comes from the program
-under test and may
+path segment, request host, header, parameter or field name, capture file
+name or `direct` target comes from the program under test and may
 itself hold a canary. Before any such string is printed it is flattened to
 one line (control characters shown as `\xNN`), cut to 200 characters with
 `...`, and replaced entirely by `[withheld]` if it contains any needle or
-any run of 8 or more consecutive characters of any ledger value. A canary in a
+any run of 6 or more consecutive characters of any ledger value. A canary in a
 span name is therefore reported as a hit at location `name` of a span
 shown as `[withheld]`.
+
+## The request capture (`canary-requests/1`)
+
+The mock records every request it receives, before answering it, as one
+line of a request capture file that the runner passes with `--requests`.
+JSON Lines, UTF-8, every line ending in `\n`, appended in whole lines. The
+first line is the header; every other line is one request:
+
+```json
+{"schema": "canary-requests/1"}
+{"outcome": "served", "endpoint": "model", "host": "127.0.0.1", "port": 41817, "method": "POST", "path": "/v1/chat/completions", "query": "", "headers": [["Host", "127.0.0.1:41817"], ["Authorization", "Bearer <fake value>"]], "body": "<base64>", "unread": null, "credential_fields": [["header", "authorization"], ["header", "proxy-authorization"]]}
+{"outcome": "refused", "endpoint": null, "host": "collector.example", "port": 80, "method": "POST", "path": "http://collector.example/ingest", "query": "", "headers": [["Host", "collector.example"]], "body": "<base64>", "unread": null, "credential_fields": [["header", "authorization"], ["header", "proxy-authorization"]]}
+{"outcome": "connect", "endpoint": null, "host": "api.example", "port": 443, "method": "CONNECT", "path": null, "query": null, "headers": [["Host", "api.example:443"]], "body": null, "unread": null, "credential_fields": [["header", "authorization"], ["header", "proxy-authorization"]]}
+```
+
+| field | type | meaning |
+| --- | --- | --- |
+| `outcome` | string | `served` (the mock answered as itself: a mocked endpoint, or a 404 for a path it does not mock), `refused` (a plain-HTTP request for another host, refused with 403 and forwarded nowhere) or `connect` (a `CONNECT` for another host, refused with 403 before any byte of the tunnel) |
+| `endpoint` | string or null | for `served`, the endpoint that answered: `model`, `oauth`, `otlp` or a declared endpoint's id; null for a path the mock does not mock, and for `refused` and `connect` |
+| `host` | string | the destination host as received, letter case kept: the mock's own address for `served`, the requested host otherwise |
+| `port` | integer | the destination port |
+| `method` | string | the request method |
+| `path` | string or null | the request target as received, up to its first `?`, percent-escapes kept: the path, or for an absolute-form request the whole URL, userinfo included; null for `connect` |
+| `query` | string or null | the request target after its first `?`, empty when there is none; null for `connect` |
+| `headers` | array | every header as a `[name, value]` pair of strings, in the order received |
+| `body` | string or null | the body after its `Content-Encoding` is removed, base64-encoded (standard alphabet, padded); empty when there is no body. Null for a `connect`, for an OTLP export (its content is the telemetry capture) and for a declared endpoint that keeps its bodies as swept capture files: a body judged elsewhere is not judged twice |
+| `unread` | string or null | why the body could not be judged in full: `encoding` (a `Content-Encoding` the mock cannot remove; `body` holds the bytes as received), `too_large` (over the mock's 64 MiB limit; `body` is null) or `error` (the mock failed while reading or answering the request; `body` is null); null otherwise |
+| `credential_fields` | array | the request's [credential fields](#runtime-values), each a `[location, name]` pair: `location` is `header`, `query` or `body`, and a header name is matched without regard to letter case. The `Authorization` and `Proxy-Authorization` headers of every request, then the fields of its endpoints: for a `served` request the endpoint that answered it, and for a `refused` or `connect` request the providers of every placement whose provider host is its host (matched without regard to letter case), since those endpoints stand in for that host. An endpoint's fields are those it declares in the runner's configuration, and on the mock's OAuth endpoints also their form fields. A `body` field is a form field or a member of a top-level JSON object, everything under the member included |
+
+### Attribution
+
+For each request and each placement, the judge searches every part of the
+request for every needle of the placement: the method; the host; the path,
+as received and percent-decoded; each query parameter's name and value,
+percent-decoded with `+` as a space, and the whole query as received; each
+header's name and value; and the body, decoded from base64. A body that is
+a JSON document is searched string by string, member names included; a
+body whose request has a `Content-Type` of
+`application/x-www-form-urlencoded` is searched field by field like a
+query; and every body is also searched as a whole. Then:
+
+- **Its own provider's credential fields.** A needle found in one of the
+  `credential_fields` of a request to the placement's
+  [own provider](#a-placements-own-provider) is not a hit. A `served`
+  request to one of its providers that holds a needle there is `request`
+  evidence that the placement was exercised. Any `refused` or `connect`
+  request to its provider host is `egress` evidence, whatever it holds,
+  and a needle in its credential fields, such as the `header:x-api-key`
+  or `query:key` its own endpoint declares, is not a hit there either.
+- **Anywhere else.** A needle found anywhere else in any request is a hit:
+  a leak to that request's **sink**. That includes every other part of a
+  request to its own provider: a model key copied into
+  `body.messages[0].content` of a request to the model API is a leak to
+  `model`, a key in the body of a request to its own declared API,
+  outside the fields that API declares, is a leak to that API's id, and a
+  key in the body of a refused request to its provider host is a leak to
+  `<host> (blocked)`.
+
+| sink | the request |
+| --- | --- |
+| `model` | to the mock's model API: a prompt, messages, or a credential sent to the model provider |
+| `oauth` | to the mock's OAuth endpoints |
+| `otlp` | to the mock's telemetry receiver: a header or the query of an export |
+| `<declared api>` | to an endpoint the runner's configuration declares, by its id: a credential sent to the wrong service |
+| `unmocked` | to the mock, at a path it does not mock |
+| `<host> (blocked)` | a `refused` plain-HTTP request, or a `connect`, for another host; `<host>` is the record's host in lower case, under the printing rule |
+
+A `connect` has no visible content: the mock refuses the tunnel before
+the client sends any byte through it. It is reported as a **blocked
+connection attempt**, by host and port, and in the coverage; it is never a
+leak by itself. Its host and headers are still searched like any
+request's. Each `refused` request is listed the same way, as a blocked
+request, whatever its content.
+
+A hit in a request is located by part:
+
+| location | the part |
+| --- | --- |
+| `method` | the method |
+| `host` | the destination host |
+| `path` | the request target up to its `?`, as received or percent-decoded |
+| `query.<name>` | a query parameter, by its percent-decoded name |
+| `query` | the whole query, where no parameter of the request held a needle of the placement |
+| `headers.<name>` | a header, by its name in lower case |
+| `body.<path>` | a string or member name in a JSON body: `.key` into an object, `[i]` into an array, as in `body.messages[0].content` |
+| `body.<name>` | a field of a form body, by its percent-decoded name |
+| `body` | the body as a whole, where no JSON string or form field of the request held a needle of the placement |
+
+A name or host is printed under the printing rule, so one that itself
+holds a needle reads `[withheld]`. One printed in another form than it was
+received (a header name or host in lower case, a parameter or field name
+percent-decoded) is withheld when either form would be.
+
+The judge exits 2, naming the file, when a request capture file is empty
+or its first line is not the header. A later line that is not a request
+record (it is truncated, does not parse, is not an object, or breaks the
+field table above) cannot be attributed: it is covered by the raw sweep
+alone, so any needle in it is a `raw` hit with no sink, and it is counted
+under `unparsed_records` and makes the run incomplete. A record with
+`unread` set is judged like any other, its body as given, and also makes
+the run incomplete: it names a body the judge could not search in full.
 
 ## Coverage states
 
@@ -386,14 +540,16 @@ one reason:
 | `flow_not_ok` | `<flow id>=<status>`, such as `quickstart=failed` | a `flow` record's status is not `ok` |
 | `unexpected_credential` | the `unexpected` record's id | the mock received a credential field that held no needle of any ledger value |
 | `not_scanned` | the file | a capture file was not scanned (`compressed`, or a `symlink` inside a capture directory) |
-| `unparsed_record` | `<file>:<line>` | a line of a telemetry file is not an OTLP export request |
+| `unparsed_record` | `<file>:<line>` | a line of a telemetry file is not an OTLP export request, or a line of a request capture file is not a request record or names a body the judge could not search in full (`unread`) |
 | `empty_capture` | none | the telemetry files hold no span, log record or metric data point. Swept files never count, whatever they hold |
 | `network_not_isolated` | none | the `network` record says `required` and not `isolated`: the run required isolation and did not have it |
 | `direct_connection` | `<flow>=<protocol>:<target>`, such as `quickstart=tcp:203.0.113.7:443` | a `direct` record: a flow tried to reach a host around the mock. Isolation blocked it, so nothing left, but what it would have sent was never seen |
 
 Silence is never a clean result: an empty capture, a crashed flow, an
 unaccounted credential, an untouched required placement or a connection
-around the mock fails visibly instead of passing quietly.
+around the mock fails visibly instead of passing quietly. A blocked
+connection attempt is not a reason: it is listed and counted in the
+coverage.
 
 The **result** is `leak` when there is any hit, otherwise `incomplete`
 when any reason above holds, otherwise `clean`. A found leak outranks
@@ -470,9 +626,9 @@ failure of the run, so a runner fault never reads as a leak.
 ## The text report
 
 One line per hit, then one line per not-exercised placement, per file not
-scanned and per incomplete reason, then the coverage line, the network line
-and the result. Every output that reaches a verdict carries the coverage
-and network lines, the clean one included.
+scanned, per blocked destination and per incomplete reason, then the
+coverage line, the network line and the result. Every output that reaches
+a verdict carries the coverage and network lines, the clean one included.
 
 ```text
 LEAK code.search_client.api_key file=capture/otlp.jsonl:4 signal=traces span="execute_tool fetch" at=events[0].attributes.http.request.header.authorization form=base64
@@ -488,20 +644,37 @@ Precisely:
 
 - A hit: `LEAK <placement> file=<path>:<line> signal=<signal>`, then
   `span=<quoted name>`, `log=<index>` or `metric=<quoted name>` when there is
-  a record, then `at=<location>` when there is one, then `form=<form>`.
-  Quoted names use JSON string quoting. `<line>` is where the record starts,
-  or, for a raw hit, where the match starts.
+  a record, then `sink=<quoted sink>` for a hit in a request, then
+  `at=<location>` when there is one, then `form=<form>`. Quoted names use
+  JSON string quoting. `<line>` is where the record starts, or, for a raw
+  hit, where the match starts.
 - `not exercised: <placement>` for each `not_exercised` placement.
 - `not scanned: <path> (<reason>)` for each file not scanned.
+- `blocked connection: <host>:<port> (<n>x)` for each destination of
+  `connect` records, and `blocked request: <host>:<port> (<n>x)` for each
+  destination of `refused` records, `<n>` the number of records.
 - `incomplete: <reason> <subject>` for each incomplete reason.
-- `coverage: <P> placements (<L> leaked, <E> exercised, <N> not exercised, <R> required), <F> flows (<K> ok), <files> files, <S> spans, <G> log records, <M> metric data points, <T> strings, <B> bytes swept`
+- `coverage: <P> placements (<L> leaked, <E> exercised, <N> not exercised, <R> required), <F> flows (<K> ok), <files> files, <S> spans, <G> log records, <M> metric data points, <T> strings, <B> bytes swept`,
+  followed, when the judge was given a request capture file, by
+  `, <Q> requests (<X> refused, <C> blocked connections)`.
 - `network isolated: <D> direct connections blocked`, `<D>` the number of
   `direct` records, or `network not isolated: direct connections were not observed`.
 - `result: clean|leak|incomplete`
 
-Lines are sorted (hits by placement, file, line, signal, record, location,
-form; the other lists by placement, file or reason), so the same input
-gives byte-identical output. The report depends on where values appear,
+A run with a request capture reads like this (an excerpt):
+
+```text
+LEAK env.SEARCH_API_KEY file=capture/requests.jsonl:3 signal=requests sink="model" at=body.messages[0].content form=raw
+LEAK env.SEARCH_API_KEY file=capture/requests.jsonl:4 signal=requests sink="model" at=headers.authorization form=raw
+LEAK env.SEARCH_API_KEY file=capture/requests.jsonl:6 signal=requests sink="collector.example (blocked)" at=body.key form=raw
+blocked connection: api.example:443 (1x)
+blocked request: collector.example:80 (1x)
+```
+
+Lines are sorted (hits by placement, file, line, signal, record, sink,
+location, form; blocked destinations by kind, host and port; the other
+lists by placement, file or reason), so the same input gives
+byte-identical output. The report depends on where values appear,
 never on what they are: two runs that plant fresh random values in the same
 places print the same report.
 
@@ -519,8 +692,9 @@ the text report:
 | `placements` | array | `{id, kind, required, state, evidence, hits}`: `state` is `leaked`, `exercised` or `not_exercised`; `evidence` the sorted distinct evidence types; `hits` the count |
 | `flows` | array | `{id, status}` |
 | `not_scanned` | array | `{file, reason}`; reason `compressed` or `symlink` |
+| `blocked` | array | `{kind, host, port, count}`: one per blocked destination; `kind` is `connection` (`connect` records) or `request` (`refused` records), `host` printed under the printing rule, `count` the number of records |
 | `incomplete` | array | `{reason, subject}`; `subject` is null for `empty_capture` |
-| `coverage` | object | `placements`, `leaked`, `exercised`, `not_exercised`, `required`, `flows`, `flows_ok`, `files`, `files_not_scanned`, `spans`, `log_records`, `metric_data_points`, `unparsed_records`, `strings`, `bytes` |
+| `coverage` | object | `placements`, `leaked`, `exercised`, `not_exercised`, `required`, `flows`, `flows_ok`, `files`, `files_not_scanned`, `spans`, `log_records`, `metric_data_points`, `unparsed_records`, `strings`, `bytes`, `request_files`, `requests`, `requests_refused`, `connections_blocked` |
 | `network` | object | `isolated`, `required`, `direct`: the `network` record's two flags, `false` without one, and one `{flow, protocol, target, attempts}` per `direct` record, sorted by flow, protocol and target; `target` printed under the capture-text rule |
 
 A hit:
@@ -530,13 +704,14 @@ A hit:
 | `placement` | string | the placement id |
 | `kind` | string | the placement's kind |
 | `file` | string | the capture path, as given or found under a given directory |
-| `line` | integer | 1-based line where the record starts, or where a raw match starts |
-| `signal` | string | `traces`, `logs`, `metrics` or `raw` |
+| `line` | integer | 1-based line where the record or request starts, or where a raw match starts |
+| `signal` | string | `traces`, `logs`, `metrics`, `requests` or `raw` |
 | `span` | string or null | the span name, printed under the rule above |
 | `span_id` | string or null | the span id as lowercase hex |
 | `log_record` | integer or null | the log record's 0-based index in its export request |
 | `metric` | string or null | the metric name, printed under the rule above |
-| `location` | string or null | the location within the record; null for `raw` |
+| `sink` | string or null | for a hit in a request, its sink (see [Attribution](#attribution)); null otherwise |
+| `location` | string or null | the location within the record or request; null for `raw` |
 | `form` | string | `raw`, `json`, `json2`, `url`, `base64`, `base64url` or `hex` |
 
 No field of either report can hold a value, a fragment of one, a masked
@@ -544,10 +719,11 @@ form (`prefix...last4`), a hash or a fingerprint of a canary. The report
 may be uploaded as a CI artifact; the ledger and the capture never are, and
 the runner deletes them after judging.
 
-JSON Schema artifacts for both schemas are generated from the judge's
+JSON Schema artifacts for these schemas are generated from the judge's
 structs and drift-tested beside the existing ones in
 `packages/weir/schema_artifacts/` (`canary-ledger.v1.schema.json`, one
-ledger line; `canary-report.v1.schema.json`).
+ledger line; `canary-requests.v1.schema.json`, one request capture line;
+`canary-report.v1.schema.json`).
 
 ## What the runner owes the judge
 
@@ -556,24 +732,27 @@ contract:
 
 1. plants one fresh unique value per placement and writes the ledger
    before any flow starts;
-2. adds every credential the mock's OAuth endpoints issue (an authorization
-   code, device code, access, refresh or ID token) to the ledger before the
-   reply that hands it to the program, applies the credential-field rules to
-   every credential field the mock receives, each declared field of every
-   endpoint included (`request` evidence for a held needle, an `unexpected`
-   record and no stored value otherwise), and records all other `exercised`
-   evidence and one `flow` record per flow;
-3. writes OTLP export requests as decompressed OTLP/JSON, one request per
+2. writes each placement's own provider into the ledger, adds every
+   credential the mock's OAuth endpoints issue (an authorization code,
+   device code, access, refresh or ID token) to the ledger before the
+   reply that hands it to the program, applies the credential-field rules
+   to every credential field the mock receives, each declared field of
+   every endpoint included (an `unexpected` record and no stored value for
+   a field that holds no needle), and records one `flow` record per flow;
+3. records every request the mock receives, refused and `CONNECT`
+   requests included, with its credential fields, in a request capture
+   file passed with `--requests`, before answering it;
+4. writes OTLP export requests as decompressed OTLP/JSON, one request per
    line, in files it passes with `--otlp`, and every other telemetry body
    and each flow's stdout and stderr as its own capture file, passed as a
    swept `PATH`;
-4. relays a flow's own output only after replacing every needle with
+5. relays a flow's own output only after replacing every needle with
    `<canary:PLACEMENT-ID>`;
-5. writes one `network` record saying whether the flows ran isolated, and
+6. writes one `network` record saying whether the flows ran isolated, and
    whether the run requires it, and one `direct` record per distinct
    connection attempt isolation blocked;
-6. exits with the judge's code, and deletes the ledger and the capture when
-   the run ends.
+7. exits with the judge's code, and deletes the ledger and the capture,
+   the request capture included, when the run ends.
 
 ## Testing against this contract
 
@@ -589,8 +768,10 @@ contract:
 
 ## Versioning
 
-- `canary-ledger/1` and `canary-report/1` change only with an incompatible
-  change. Additive report fields keep the version.
-- Adding a form, a kind, an evidence type or an incomplete reason changes
-  what a run means, so each is a CHANGELOG entry in the release that ships
-  it.
+- `canary-ledger/1`, `canary-requests/1` and `canary-report/1` change only
+  with an incompatible change. Additive fields keep the version: an
+  optional ledger field that an older ledger leaves out, and any report
+  field.
+- Adding a form, a kind, an evidence type, an incomplete reason, a capture
+  role or a sink changes what a run means, so each is a CHANGELOG entry in
+  the release that ships it.

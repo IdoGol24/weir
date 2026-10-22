@@ -1,8 +1,43 @@
 {
   "$defs": {
+    "Blocked": {
+      "description": "A destination the mock refused, by kind; never a leak by itself.",
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "host": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/BlockedKind"
+        },
+        "port": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "host",
+        "port",
+        "count"
+      ],
+      "title": "Blocked",
+      "type": "object"
+    },
+    "BlockedKind": {
+      "enum": [
+        "connection",
+        "request"
+      ],
+      "title": "BlockedKind"
+    },
     "Coverage": {
       "properties": {
         "bytes": {
+          "type": "integer"
+        },
+        "connections_blocked": {
           "type": "integer"
         },
         "exercised": {
@@ -35,6 +70,15 @@
         "placements": {
           "type": "integer"
         },
+        "request_files": {
+          "type": "integer"
+        },
+        "requests": {
+          "type": "integer"
+        },
+        "requests_refused": {
+          "type": "integer"
+        },
         "required": {
           "type": "integer"
         },
@@ -63,7 +107,11 @@
         "metric_data_points",
         "unparsed_records",
         "strings",
-        "bytes"
+        "bytes",
+        "request_files",
+        "requests",
+        "requests_refused",
+        "connections_blocked"
       ],
       "title": "Coverage",
       "type": "object"
@@ -171,6 +219,16 @@
         "signal": {
           "$ref": "#/$defs/Signal"
         },
+        "sink": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "span": {
           "anyOf": [
             {
@@ -202,6 +260,7 @@
         "span_id",
         "log_record",
         "metric",
+        "sink",
         "location",
         "form"
       ],
@@ -328,6 +387,12 @@
     "Report": {
       "description": "canary-report/1: what `weir canary judge --json` prints.",
       "properties": {
+        "blocked": {
+          "items": {
+            "$ref": "#/$defs/Blocked"
+          },
+          "type": "array"
+        },
         "coverage": {
           "$ref": "#/$defs/Coverage"
         },
@@ -384,6 +449,7 @@
         "placements",
         "flows",
         "not_scanned",
+        "blocked",
         "incomplete",
         "coverage",
         "network"
@@ -404,6 +470,7 @@
         "logs",
         "metrics",
         "raw",
+        "requests",
         "traces"
       ],
       "title": "Signal"

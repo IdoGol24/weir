@@ -28,19 +28,19 @@ def _env(tmp_path, mode):
     return {{"SIDE_FILE": str(tmp_path / "side"), "MODE": mode}}
 
 def test_clean(canary_check, tmp_path):
-    canary_check.env("APP_KEY", required=True)
+    canary_check.env("APP_KEY", required=True, provider="model")
     assert canary_check.run(["{{python}}", PROBE], env=_env(tmp_path, "")) == "ok"
 
 def test_leaky(canary_check, tmp_path):
-    canary_check.env("APP_KEY")
+    canary_check.env("APP_KEY", provider="model")
     canary_check.run(["{{python}}", PROBE], env=_env(tmp_path, "leak"))
 
 def test_crashing(canary_check, tmp_path):
-    canary_check.env("APP_KEY")
+    canary_check.env("APP_KEY", provider="model")
     canary_check.run(["{{python}}", PROBE], id="crashy", env=_env(tmp_path, "crash"))
 
 def test_explicit_judge(canary_check, tmp_path):
-    canary_check.env("APP_KEY")
+    canary_check.env("APP_KEY", provider="model")
     canary_check.run(["{{python}}", PROBE], env=_env(tmp_path, "leak"))
     result = canary_check.judge()
     assert result.code == 1
@@ -89,6 +89,8 @@ def test_the_plugin_loads_through_its_entry_point(inner: subprocess.CompletedPro
 
 def test_a_clean_flow_passes(inner: subprocess.CompletedProcess[str]) -> None:
     assert "PASSED test_inner.py::test_clean" in inner.stdout, inner.stdout
+    # The verdict is given at teardown, which pytest reports as its own ERROR.
+    assert "ERROR test_inner.py::test_clean" not in inner.stdout, inner.stdout
 
 
 def test_a_leak_fails_the_test_with_the_value_free_report(
@@ -102,6 +104,7 @@ def test_a_leak_fails_the_test_with_the_value_free_report(
 def test_an_incomplete_run_fails_the_test(inner: subprocess.CompletedProcess[str]) -> None:
     assert "ERROR test_inner.py::test_crashing" in inner.stdout, inner.stdout
     assert "incomplete: flow_not_ok crashy=failed" in inner.stdout
+    assert "canary check exited 3" in inner.stdout
 
 
 def test_judge_can_be_called_to_assert_on_the_result(
@@ -139,7 +142,7 @@ def test_a_repeated_flow_id_is_refused_before_the_flow_starts(
 ) -> None:
     check = CanaryCheck(judge, tmp_path)
     try:
-        check.env("APP_KEY")
+        check.env("APP_KEY", provider="model")
         first, second = tmp_path / "first", tmp_path / "second"
         probe = ["{python}", PROBE.as_posix()]
         assert check.run(probe, id="main", env={"SIDE_FILE": str(first)}) == "ok"

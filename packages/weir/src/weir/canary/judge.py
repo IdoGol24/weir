@@ -11,20 +11,30 @@ export request, with a precise location) and the raw sweep (the undecoded
 bytes); every other capture file gets the raw sweep only. In a telemetry
 file a raw hit is reported only where the walk found nothing for the same
 placement on the same line.
+
+Each request capture file is judged record by record under the attribution
+rules: a needle in one of the credential fields of a request to the
+placement's own provider is evidence that it was exercised, a needle
+anywhere else in any request is a hit naming that request's sink. Only a
+line that is not a request record gets the raw sweep, since nothing says
+where it went.
 """
 
 from __future__ import annotations
 
 import bisect
 import re
+from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import msgspec
 
 from weir.canary._types import (
     EXIT_CODES,
     REPORT_SCHEMA,
+    Blocked,
+    BlockedKind,
     Coverage,
     DirectEntry,
     Form,
@@ -37,6 +47,7 @@ from weir.canary._types import (
     Placement,
     PlacementState,
     Report,
+    Request,
     Result,
     Signal,
     State,
@@ -45,6 +56,7 @@ from weir.canary._types import FlowState as FlowEntry
 from weir.canary.capture import CaptureFile, Role, collect_capture
 from weir.canary.forms import needles
 from weir.canary.ledger import read_ledger
+from weir.canary.outbound import Part, parse_request, request_parts, shown
 from weir.canary.text import Display
 from weir.canary.walk import Segment, Site, walk_request
 
@@ -161,6 +173,154 @@ def _walk_telemetry(data: bytes, table: Sequence[_Needle]) -> _Telemetry:
     return telemetry
 
 
+# docs/canary.md, "Attribution": the sink a request names when it is not
+# the placement's own provider.
+UNMOCKED = "unmocked"
+_BLOCKED_KIND = {"refused": BlockedKind.REQUEST, "connect": BlockedKind.CONNECTION}
+
+
+@dataclass
+class _Requests:
+    hits: list[Hit] = field(default_factory=lambda: [])
+    evidence: dict[str, set[str]] = field(default_factory=lambda: {})
+    blocked: Counter[tuple[BlockedKind, str, int]] = field(default_factory=lambda: Counter())
+    unparsed_lines: list[int] = field(default_factory=lambda: [])
+    requests: int = 0
+    refused: int = 0
+    connections: int = 0
+
+
+def _own_provider(placement: Placement, record: Request) -> bool:
+    if record.outcome == "served":
+        return record.endpoint is not None and record.endpoint in placement.providers
+    host = placement.provider_host
+    return host is not None and host.lower() == record.host.lower()
+
+
+def _host(record: Request, display: Callable[[str], str]) -> str:
+    return shown(display, record.host.lower(), record.host)
+
+
+def _sink(record: Request, display: Callable[[str], str]) -> str:
+    if record.outcome == "served":
+        return UNMOCKED if record.endpoint is None else display(record.endpoint)
+    return f"{_host(record, display)} (blocked)"
+
+
+def _credential_fields(record: Request) -> set[tuple[str, str]]:
+    return {
+        (location, name.lower() if location == "header" else name)
+        for location, name in record.credential_fields
+    }
+
+
+def _found(
+    parts: Sequence[Part], table: Sequence[_Needle], credentials: set[tuple[str, str]]
+) -> set[tuple[str, str, Form, bool]]:
+    """(placement id, location, form, in a credential field) for every
+    needle in the request; a whole query or body only where no finer part
+    of it found the placement."""
+    fine: set[tuple[str, str, Form, bool]] = set()
+    whole: set[tuple[str, str, Form, str | None]] = set()
+    grouped: set[tuple[str, str | None]] = set()
+    # One search per needle over the whole request first: a needle in no
+    # part is in no part's bytes, and most needles are in no request.
+    joined = b"\0".join(part.data for part in parts)
+    present = [needle for needle in table if needle.data in joined]
+    for part in parts:
+        for needle in present:
+            if needle.data in part.data:
+                pid = needle.placement.id
+                if part.whole:
+                    whole.add((pid, part.location, needle.form, part.group))
+                else:
+                    fine.add((pid, part.location, needle.form, part.field in credentials))
+                    grouped.add((pid, part.group))
+    for pid, location, form, group in whole:
+        if (pid, group) not in grouped:
+            fine.add((pid, location, form, False))
+    return fine
+
+
+def _judge_requests(
+    data: bytes, path: str, ledger: Ledger, table: Sequence[_Needle], display: Callable[[str], str]
+) -> _Requests:
+    out = _Requests()
+    placements = {p.id: p for p in ledger.placements}
+    lines = data.split(b"\n")
+    complete, truncated = lines[:-1], lines[-1]
+    for number, line in enumerate(complete, start=1):
+        if number == 1:
+            continue  # the header, checked when the file was read
+        record = parse_request(line)
+        if record is None:
+            out.unparsed_lines.append(number)
+            out.hits += _raw_hits(line, number, path, table)
+            continue
+        out.requests += 1
+        if record.unread is not None:
+            out.unparsed_lines.append(number)
+        if record.outcome != "served":
+            kind = _BLOCKED_KIND[record.outcome]
+            out.blocked[(kind, _host(record, display), record.port)] += 1
+            if kind is BlockedKind.REQUEST:
+                out.refused += 1
+            else:
+                out.connections += 1
+            for placement in ledger.placements:
+                if _own_provider(placement, record):
+                    out.evidence.setdefault(placement.id, set()).add("egress")
+        sink = _sink(record, display)
+        parts = request_parts(record, display)
+        for pid, location, form, credential in _found(parts, table, _credential_fields(record)):
+            placement = placements[pid]
+            if credential and _own_provider(placement, record):
+                if record.outcome == "served":
+                    out.evidence.setdefault(pid, set()).add("request")
+                continue
+            out.hits.append(
+                Hit(
+                    placement=pid,
+                    kind=placement.kind,
+                    file=path,
+                    line=number,
+                    signal=Signal.REQUESTS,
+                    span=None,
+                    span_id=None,
+                    log_record=None,
+                    metric=None,
+                    sink=sink,
+                    location=location,
+                    form=form,
+                )
+            )
+    if truncated:
+        out.unparsed_lines.append(len(lines))
+        out.hits += _raw_hits(truncated, len(lines), path, table)
+    return out
+
+
+def _raw_hits(data: bytes, line: int, path: str, table: Sequence[_Needle]) -> list[Hit]:
+    return [_raw_hit(raw.needle, path, line + raw.line - 1) for raw in _raw_sweep(data, table)]
+
+
+def _raw_hit(needle: _Needle, path: str, line: int) -> Hit:
+    return Hit(
+        placement=needle.placement.id,
+        kind=needle.placement.kind,
+        file=path,
+        line=line,
+        signal=Signal.RAW,
+        span=None,
+        span_id=None,
+        log_record=None,
+        metric=None,
+        sink=None,
+        location=None,
+        form=needle.form,
+    )
+
+
 def _location(segments: tuple[Segment, ...], display: Callable[[str], str]) -> str:
     out = ""
     for segment in segments:
@@ -185,6 +345,7 @@ def _hit_sort_key(hit: Hit) -> tuple[object, ...]:
         hit.span_id or "",
         -1 if hit.log_record is None else hit.log_record,
         hit.metric or "",
+        hit.sink or "",
         hit.location or "",
         hit.form.value,
     )
@@ -197,11 +358,25 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
     hits: set[Hit] = set()
     unparsed: list[tuple[str, int]] = []
     spans = log_records = data_points = strings = swept = 0
+    derived: dict[str, set[str]] = {}
+    blocked: Counter[tuple[BlockedKind, str, int]] = Counter()
+    requests = refused = connections = 0
 
     for capture in files:
         if capture.data is None:
             continue
         path = display(capture.path)
+        if capture.role is Role.REQUESTS:
+            judged = _judge_requests(capture.data, path, ledger, table, display)
+            hits.update(judged.hits)
+            unparsed.extend((path, line) for line in judged.unparsed_lines)
+            for pid, kinds in judged.evidence.items():
+                derived.setdefault(pid, set()).update(kinds)
+            blocked.update(judged.blocked)
+            requests += judged.requests
+            refused += judged.refused
+            connections += judged.connections
+            continue
         swept += len(capture.data)
         walked: set[tuple[str, int]] = set()
         if capture.role is Role.TELEMETRY:
@@ -226,6 +401,7 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
                         span_id=record and record.span_id,
                         log_record=record and record.log_record,
                         metric=_shown(display, record and record.metric),
+                        sink=None,
                         location=_location(found.site.location, display),
                         form=found.needle.form,
                     )
@@ -234,27 +410,13 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
             placement = raw.needle.placement
             if (placement.id, raw.line) in walked:
                 continue
-            hits.add(
-                Hit(
-                    placement=placement.id,
-                    kind=placement.kind,
-                    file=path,
-                    line=raw.line,
-                    signal=Signal.RAW,
-                    span=None,
-                    span_id=None,
-                    log_record=None,
-                    metric=None,
-                    location=None,
-                    form=raw.needle.form,
-                )
-            )
+            hits.add(_raw_hit(raw.needle, path, raw.line))
 
     ordered_hits = sorted(hits, key=_hit_sort_key)
     hit_counts: dict[str, int] = {}
     for hit in ordered_hits:
         hit_counts[hit.placement] = hit_counts.get(hit.placement, 0) + 1
-    evidence: dict[str, set[str]] = {}
+    evidence: dict[str, set[str]] = {pid: set(kinds) for pid, kinds in derived.items()}
     for record in ledger.exercised:
         evidence.setdefault(record.placement, set()).add(record.evidence)
 
@@ -300,6 +462,12 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
             key=lambda d: (d.flow, d.protocol, d.target),
         ),
     )
+    blocked_list = [
+        Blocked(kind=kind, host=host, port=port, count=count)
+        for (kind, host, port), count in sorted(
+            blocked.items(), key=lambda item: (item[0][0].value, item[0][1], item[0][2])
+        )
+    ]
 
     reasons: list[tuple[IncompleteReason, str | None, int]] = []
     reasons += [
@@ -359,6 +527,10 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
         unparsed_records=len(unparsed),
         strings=strings,
         bytes=swept,
+        request_files=sum(f.role is Role.REQUESTS and f.data is not None for f in files),
+        requests=requests,
+        requests_refused=refused,
+        connections_blocked=connections,
     )
     return Report(
         schema=REPORT_SCHEMA,
@@ -368,17 +540,21 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
         placements=placements,
         flows=flows,
         not_scanned=not_scanned,
+        blocked=blocked_list,
         incomplete=incomplete,
         coverage=coverage,
         network=network,
     )
 
 
-def judge_paths(ledger_path: str, otlp: Sequence[str], swept: Sequence[str]) -> Report:
+def judge_paths(
+    ledger_path: str, otlp: Sequence[str], swept: Sequence[str], requests: Sequence[str] = ()
+) -> Report:
     """Read the ledger, then the capture, and judge. Raises `LedgerError` or
     `CaptureError` (exit 2) on unusable input."""
     ledger = read_ledger(ledger_path)
-    return judge_capture(ledger, collect_capture(otlp, swept, ledger_display(ledger)))
+    display = ledger_display(ledger)
+    return judge_capture(ledger, collect_capture(otlp, swept, display, requests))
 
 
 def encode_report(report: Report) -> bytes:

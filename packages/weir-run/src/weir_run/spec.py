@@ -18,9 +18,13 @@ ID_RE = re.compile(r"[A-Za-z0-9._:#/-]{1,128}")
 VARIABLE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 ENDPOINT_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
 FIELD_NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+HOST_RE = re.compile(r"[A-Za-z0-9._:-]{1,253}")
 
 # The mock's own endpoints. A configured endpoint takes any other id.
 BUILTIN_ENDPOINTS = ("model", "oauth", "otlp")
+# docs/canary.md, "Attribution": the sink of a request to a path the mock
+# does not mock. No configured endpoint may take it.
+UNMOCKED = "unmocked"
 PLANTED_KINDS = ("env", "code")
 TOOL_CALL_MODES = ("each-offered-tool-once", "none")
 FIELD_LOCATIONS = ("header", "query", "body")
@@ -120,6 +124,10 @@ class PlacementSpec:
     shape: str = "generic"
     required: bool = False
     provider_host: str | None = None
+    # The mocked endpoint this placement belongs to: `model`, `oauth`,
+    # `otlp` or a configured endpoint's id (docs/canary.md, "A placement's
+    # own provider"). A request anywhere else that holds it is a leak.
+    provider: str | None = None
 
 
 @dataclass(frozen=True)
@@ -146,6 +154,9 @@ class RunSpec:
         ids += [f"unexpected.{e}.authorization" for e in endpoints]
         ids += [f"unexpected.{e}.proxy-authorization" for e in endpoints]
         ids += [f"unexpected.{e}.{f.name}" for e in endpoints for f in self.mock.fields_for(e)]
+        # Printed as sinks: `<host> (blocked)` and `unmocked`.
+        ids += [p.provider_host for p in self.placements if p.provider_host]
+        ids.append(UNMOCKED)
         return ids
 
 
@@ -181,6 +192,16 @@ def validate(spec: RunSpec, *, require_flows: bool = True) -> None:
         if p.variable in RUNNER_VARIABLES or p.variable in variables:
             raise SpecError(f"placement {p.id}: variable {p.variable} is already taken")
         variables.add(p.variable)
+        if p.provider_host is not None and not HOST_RE.fullmatch(p.provider_host):
+            raise SpecError(f"placement {p.id}: provider_host {p.provider_host!r} is not a host")
+        endpoints = {*BUILTIN_ENDPOINTS, *(e.id for e in spec.mock.endpoints)}
+        if p.provider is not None and p.provider not in endpoints:
+            raise SpecError(
+                f"placement {p.id}: provider {p.provider!r} is not an endpoint;"
+                " expected model, oauth, otlp or a [[mock.endpoint]] id"
+            )
+        if p.provider == "oauth" and not spec.mock.oauth:
+            raise SpecError(f"placement {p.id}: provider 'oauth' needs oauth = true in [mock]")
     flow_ids: set[str] = set()
     for f in spec.flows:
         if not ID_RE.fullmatch(f.id):
@@ -201,7 +222,7 @@ def validate(spec: RunSpec, *, require_flows: bool = True) -> None:
         raise SpecError("no flow is defined")
     endpoint_ids: set[str] = set()
     for e in spec.mock.endpoints:
-        if not ENDPOINT_ID_RE.fullmatch(e.id) or e.id in BUILTIN_ENDPOINTS:
+        if not ENDPOINT_ID_RE.fullmatch(e.id) or e.id in (*BUILTIN_ENDPOINTS, UNMOCKED):
             raise SpecError(f"endpoint id {e.id!r} is not usable")
         if e.id in endpoint_ids:
             raise SpecError(f"endpoint id {e.id} is defined twice")

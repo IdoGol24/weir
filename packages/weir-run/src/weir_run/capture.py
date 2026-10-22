@@ -2,19 +2,24 @@
 
     capture/otlp/<signal>.jsonl   telemetry files (--otlp): one decompressed
                                   OTLP/JSON export request per line
+    capture/requests.jsonl        the request capture (--requests): every
+                                  request the mock received, one per line
     capture/swept/...             swept files: every other telemetry body and
                                   each flow's stdout and stderr, one file each
 
-The roles are fixed by directory, never guessed from content.
+The roles are fixed by path, never guessed from content.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from pathlib import Path
 
 SIGNALS = ("traces", "logs", "metrics")
+REQUESTS_SCHEMA = "canary-requests/1"
+REQUESTS_FILE = "requests.jsonl"
 
 
 def safe_name(text: str) -> str:
@@ -27,10 +32,21 @@ class Capture:
         self.root = root
         self.otlp = root / "otlp"
         self.swept = root / "swept"
+        self.requests = root / REQUESTS_FILE
         self.otlp.mkdir(parents=True)
         self.swept.mkdir(parents=True)
         self._lock = threading.Lock()
         self._counts: dict[str, int] = {}
+        self._write_request({"schema": REQUESTS_SCHEMA})
+
+    def _write_request(self, record: dict[str, object]) -> None:
+        line = json.dumps(record, ensure_ascii=False, separators=(", ", ": ")).encode()
+        with self._lock, self.requests.open("ab") as f:
+            f.write(line + b"\n")
+
+    def request(self, record: dict[str, object]) -> None:
+        """Append one request record (docs/canary.md, "The request capture")."""
+        self._write_request(record)
 
     def otlp_line(self, signal: str, line: bytes) -> None:
         if signal not in SIGNALS or b"\n" in line:

@@ -1,7 +1,7 @@
 """Collect the capture files (docs/canary.md, "Running it" and "The capture").
 
-Each file has one of two roles, fixed by the command line: telemetry
-(`--otlp`) or swept (every other path). A directory under either role is
+Each file has one of three roles, fixed by the command line: telemetry
+(`--otlp`), requests (`--requests`) or swept (every other path). A directory under either role is
 read recursively in sorted path order; a symbolic link inside it is not
 followed and is reported as not scanned. Everything else must be read in
 full: a capture the judge cannot read in full would leave a value
@@ -16,7 +16,9 @@ import stat
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from weir.canary._types import NotScannedReason
+import msgspec
+
+from weir.canary._types import NotScannedReason, RequestsHeader
 
 _GZIP_MAGIC = b"\x1f\x8b"
 # Never block on a FIFO swapped in after the type check, and never follow a
@@ -27,6 +29,7 @@ _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 class Role(enum.Enum):
     TELEMETRY = "otlp"
+    REQUESTS = "requests"
     SWEPT = "swept"
 
 
@@ -78,8 +81,10 @@ class _Collector:
             os.close(fd)
         if data.startswith(_GZIP_MAGIC):
             self.files.append(CaptureFile(path, role, None, NotScannedReason.COMPRESSED))
-        else:
-            self.files.append(CaptureFile(path, role, data))
+            return
+        if role is Role.REQUESTS and not _has_requests_header(data):
+            raise self._fail(path, "not a request capture (no canary-requests/1 header)")
+        self.files.append(CaptureFile(path, role, data))
 
     def _walk_dir(self, path: str, role: Role) -> None:
         try:
@@ -116,10 +121,25 @@ class _Collector:
             raise self._fail(path, "not a regular file or directory")
 
 
+def _has_requests_header(data: bytes) -> bool:
+    first, newline, _ = data.partition(b"\n")
+    if not newline:
+        return False
+    try:
+        msgspec.json.decode(first, type=RequestsHeader)
+    except (msgspec.DecodeError, msgspec.ValidationError):
+        return False
+    return True
+
+
 def collect_capture(
-    otlp: Sequence[str], swept: Sequence[str], display: Callable[[str], str]
+    otlp: Sequence[str],
+    swept: Sequence[str],
+    display: Callable[[str], str],
+    requests: Sequence[str] = (),
 ) -> list[CaptureFile]:
-    """Read every capture file in full, telemetry paths first.
+    """Read every capture file in full: telemetry paths, then request
+    capture paths, then swept paths.
 
     `display` renders a path for an error message under the report's
     printing rule, since a file name can come from the program under test.
@@ -127,6 +147,8 @@ def collect_capture(
     collector = _Collector(display)
     for path in otlp:
         collector.add(path, Role.TELEMETRY)
+    for path in requests:
+        collector.add(path, Role.REQUESTS)
     for path in swept:
         collector.add(path, Role.SWEPT)
     return collector.files

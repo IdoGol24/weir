@@ -161,6 +161,30 @@
             "mock-oauth"
           ]
         },
+        "provider_host": {
+          "anyOf": [
+            {
+              "maxLength": 253,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]{1,253}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "providers": {
+          "default": [],
+          "items": {
+            "maxLength": 40,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,40}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
         "required": {
           "default": false,
           "type": "boolean"

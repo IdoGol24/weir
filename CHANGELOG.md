@@ -25,6 +25,55 @@
   reasons are new: `network_not_isolated` (isolation was required and
   missing) and `direct_connection` (a flow tried to reach a host around the
   mock). A ledger with no `network` record is reported as not isolated.
+- **weir-scan: outbound requests are a sink (`weir canary judge
+  --requests`).** The judge reads a request capture (`canary-requests/1`,
+  one line per request the mock received: destination, method, path,
+  query, headers and body, and whether it was served, refused or a
+  `CONNECT`) and searches every request for every planted value in every
+  encoded form. A value in a credential field of a request to the
+  placement's own provider (a ledger placement's new optional `providers`
+  endpoint ids and `provider_host`; each request record names its
+  `credential_fields`) is `request` or `egress` evidence that it was
+  exercised; anywhere else, the rest of that request included, it is a
+  leak, reported with `signal=requests`,
+  the request's `sink` (`model`, `oauth`, `otlp`, a declared api's id,
+  `unmocked`, or `<host> (blocked)` for a refused plain-HTTP request) and
+  the field (`headers.<name>`, `query.<name>`, `body.<json path>`,
+  `body.<form field>`, `path`, `host`, `method`, or the whole `query` or
+  `body`). A refused `CONNECT` has no visible content: it is listed as a
+  blocked connection attempt and counted in the coverage, never a leak by
+  itself. The report gains the hit field `sink`, a `blocked` list and the
+  coverage counts `request_files`, `requests`, `requests_refused` and
+  `connections_blocked`; the text coverage line gains a requests segment
+  when a request capture is given. A request capture line that is not a
+  request record, or a body the mock could not read in full, makes the run
+  incomplete (`unparsed_record`). The schema artifact
+  `canary-requests.v1.schema.json` is new; `canary-ledger.v1` and
+  `canary-report.v1` gain the fields above. The judge stays offline and
+  deterministic.
+- **weir-run: every request the mock receives is recorded.** The mock
+  writes each request, refused ones included, to `capture/requests.jsonl`
+  before answering it, and the runner passes it to the judge with
+  `--requests` and deletes it after the run with the rest of the capture.
+  A placement names its own provider with the new `provider` key (`model`,
+  `oauth`, `otlp` or a `[[mock.endpoint]]` id; `provider=` in the pytest
+  plugin), so a key pasted into a prompt, sent to the model API as a
+  credential, sent to the wrong one of the program's APIs or sent in a
+  plain-HTTP request to another host is a leak. A token the mock's OAuth
+  endpoints issue belongs to them and to every declared endpoint.
+
+### Changed
+- **weir-run: a placement without `provider` belongs in no request.** Any
+  request that holds its value is now a leak, where a credential field
+  holding it used to count as exercised wherever it was sent. Add
+  `provider` to each placement that a flow legitimately sends to a mocked
+  endpoint. The runner refuses a weir-scan whose judge has no `--requests`.
+- **weir-run: the mock no longer writes `request` or `egress` evidence.**
+  The judge derives both from the request capture, so the evidence and
+  the leak verdict come from one place.
+- **The printing rule withholds runs of 6 characters, down from 8.** No
+  report prints a run of 6 or more consecutive characters of any planted
+  value, and a ledger id may not hold one.
 
 ## [0.5.0] - 2026-10-21
 

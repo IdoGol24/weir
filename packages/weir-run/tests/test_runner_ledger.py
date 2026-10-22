@@ -65,8 +65,15 @@ def test_header_then_whole_lines(ledger: Ledger) -> None:
 def test_the_judge_accepts_what_the_runner_writes(
     ledger: Ledger, judge: list[str], tmp_path: Path
 ) -> None:
-    a = ledger.plant("env.A_KEY", "env", shaped(ledger.source, "generic"), required=True)
-    ledger.mint("access_token", shaped(ledger.source, "generic"))
+    a = ledger.plant(
+        "env.A_KEY",
+        "env",
+        shaped(ledger.source, "generic"),
+        required=True,
+        providers=("model",),
+        provider_host="api.a.invalid",
+    )
+    ledger.mint("access_token", shaped(ledger.source, "generic"), ("oauth", "search"))
     ledger.exercised(a.id, "request")
     ledger.unexpected("model", "authorization")
     ledger.flow("flow.quickstart", "ok")
@@ -78,7 +85,7 @@ def test_the_judge_accepts_what_the_runner_writes(
 
 
 def test_a_minted_value_is_ledgered_with_minted_evidence(ledger: Ledger) -> None:
-    minted = ledger.mint("access_token", shaped(ledger.source, "generic"))
+    minted = ledger.mint("access_token", shaped(ledger.source, "generic"), ("oauth", "search"))
     ledger.close()
     records = _records(ledger.path)
     assert records[1] == {
@@ -86,6 +93,7 @@ def test_a_minted_value_is_ledgered_with_minted_evidence(ledger: Ledger) -> None
         "id": "runtime.oauth.access_token#1",
         "kind": "mock-oauth",
         "value": minted.value,
+        "providers": ["oauth", "search"],
     }
     assert records[2] == {
         "type": "exercised",
@@ -158,6 +166,7 @@ def test_redact_replaces_every_needle(ledger: Ledger) -> None:
 
 def test_withheld_follows_the_printing_rule(ledger: Ledger) -> None:
     p = ledger.plant("env.A_KEY", "env", shaped(ledger.source, "generic"))
-    assert ledger.withheld(f"host-{p.value[5:13]}.invalid")
-    assert not ledger.withheld(f"host-{p.value[5:12]}.invalid")
+    # docs/canary.md: a run of 6 consecutive characters is withheld, 5 is not.
+    assert ledger.withheld(f"host-{p.value[5:11]}.invalid")
+    assert not ledger.withheld(f"host-{p.value[5:10]}.invalid")
     assert ledger.withheld(base64.b64encode(p.value.encode()).decode())

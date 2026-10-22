@@ -5,8 +5,9 @@ the judge"):
    any flow starts;
 2. start the mock on 127.0.0.1 and run each flow against it, inside a
    loopback-only network namespace where one can be made (`isolation`),
-   recording one `flow` record per flow (the mock records minted values,
-   credential-field evidence and unexpected credentials as they happen);
+   recording one `flow` record per flow (the mock records minted values
+   and unexpected credentials as they happen, and every request it
+   receives in the request capture);
 3. stop the mock, record whether the run was isolated and each direct
    connection attempt the namespace blocked, relay each flow's output with
    every needle replaced;
@@ -84,8 +85,12 @@ class CheckRun:
             self.planted: dict[str, str] = {}
             for p in spec.placements:
                 made = shaped(self.source, p.shape)
-                self.planted[p.variable] = self.ledger.plant(p.id, p.kind, made, p.required).value
-            self.mock = Mock(spec.mock, self.ledger, self.capture, spec.placements, self.source)
+                providers = () if p.provider is None else (p.provider,)
+                placement = self.ledger.plant(
+                    p.id, p.kind, made, p.required, providers, p.provider_host
+                )
+                self.planted[p.variable] = placement.value
+            self.mock = Mock(spec.mock, self.ledger, self.capture, self.source)
             self.mock.start(None if self.jail is None else self.jail.listener)
         except BaseException:
             if self.jail is not None:
@@ -193,8 +198,10 @@ class CheckRun:
         return self.verdict
 
     def redacted(self, data: bytes) -> str:
-        """Judge output is value-free by contract; redact it all the same."""
-        return self.ledger.redact(data).decode("utf-8", "replace")
+        """Judge output is value-free by contract; redact it all the same.
+        The judge ends its lines the way its platform does; the text here
+        ends them with `\n`, which the stream it is written to translates."""
+        return self.ledger.redact(data).decode("utf-8", "replace").replace("\r\n", "\n")
 
     def cleanup(self) -> list[str]:
         """Delete the ledger, the capture and the flows' homes. Returns the

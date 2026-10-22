@@ -64,6 +64,7 @@ CONFIG = """
 id = "env.APP_KEY"
 kind = "env"
 required = true
+provider = "model"
 
 [[flow]]
 id = "main"

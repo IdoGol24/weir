@@ -11,7 +11,7 @@ from pathlib import Path
 import msgspec
 import pytest
 
-from weir.canary import Report, ledger_json_schema, report_json_schema
+from weir.canary import Report, ledger_json_schema, report_json_schema, requests_json_schema
 
 _ARTIFACTS = Path(__file__).parents[1] / "schema_artifacts"
 
@@ -21,6 +21,7 @@ _ARTIFACTS = Path(__file__).parents[1] / "schema_artifacts"
     [
         ("canary-ledger.v1.schema.json", ledger_json_schema),
         ("canary-report.v1.schema.json", report_json_schema),
+        ("canary-requests.v1.schema.json", requests_json_schema),
     ],
 )
 def test_committed_schema_artifact_matches_generated(
