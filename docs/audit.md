@@ -122,7 +122,7 @@ fingerprinted, or **decoded candidates** directly:
 | `raw` | the candidates of the string itself |
 | `json` | when the string holds a `\`: the candidates of the string *unescaped*, and, for each JSON string literal in it (a `"` to the next `"` not escaped by a `\`) whose content holds a `\`, the content unescaped as a candidate whole and its candidates. *Unescaped*: each JSON escape (`\"` `\\` `\/` `\b` `\f` `\n` `\r` `\t` `\uXXXX` in either letter case, a surrogate pair as one character) replaced by its character, any other `\` left as it is |
 | `json2` | `json` applied to each text `json` unescaped |
-| `url` | each candidate of the string itself that holds a `%` followed by two hex digits, or a `+`: every such `%XX` replaced by its byte, in two variants, `+` kept and `+` read as a space, the bytes read as UTF-8 |
+| `url` | when the string holds a `%` followed by two hex digits, or a `+`: the candidates of the string *URL-decoded*, and each candidate of the string itself that holds one, URL-decoded, as a candidate whole. *URL-decoded*: every such `%XX` replaced by its byte, in two variants, `+` kept and `+` read as a space, the bytes read as UTF-8 |
 | `base64` | the candidates of each run of 8 or more characters of `A-Za-z0-9+/` (and up to two `=` after it), decoded from its first, second, third and fourth character on (a last group of 2 or 3 characters padded, one of 1 dropped), read as UTF-8 |
 | `base64url` | the same for each run of 8 or more characters of `A-Za-z0-9_-` that holds a `-` or a `_` |
 | `hex` | the candidates of each run of 16 or more hex digits, decoded from its first and from its second digit on, up to the last whole pair, read as UTF-8 |
