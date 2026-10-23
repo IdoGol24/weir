@@ -167,7 +167,6 @@ def check_shell() -> None:
 
 
 def plan_setup(paths: Paths) -> Plan:
-    check_shell()
     if paths.undo_record.exists():
         raise SetupError(
             f"already set up (undo record {paths.undo_record}); run weir statusline undo first"

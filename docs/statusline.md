@@ -110,8 +110,12 @@ so the segment reads a session in steps and keeps what each step found:
   steps once `--budget-ms` (default 500) has passed, and always takes at
   least one, so every run moves the reading on, cancelled or not. A
   session not read to the end of every file shows `scanning… P%`.
-- A step holds only its own bytes: a run reads on from the offset in
-  chunks of whole lines, never the rest of the file at once.
+- For a Claude Code session file whose format the first whole lines
+  settled (see below), a step holds only its own bytes: a run reads on
+  from the offset in chunks of whole lines, never the rest of the file at
+  once. Other files (saved tool outputs, whole-file formats, a file the
+  first lines do not settle) are read whole on each run until one run
+  reads them in full.
 - A file is read again only from where the last run stopped, as long as it
   is the same file (device and inode), it only grew, and the part already
   read is unchanged at both ends: its first 4 KiB, and the 4 KiB before

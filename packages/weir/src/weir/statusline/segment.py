@@ -358,16 +358,18 @@ class Reader:
         """The bytes read from the start, when the first whole lines (at
         least CHUNK_BYTES) hold a Claude Code message record: the file is a
         session file whatever the rest holds. None otherwise."""
-        first = handle.read(min(size, CHUNK_BYTES))
-        while (cut := first.find(b"\n", CHUNK_BYTES - 1)) < 0 and len(first) < size:
+        first = bytearray(handle.read(min(size, CHUNK_BYTES)))
+        start = CHUNK_BYTES - 1
+        while (cut := first.find(b"\n", start)) < 0 and len(first) < size:
             more = handle.read(min(CHUNK_BYTES, size - len(first)))
             if not more:
                 break
+            start = max(CHUNK_BYTES - 1, len(first))
             first += more
         if cut >= 0 and any(
-            is_session_record(line.parsed) for line in json_lines(first[: cut + 1])
+            is_session_record(line.parsed) for line in json_lines(bytes(first[: cut + 1]))
         ):
-            return first
+            return bytes(first)
         return None
 
     def _lines(
@@ -383,24 +385,27 @@ class Reader:
         size = st.st_size
         entry.tail = None
         self._stamp(entry, st)
-        pending = read  # bytes from the offset on, read and not yet audited
+        pending = bytearray(read)  # bytes from the offset on, read and not yet audited
         read_to = entry.offset + len(read)
         handle.seek(read_to)
         while True:
             if self._over():
                 self.save()
                 return entry, entry.offset, size
-            while (cut := pending.find(b"\n", CHUNK_BYTES - 1)) < 0 and read_to < size:
+            start = CHUNK_BYTES - 1
+            while (cut := pending.find(b"\n", start)) < 0 and read_to < size:
                 more = handle.read(min(CHUNK_BYTES, size - read_to))
                 if not more:
                     break
+                start = max(CHUNK_BYTES - 1, len(pending))
                 pending += more
                 read_to += len(more)
             if cut < 0:
                 cut = pending.rfind(b"\n")  # the last whole line left
                 if cut < 0:
                     break
-            chunk, pending = pending[: cut + 1], pending[cut + 1 :]
+            chunk = bytes(pending[: cut + 1])
+            del pending[: cut + 1]
             entry.lines.add(self._audit(path, chunk, entry.format))
             if entry.offset < _PREFIX_BYTES:
                 head = (head + chunk)[:_PREFIX_BYTES]
@@ -410,7 +415,7 @@ class Reader:
             entry.prefix_mac = self._mac("prefix", window)
             self._stepped = True
             self.save()
-        entry.tail = self._audit(path, pending, entry.format) if pending else Tally()
+        entry.tail = self._audit(path, bytes(pending), entry.format) if pending else Tally()
         self.save()
         return entry, size, size
 
