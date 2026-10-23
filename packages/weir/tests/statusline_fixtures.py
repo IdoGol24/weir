@@ -129,42 +129,50 @@ def status_json(transcript: Path, session_id: str) -> str:
 
 
 def groups(setup: fx.Setup) -> dict[str, str]:
-    """Credential id -> the credential it stands for: ids whose stored
-    fingerprints are equal are one value, and the inventory report's
-    records of an environment variable assignment (detector `launch_env` or
-    `startup_file`, docs/inventory.md) that share a name are one variable. An
-    id linked to no other is its own group."""
+    """Credential id -> the value it holds, as the store links them: ids
+    whose stored fingerprints are equal are one value. An id the store holds
+    no fingerprint for is its own group."""
     store = json.loads(setup.store.read_text())
     report = json.loads(setup.report.read_text())
-    links: dict[str, set[str]] = {}
+    out = {c["id"]: c["id"] for c in report["credentials"]}
     for record in store["records"]:
-        links.setdefault("fingerprint:" + record["fingerprint"], set()).add(record["credential_id"])
-    for c in report["credentials"]:
-        if c["source"] == "environment" and {"launch_env", "startup_file"} & set(c["detectors"]):
-            links.setdefault("name:" + c["name"], set()).add(c["id"])
-    group = {c["id"]: {c["id"]} for c in report["credentials"]}
-    for ids in links.values():
-        merged = set[str]().union(*(group[cid] for cid in ids))
-        for cid in merged:
-            group[cid] = merged
-    return {cid: min(members) for cid, members in group.items()}
+        out[record["credential_id"]] = "fingerprint:" + record["fingerprint"]
+    return out
+
+
+def variables(setup: fx.Setup) -> dict[str, str]:
+    """Credential id -> variable name, for the inventory report's records of
+    an environment variable assignment (detector `launch_env` or
+    `startup_file`, docs/inventory.md)."""
+    report = json.loads(setup.report.read_text())
+    return {
+        c["id"]: c["name"] for c in report["credentials"]
+        if c["source"] == "environment" and {"launch_env", "startup_file"} & set(c["detectors"])
+    }
 
 
 def expected_counts(setup: fx.Setup, report: Mapping[str, object]) -> tuple[int, int, bool]:
-    """(in context, sent, incomplete) from an audit report: a credential
-    entered the context when it has a `context` hit, or a `tool_call` hit by
-    value; it was sent when it has any `tool_call` hit, by value or by name.
-    Credentials, not inventory records, are counted."""
-    group = groups(setup)
+    """(in context, sent, incomplete) from an audit report, by the rule of
+    docs/statusline.md, "What is counted". Values are counted, not inventory
+    records: a `context` hit, or a `tool_call` hit by value, put a value in
+    the context, and a `tool_call` hit by value sent it. A hit by name sends
+    the variable: it counts once for its name, and not at all when a value
+    of a record of that name is already counted as sent."""
+    group, variable = groups(setup), variables(setup)
     context: set[str] = set()
-    sent: set[str] = set()
+    by_value: set[str] = set()
+    named: set[str] = set()
     for hit in report["hits"]:  # type: ignore[union-attr]
-        cid = group[hit["credential"]]
+        cid = hit["credential"]
         if hit["kind"] == "context" or (hit["kind"] == "tool_call" and hit["form"] != "name"):
-            context.add(cid)
+            context.add(group[cid])
         if hit["kind"] == "tool_call":
-            sent.add(cid)
-    return len(context), len(sent), bool(report["unknown"])
+            if hit["form"] == "name":
+                named.add(variable[cid])
+            else:
+                by_value.add(group[cid])
+    covered = {name for cid, name in variable.items() if group[cid] in by_value}
+    return len(context), len(by_value) + len(named - covered), bool(report["unknown"])
 
 
 def segment_for(counts: tuple[int, int, bool]) -> str:

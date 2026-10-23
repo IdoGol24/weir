@@ -41,8 +41,9 @@
   JSON Claude Code passes on stdin, audits that session's transcript,
   subagent transcripts and saved tool outputs with the inventory's keyed
   fingerprints, and prints counts only: `weir: 2 in context, 1 sent` (the
-  credentials whose value entered the context, and those sent in a tool
-  call by value or by name), `weir: unknown` when a file is in a format it
+  distinct values that entered the context, and what was sent in a tool
+  call: values sent by value, and variables sent by name, once per name),
+  `weir: unknown` when a file is in a format it
   cannot read and nothing was found elsewhere, `part unknown` beside counts
   otherwise, and `scanning… P%` while a long session is still being read. It
   reads a session in steps and caches what each step found (credential

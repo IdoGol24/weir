@@ -40,7 +40,7 @@ from weir.audit.formats import (
 )
 from weir.statusline.files import write_private
 
-CACHE_SCHEMA = "weir-statusline-cache/2"
+CACHE_SCHEMA = "weir-statusline-cache/3"
 # A temporary cache file this old is one a run killed mid-write left behind
 # (SIGKILL ends a run without cleanup); a live run's is far younger.
 _STALE_TEMP_S = 60.0
@@ -62,16 +62,18 @@ _LINEWISE = frozenset({
 
 class Tally(msgspec.Struct):
     """What part of a session holds: the credential ids whose value entered
-    the context, those sent in a tool call by value or by name, and whether
-    anything there is unknown."""
+    the context, those whose value was sent in a tool call, those a tool
+    call sent by name, and whether anything there is unknown."""
 
     context: set[str] = msgspec.field(default_factory=set[str])
     sent: set[str] = msgspec.field(default_factory=set[str])
+    named: set[str] = msgspec.field(default_factory=set[str])
     unknown: bool = False
 
     def add(self, other: Tally) -> None:
         self.context |= other.context
         self.sent |= other.sent
+        self.named |= other.named
         self.unknown = self.unknown or other.unknown
 
 
@@ -81,33 +83,22 @@ def tally(report: Report) -> Tally:
     hit, by value or by name, sent it."""
     out = Tally(unknown=bool(report.unknown))
     for hit in report.hits:
-        if hit.kind is Kind.CONTEXT or (hit.kind is Kind.TOOL_CALL and hit.form is not Form.NAME):
+        by_value = hit.form is not Form.NAME
+        if hit.kind is Kind.CONTEXT or (hit.kind is Kind.TOOL_CALL and by_value):
             out.context.add(hit.credential)
         if hit.kind is Kind.TOOL_CALL:
-            out.sent.add(hit.credential)
+            (out.sent if by_value else out.named).add(hit.credential)
     return out
 
 
 def value_groups(inputs: Inputs) -> dict[str, str]:
-    """Credential id -> the credential it stands for: records that share a
-    fingerprint are one value, and records of an environment variable
-    assignment (the launch environment, a shell startup file) that share a
-    name are one variable; each is counted once. In memory only."""
+    """Credential id -> the value it stands for: records whose stored
+    fingerprints are equal hold one value. In memory only."""
     out = {c.id: c.id for c in inputs.credentials}
-
-    def find(cid: str) -> str:
-        while out[cid] != cid:
-            cid = out[cid]
-        return cid
-
-    names: dict[str, list[str]] = {}
-    for c in inputs.credentials:
-        if c.variable:
-            names.setdefault(c.name, []).append(c.id)
-    for ids in [*inputs.by_fingerprint.values(), *names.values()]:
-        for cid in ids[1:]:
-            out[find(cid)] = find(ids[0])
-    return {cid: find(cid) for cid in out}
+    for ids in inputs.by_fingerprint.values():
+        for cid in ids:
+            out[cid] = ids[0]
+    return out
 
 
 def segment_text(
@@ -124,10 +115,17 @@ def segment_text(
     return f"weir: {counts}, part unknown" if unknown else f"weir: {counts}"
 
 
-def counted(t: Tally, groups: dict[str, str]) -> tuple[int, int]:
-    return (
-        len({groups.get(c, c) for c in t.context}), len({groups.get(c, c) for c in t.sent}),
-    )
+def counted(t: Tally, inputs: Inputs) -> tuple[int, int]:
+    """(in context, sent): distinct values, not inventory records. A
+    variable sent by name counts once for its name, and not at all when a
+    value of a record of that name is already counted as sent."""
+    groups = value_groups(inputs)
+    variables = {c.id: c.name for c in inputs.credentials if c.variable}
+    context = {groups.get(c, c) for c in t.context}
+    by_value = {groups.get(c, c) for c in t.sent}
+    covered = {name for cid, name in variables.items() if groups[cid] in by_value}
+    by_name = {variables[c] for c in t.named if c in variables} - covered
+    return len(context), len(by_value) + len(by_name)
 
 
 # --- the session's files ---------------------------------------------------------
@@ -452,7 +450,7 @@ def read_session(
     found, done, total = reader.read(files.files)
     found.unknown = found.unknown or files.unreadable
     reader.save()
-    context, sent = counted(found, value_groups(inputs))
+    context, sent = counted(found, inputs)
     if done < total:
         return segment_text(context, sent, unknown=found.unknown, scanning=done * 100 // total)
     return segment_text(context, sent, unknown=found.unknown)

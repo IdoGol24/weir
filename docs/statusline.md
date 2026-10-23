@@ -54,24 +54,31 @@ here: setup writes them all into the command.
 The session is audited as `weir audit` audits it ([docs/audit.md](audit.md)),
 and from its hits:
 
-- **in context** (C) counts the credentials whose value entered the agent's
-  context: a credential with a `context` hit, or a `tool_call` hit by value
-  (the agent wrote the value, so it had it);
-- **sent** (S) counts the credentials sent out in a tool call, by value or
-  by name: a credential with any `tool_call` hit, form `name` included
-  ([References by name](audit.md#references-by-name)).
+Values are counted, not inventory records: records whose stored
+fingerprints are equal hold one value (the same secret found in the launch
+environment and in a project `.env`, say) and count once, and two
+different values count twice, even under one variable name (`GH_TOKEN` in
+the launch environment and, with another value, exported in `~/.bashrc`).
 
-A credential sent by value is in both counts; one sent only by name is in
-S only, since its value never entered the context. `stored` hits are not
-counted. Credentials are counted, not inventory records: records whose
-stored fingerprints are equal (the same secret found in the launch
-environment and in a project `.env`, say) count once, and so do the
-records of an environment variable that share its name (`GITHUB_TOKEN`
-assigned in the launch environment and in `~/.bashrc`: records whose
-`detectors` hold `launch_env` or `startup_file`), whether the hit was by
-value or by name. A credential shape found loose in a startup file is not
-a variable: two such shapes of one kind are two credentials. The /weir
-report lists every record of a credential in its one block.
+- **in context** (C) counts the values that entered the agent's context: a
+  value with a `context` hit, or a `tool_call` hit by value (the agent wrote
+  the value, so it had it);
+- **sent** (S) counts what was sent out in a tool call: each value with a
+  `tool_call` hit by value, and each environment variable a tool call sent
+  by name (a hit of form `name`,
+  [References by name](audit.md#references-by-name)). A variable sent by
+  name counts once for its name, however many records hold it, and not at
+  all when a value of a record of that name is already counted as sent by
+  value: the shell sent one of its values, and which one the session does
+  not say.
+
+A value sent by value is in both counts; a variable sent only by name is
+in S only, since its value never entered the context. `stored` hits are
+not counted. An environment variable is a record whose `detectors` hold
+`launch_env` or `startup_file`; a credential shape found loose in a
+startup file is not one. The /weir report lists the records of one value
+in one block, and with them the records of the same variable that hold no
+other value (a `$(gh auth token)` export beside the token itself).
 
 Some of the session is **unknown** when the audit of any of its files is
 incomplete ([docs/audit.md](audit.md#unknown): an unrecognised format, a

@@ -238,6 +238,28 @@ def _block(
     yield f"  advice: {_advice(members, state, bool(entered or sent), value_files)}"
 
 
+def _block_groups(inputs: Inputs) -> dict[str, str]:
+    """Credential id -> its block: records of one value share a block, and
+    the records of one environment variable join it when they hold no
+    other value (a `$(gh auth token)` export beside the token itself). A
+    variable with two values in its records keeps two blocks."""
+    groups = value_groups(inputs)
+    by_name: dict[str, list[str]] = {}
+    for c in inputs.credentials:
+        if c.variable:
+            by_name.setdefault(c.name, []).append(c.id)
+    checkable = {c.id for c in inputs.credentials if c.fingerprint is not None}
+    for ids in by_name.values():
+        values = sorted({groups[cid] for cid in ids if cid in checkable})
+        if len(values) > 1:
+            continue
+        block = values[0] if values else min(ids)
+        merged = {cid for cid in groups if groups[cid] in {groups[i] for i in ids}}
+        for cid in merged | set(ids):
+            groups[cid] = block
+    return groups
+
+
 def report_lines(
     inputs: Inputs, transcript: str, session_id: str, claude_config_dirs: Sequence[str]
 ) -> list[str]:
@@ -250,8 +272,8 @@ def report_lines(
         inputs.credentials, inputs.key, inputs.by_fingerprint, paths, claude_config_dirs
     )
     found = tally(report)
-    groups = value_groups(inputs)
-    context, sent = counted(found, groups)
+    groups = _block_groups(inputs)
+    context, sent = counted(found, inputs)
     lines = [segment_text(context, sent, unknown=found.unknown)]
     shown = next((f.file for f in report.files if f.file == transcript), "[withheld]")
     lines.append(f"session: {shown} ({plural(report.coverage.files, 'file')} read)")
@@ -259,8 +281,9 @@ def report_lines(
     by_credential: dict[str, list[Hit]] = {}
     for hit in report.hits:
         by_credential.setdefault(hit.credential, []).append(hit)
-    # One block per credential as the segment counts them: the records of
-    # one value or one variable together, in the audit's order.
+    # One block per credential, in the audit's order: the records of one
+    # value together, and with them the records of the same variable that
+    # hold no other value.
     members: dict[str, list[CredentialResult]] = {}
     for c in report.credentials:
         members.setdefault(groups.get(c.id, c.id), []).append(c)
