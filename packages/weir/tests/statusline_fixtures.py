@@ -105,8 +105,8 @@ class Claude:
         return run.report
 
 
-def build(root: Path, *, bashrc: str | None = None) -> Claude:
-    setup = fx.build(root, bashrc=bashrc)
+def build(root: Path, *, bashrc: str | None = None, extra_env: str = "") -> Claude:
+    setup = fx.build(root, bashrc=bashrc, extra_env=extra_env)
     config = setup.home / ".claude"
     (config / "projects" / PROJECT).mkdir(parents=True)
     return Claude(setup=setup, config=config, state=setup.home / ".weir" / "statusline")
@@ -156,9 +156,15 @@ def expected_counts(setup: fx.Setup, report: Mapping[str, object]) -> tuple[int,
     docs/statusline.md, "What is counted". Values are counted, not inventory
     records: a `context` hit, or a `tool_call` hit by value, put a value in
     the context, and a `tool_call` hit by value sent it. A hit by name sends
-    the variable: it counts once for its name, and not at all when a value
-    of a record of that name is already counted as sent."""
+    the variable: when the stored records of its name hold one value it
+    sent that value; otherwise it counts once for its name, and not at all
+    when a value of a record of that name is already counted as sent by
+    value."""
     group, variable = groups(setup), variables(setup)
+    held: dict[str, set[str]] = {}
+    for cid, name in variable.items():
+        if group[cid].startswith("fingerprint:"):
+            held.setdefault(name, set()).add(group[cid])
     context: set[str] = set()
     by_value: set[str] = set()
     named: set[str] = set()
@@ -171,8 +177,9 @@ def expected_counts(setup: fx.Setup, report: Mapping[str, object]) -> tuple[int,
                 named.add(variable[cid])
             else:
                 by_value.add(group[cid])
-    covered = {name for cid, name in variable.items() if group[cid] in by_value}
-    return len(context), len(by_value) + len(named - covered), bool(report["unknown"])
+    values = by_value.union(*(held[n] for n in named if len(held.get(n, ())) == 1))
+    by_name = {n for n in named if len(held.get(n, ())) != 1 and not held.get(n, set()) & by_value}
+    return len(context), len(values) + len(by_name), bool(report["unknown"])
 
 
 def segment_for(counts: tuple[int, int, bool]) -> str:

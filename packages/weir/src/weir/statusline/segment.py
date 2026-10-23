@@ -136,17 +136,43 @@ def segment_text(
     return f"weir: {counts}, part unknown" if unknown else f"weir: {counts}"
 
 
+def block_groups(inputs: Inputs) -> dict[str, str]:
+    """Credential id -> its block: records of one value share a block, and
+    the records of one environment variable join it when they hold no
+    other value (a `$(gh auth token)` export beside the token itself). A
+    variable with two values in its records keeps two blocks."""
+    groups = value_groups(inputs)
+    by_name: dict[str, list[str]] = {}
+    for c in inputs.credentials:
+        if c.variable:
+            by_name.setdefault(c.name, []).append(c.id)
+    checkable = {c.id for c in inputs.credentials if c.fingerprint is not None}
+    for ids in by_name.values():
+        values = sorted({groups[cid] for cid in ids if cid in checkable})
+        if len(values) > 1:
+            continue
+        block = values[0] if values else min(ids)
+        merged = {cid for cid in groups if groups[cid] in {groups[i] for i in ids}}
+        for cid in merged | set(ids):
+            groups[cid] = block
+    return groups
+
+
 def counted(t: Tally, inputs: Inputs) -> tuple[int, int]:
     """(in context, sent): distinct values, not inventory records. A
-    variable sent by name counts once for its name, and not at all when a
-    value of a record of that name is already counted as sent."""
-    groups = value_groups(inputs)
+    variable sent by name counts as its value when the records of its name
+    hold one value, so it is one with that value however it was sent, and
+    once for its name when they hold more, and then not at all when one of
+    them is already counted as sent by value."""
+    blocks = block_groups(inputs)
     variables = {c.id: c.name for c in inputs.credentials if c.variable}
-    context = {groups.get(c, c) for c in t.context}
-    by_value = {groups.get(c, c) for c in t.sent}
-    covered = {name for cid, name in variables.items() if groups[cid] in by_value}
-    by_name = {variables[c] for c in t.named if c in variables} - covered
-    return len(context), len(by_value) + len(by_name)
+    context = {blocks.get(c, c) for c in t.context}
+    by_value = {blocks.get(c, c) for c in t.sent}
+    named = {variables[c] for c in t.named if c in variables}
+    held = {n: {blocks[c] for c, name in variables.items() if name == n} for n in named}
+    sent = by_value.union(*(held[n] for n in named if len(held[n]) == 1))
+    by_name = {n for n in named if len(held[n]) > 1 and not held[n] & by_value}
+    return len(context), len(sent) + len(by_name)
 
 
 # --- the session's files ---------------------------------------------------------

@@ -67,10 +67,13 @@ the launch environment and, with another value, exported in `~/.bashrc`).
   `tool_call` hit by value, and each environment variable a tool call sent
   by name (a hit of form `name`,
   [References by name](audit.md#references-by-name)). A variable sent by
-  name counts once for its name, however many records hold it, and not at
-  all when a value of a record of that name is already counted as sent by
-  value: the shell sent one of its values, and which one the session does
-  not say.
+  name counts as its value when the records of its name hold one value:
+  two names of one value (`GH_TOKEN` and `GITHUB_TOKEN`) count once,
+  whether a tool call sent each by name or one by value and the other by
+  name. When the records of its name hold more than one value, it counts
+  once for its name, and not at all when one of those values is already
+  counted as sent by value: the shell sent one of its values, and which
+  one the session does not say.
 
 A value sent by value is in both counts; a variable sent only by name is
 in S only, since its value never entered the context. `stored` hits are

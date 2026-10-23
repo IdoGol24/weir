@@ -42,7 +42,8 @@
   subagent transcripts and saved tool outputs with the inventory's keyed
   fingerprints, and prints counts only: `weir: 2 in context, 1 sent` (the
   distinct values that entered the context, and what was sent in a tool
-  call: values sent by value, and variables sent by name, once per name),
+  call: values sent by value or by name, and a variable of several values
+  sent by name once for its name),
   `weir: unknown` when a file is in a format it
   cannot read (an empty or compressed file included) and nothing was found
   elsewhere, `part unknown` beside counts otherwise, and `scanning… P%`
