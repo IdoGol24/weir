@@ -737,7 +737,12 @@ def test_a_script_started_by_an_interpreter_named_by_its_path_is_checked(
     command = f'{program} "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard.py'
     settings = [_hook_settings("project", tmp_path / "settings.json", command)]
     missing = claude_code.missing_scripts(settings, layout)
-    assert [script for _, _, script in missing] == ["$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py"]
+    # The program named by its path is missing only where the host lacks
+    # it, as on Windows; the script it starts is never in the sandbox.
+    named = program.split()[0]
+    expected = [] if Path(named).exists() else [named]
+    expected.append("$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py")
+    assert [script for _, _, script in missing] == expected
 
 
 def test_a_path_with_a_backslash_is_taken_literally_where_a_hook_names_the_project(
