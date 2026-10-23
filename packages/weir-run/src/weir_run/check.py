@@ -22,7 +22,7 @@ from __future__ import annotations
 import shutil
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
@@ -117,9 +117,16 @@ class CheckRun:
     def mock_url(self) -> str:
         return self.mock.url
 
-    def run_flow(self, flow: FlowSpec, env: Mapping[str, str] | None = None) -> FlowOutcome:
+    def run_flow(
+        self,
+        flow: FlowSpec,
+        env: Mapping[str, str] | None = None,
+        telemetry: Callable[[], bool] | None = None,
+    ) -> FlowOutcome:
         """Run flow with the runner's flow environment, or with env as its
-        whole environment when given."""
+        whole environment when given. Whether the flow is expected to
+        export telemetry is flow.telemetry, or what telemetry says once the
+        flow has exited, when given."""
         if self._stopped:
             raise RuntimeError("the check run has already been judged")
         if any(o.id == flow.id for o in self.outcomes):
@@ -133,7 +140,8 @@ class CheckRun:
             env = flows.flow_environment(self.mock_url, self.planted, flow.env, home, tmp)
         stdout, stderr = self.capture.flow_streams(index, flow.id)
         status = flows.run(flow, env, stdout, stderr, self.python, self.jail)
-        self.ledger.flow(flow.id, status, telemetry=flow.telemetry)
+        expected = flow.telemetry if telemetry is None else telemetry()
+        self.ledger.flow(flow.id, status, telemetry=expected)
         self._observe(flow.id)
         outcome = FlowOutcome(flow.id, status, stdout, stderr)
         self.outcomes.append(outcome)

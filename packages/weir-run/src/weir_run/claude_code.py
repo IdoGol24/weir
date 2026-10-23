@@ -1577,10 +1577,17 @@ def run_claude_code(
                 command=tuple(sandbox(bwrap, executable, layout, env, run.mock_url)),
                 cwd=layout.root,
                 timeout_seconds=spec.timeout_seconds,
-                telemetry=telemetry_expected(settings),
             )
+
+            def applied_telemetry() -> bool:
+                # From the files Claude Code applied, as the verdict reads it.
+                skipped = skipped_settings(layout, settings)
+                return telemetry_expected([s for s in settings if s.path not in skipped])
+
             outcome = run.run_flow(
-                flow, env={"PATH": os.environ.get("PATH", os.defpath), "LANG": "C.UTF-8"}
+                flow,
+                env={"PATH": os.environ.get("PATH", os.defpath), "LANG": "C.UTF-8"},
+                telemetry=applied_telemetry,
             )
             conversation = read_conversation(run.capture.requests)
             prompted = prompted_steps(run, conversation)
