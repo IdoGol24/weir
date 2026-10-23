@@ -379,21 +379,18 @@ def _ended(proc: subprocess.Popen[bytes]) -> bytes:
 _UNPROBED_KILLS = 4  # killed runs before the first probe
 
 
-@pytest.mark.skipif(os.name != "posix", reason="SIGTERM and SIGKILL as Claude Code sends them")
-def test_a_first_scan_cancelled_again_and_again_still_completes(tmp_path: Path) -> None:
+def _cancelled_until_finished(claude: sx.Claude) -> bytes:
     """Claude Code cancels a status line run when a newer update arrives.
     Each run here is the real `python -m weir statusline` process, killed
-    with SIGTERM or SIGKILL at a random point after it saved a checkpoint.
-    Every killed run saved progress first: its checkpoint reads further
-    than the one it started from, the first runs included, which nothing
-    but killed runs touch. After each later kill a run with no time to
-    spare shows `scanning…` and how far the scan got, which never goes
-    back."""
+    with SIGTERM or SIGKILL at a random point after it saved a checkpoint,
+    until a run finishes. Every killed run saved progress first: its
+    checkpoint reads further than the one it started from, the first runs
+    included, which nothing but killed runs touch. After each later kill a
+    run with no time to spare shows `scanning…` and how far the scan got,
+    which never goes back. Returns what the run that finished printed."""
     seed = random.randrange(1 << 32)
     print("seed:", seed)
     rng = random.Random(seed)
-    claude = sx.build(tmp_path)
-    _large_session(claude)
     payload = sx.status_json(claude.transcript(), fx.SESSION_ID).encode()
     command = [
         sys.executable, "-m", "weir", "statusline", *claude.inputs(),
@@ -444,23 +441,100 @@ def test_a_first_scan_cancelled_again_and_again_still_completes(tmp_path: Path) 
     assert finished is not None, "the scan never completed"
     assert kills[signal.SIGTERM] >= 2 and kills[signal.SIGKILL] >= 2, kills
     assert cleanly >= 1
+    print("kills:", {s.name: k for s, k in kills.items()}, "progress shown:", shown)
+    return finished
 
+
+def _uninterrupted(claude: sx.Claude, tmp_path: Path, finished: bytes) -> str:
+    """What the session's segment is: the run that finished a cancelled
+    scan, a run after it, and one uninterrupted scan with a cache of its
+    own all print what a real `weir audit` of the session says. Every
+    checkpoint, and any temporary file a killed run left, is value-free."""
     resumed = claude.statusline()
     uninterrupted = claude.invoke(
         ["statusline", *claude.inputs(), "--cache", str(tmp_path / "fresh"),
          "--budget-ms", "600000"],
-        stdin=payload.decode(),
+        stdin=sx.status_json(claude.transcript(), fx.SESSION_ID),
     )
     expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
-    assert expected == "weir: 1 in context, 0 sent\n"
     assert uninterrupted.stdout == expected
     assert resumed.stdout == expected
     assert finished.decode() == expected
-    print("kills:", {s.name: k for s, k in kills.items()}, "progress shown:", shown)
 
-    # Every checkpoint, and any temporary file a killed run left, is value-free.
     cached = [p for p in claude.state.rglob("*") if p.is_file()]
     assert cached
     for p in cached:
         cfx.assert_value_free(p.name + "\n" + p.read_bytes().decode("utf-8", "replace"),
                               claude.setup.values.values())
+    return expected
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGTERM and SIGKILL as Claude Code sends them")
+def test_a_first_scan_cancelled_again_and_again_still_completes(tmp_path: Path) -> None:
+    """A 50 MB transcript, read from an empty cache by runs that are each
+    cancelled (`_cancelled_until_finished`), is read to its end, and says
+    what one uninterrupted scan says."""
+    claude = sx.build(tmp_path)
+    _large_session(claude)
+    finished = _cancelled_until_finished(claude)
+    assert _uninterrupted(claude, tmp_path, finished) == "weir: 1 in context, 0 sent\n"
+
+
+TOOL_OUTPUT_SIZE = 20 * 1000 * 1000
+
+
+def _large_tool_output(claude: sx.Claude) -> Path:
+    """A short transcript whose tool call reads a fake credential into the
+    context, and a saved tool output (`tool-results/`) of about
+    TOOL_OUTPUT_SIZE bytes of log lines with another fake credential in its
+    middle, which is stored there, not in the context."""
+    v = claude.setup.values
+    session = fx.Session()
+    session.prompt("read the fake logs")
+    session.tool_use("Bash", {"command": "cat .env"}, "toolu_env")
+    session.tool_result("toolu_env", f"{fx.ACME}={v[fx.ACME]}\n")
+    session.tool_use("Bash", {"command": "cat /fake/huge.log"}, "toolu_log")
+    session.tool_result("toolu_log", "Output too large, saved to tool-results/toolu_log.txt")
+    session.write(claude.transcript())
+    filler = "".join(
+        f"line {i} of a long fake tool output, nothing secret here\n" for i in range(1000)
+    ).encode()
+    path = claude.session_dir() / "tool-results" / "toolu_log.txt"
+    path.parent.mkdir(parents=True)
+    blocks = TOOL_OUTPUT_SIZE // len(filler) + 1
+    with path.open("wb") as out:
+        for n in range(blocks):
+            if n == blocks // 2:
+                out.write(f"{fx.GH}={v[fx.GH]}\n".encode())
+            out.write(filler)
+    return path
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGTERM and SIGKILL as Claude Code sends them")
+def test_a_large_saved_tool_output_cancelled_again_and_again_still_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 20 MB saved tool output holds no message record, so its first
+    lines do not settle its format. It is still read in steps of whole
+    lines, never whole: a run with no time to spare reads a step of it, and
+    runs that are each cancelled read it to its end and say what one
+    uninterrupted scan says."""
+    claude = sx.build(tmp_path)
+    path = _large_tool_output(claude)
+    assert path.stat().st_size >= TOOL_OUTPUT_SIZE
+
+    # The first run's one step reads the transcript; the second's, a step
+    # of the tool output: every byte its reads return is counted.
+    first = claude.statusline(extra=["--budget-ms", "0"])
+    assert re.fullmatch(r"weir: (?:1 in context, 0 sent, )?scanning\u2026 \d+%\n", first.stdout)
+    inputs = sum(p.stat().st_size for p in (claude.setup.report, claude.setup.store))
+    checkpoint = sum(p.stat().st_size for p in claude.state.rglob("*") if p.is_file())
+    stepped, stepped_read, _, _ = _measured(
+        lambda: claude.statusline(extra=["--budget-ms", "0"]), monkeypatch
+    )
+    assert re.fullmatch(r"weir: 1 in context, 0 sent, scanning\u2026 \d+%\n", stepped.stdout)
+    assert stepped_read <= 4 * 64 * 1024 + 2 * (inputs + checkpoint)
+    shutil.rmtree(claude.state)
+
+    finished = _cancelled_until_finished(claude)
+    assert _uninterrupted(claude, tmp_path, finished) == "weir: 1 in context, 0 sent\n"

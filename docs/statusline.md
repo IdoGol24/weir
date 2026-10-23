@@ -99,6 +99,17 @@ so the segment reads a session in steps and keeps what each step found:
   `weir.audit.audit_chunks`. A file's lines are records each on its own, so
   the chunks of a file give the hits the whole file gives. A format read
   as a whole (an OTLP file, a subagent sidecar) is one step.
+- The format is the one `weir audit` recognises, taken from the file's path
+  and the lines read so far, never by reading the whole file first: a
+  saved tool output (`tool-results/*`) is one until a line shows it is a
+  Claude Code session file, and a session file stays one once a line is a
+  message record. A line that changes the format (in the part read, in the
+  bytes after the last line end, or appended later) has the file read
+  again from the start in the new format. A line that makes it a
+  whole-file format, or a file the path and lines leave unknown whose
+  first line is not a JSON object of its own but which starts with `{`
+  (it may be one OTLP export request, pretty-printed), is read whole in
+  one step.
 - After each step the cache is written: it is the checkpoint the next run
   resumes from (per file, the byte offset reached, the keyed MACs that
   show the part read is unchanged, and the credential ids found so far).
@@ -110,28 +121,21 @@ so the segment reads a session in steps and keeps what each step found:
   steps once `--budget-ms` (default 500) has passed, and always takes at
   least one, so every run moves the reading on, cancelled or not. A
   session not read to the end of every file shows `scanning… P%`.
-- For a Claude Code session file whose format the first whole lines
-  settled (see below), a step holds only its own bytes: a run reads on
-  from the offset in chunks of whole lines, never the rest of the file at
-  once. Other files (saved tool outputs, whole-file formats, a file the
-  first lines do not settle) are read whole on each run until one run
-  reads them in full.
+- A step holds only its own bytes: a run reads on from the offset in
+  chunks of whole lines, never the rest of the file at once. Only a file
+  read whole (above) is read in full in one step.
 - A file is read again only from where the last run stopped, as long as it
   is the same file (device and inode), it only grew, and the part already
   read is unchanged at both ends: its first 4 KiB, and the 4 KiB before
-  that point. A refresh of a Claude Code session file then reads those two
-  windows and the bytes appended since, never the part already read.
-  Anything else (a file that shrank, was replaced, or changed at either
-  end), and the file is read from the start. A file unchanged since a run
+  that point. A refresh of a file read in steps then reads those two
+  windows and the bytes appended since, never the part already read; a
+  file read whole is read whole again. Anything else (a file that shrank,
+  was replaced, or changed at either end), and the file is read from the
+  start. A file unchanged since a run
   that read it in full (same size and modification time) is not read at
   all. A change inside the read part that leaves both ends, the size and
   the inode as they were is not seen: Claude Code appends to a session
   file, and reading the whole part again is what this avoids.
-- A first read takes the file's format from its first whole lines when
-  they hold a Claude Code message record (the file is then a session file
-  whatever the rest holds), so the time before the first step does not
-  grow with the file. Otherwise the whole file is recognised as
-  `weir audit` recognises it.
 - The bytes after a file's last line end (a line still being written) are
   audited as a whole line would be, and again once the file changes; they
   are never taken as read lines.
@@ -144,7 +148,8 @@ it for you.
 
 The cache is one file per session in `--cache`, written owner-only
 (0600, directory 0700). It holds credential ids, byte offsets, sizes,
-times, device and inode numbers, and HMAC-SHA256 values under the
+times, device and inode numbers, each file's format and yes/no flags of
+what its lines showed of it, and HMAC-SHA256 values under the
 inventory's fingerprint key (of a file's path, of a file's first 4 KiB and
 of the 4 KiB before an offset, of the inventory inputs). It holds no
 value, no fragment of one, no file name and no unkeyed hash. A new inventory (other report or store
