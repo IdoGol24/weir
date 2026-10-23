@@ -329,10 +329,12 @@ def test_a_hook_whose_script_is_missing_leaves_the_run_incomplete(
     run = _run(tmp_path, monkeypatch, judge, settings=_pre_tool_use("block-secrets.sh"))
     assert run.result.exit_code == 3, run.result.output
     command = '"$CLAUDE_PROJECT_DIR"/.claude/hooks/block-secrets.sh'
-    assert (
-        f"claude-code: hook PreToolUse:Read did not start: {command} (not found, exit 127)"
-        in run.lines
-    ), run.result.stdout
+    script = "$CLAUDE_PROJECT_DIR/.claude/hooks/block-secrets.sh"
+    hooks = [ln for ln in run.lines if ln.startswith("claude-code: hook ")]
+    assert hooks == [
+        f"claude-code: hook PreToolUse:Read|Bash did not run: {command}"
+        f" (its script {script} is missing)"
+    ], run.result.stdout
     assert run.lines[-2:] == ["incomplete: hook_not_started", "result: incomplete"]
     # Not judged: no leak or clean verdict rests on the broken control.
     assert not any(ln.startswith(("kept out: ", "reached ", "LEAK ")) for ln in run.lines)

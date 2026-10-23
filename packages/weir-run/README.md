@@ -543,10 +543,13 @@ result: leak
   argument of an interpreter (`python3`, `node`, `sh`, `bash`, `ruby`,
   `perl` and the like), named through `$CLAUDE_PROJECT_DIR`, `~`,
   `$HOME`, an absolute path or a path from the project. A script named any
-  other way (through another variable, behind a wrapper such as `env` or
-  `uv run`, or after an interpreter option that takes a value), and a hook
-  defined in a skill's or agent's frontmatter, is caught only when its
-  command fails to start and the session transcript records it.
+  other way (through another variable or behind a wrapper such as `env`
+  or `uv run`), and a hook defined in a skill's or agent's frontmatter, is
+  caught only when its command fails to start and the session transcript
+  records it. The check reads a hook command's interpreter options
+  generically, so an interpreter option that takes a value, or one that
+  means something else in a given interpreter (such as `sh -e`), can hide
+  a missing script from it.
 - Model APIs: OpenAI-compatible or Anthropic Messages API. Of the
   Messages API, `POST /v1/messages` only (no token counting, batches or
   files).

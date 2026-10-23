@@ -1039,7 +1039,8 @@ def run_claude_code(
                     run.ledger.exercised(target, "tool_call")
             denied = denied_steps(outcome.stdout, conversation)
             stored = stored_locally(layout, run)
-            hooks = hooks_not_started(layout)
+            reported = {command for _, command, _ in missing}
+            hooks = [h for h in hooks_not_started(layout) if h[1] not in reported]
             run.stop()
             # Claude Code's stdout is its JSON result: summarised in the
             # verdict and judged as its console output, not relayed.
