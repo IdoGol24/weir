@@ -704,7 +704,9 @@ def statusline_setup_command(
 @click.option("--dry-run", is_flag=True, help="Show what undo restores and write nothing.")
 def statusline_undo_command(cache: Path | None, dry_run: bool) -> None:
     """(experimental) Put back every file `weir statusline setup` changed,
-    byte for byte. Refuses when one changed after setup."""
+    byte for byte, when none changed after setup. When other settings
+    changed since but the statusLine is still setup's, put back only the
+    statusLine and keep the rest. Refuses when the statusLine changed."""
     try:
         plan = statusline_setup.plan_undo(cache or _default_cache())
     except statusline_setup.SetupError as exc:

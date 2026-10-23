@@ -342,10 +342,13 @@ the record holds for the bytes setup wrote) but its `statusLine` is still
 exactly the one setup wrote (Claude Code saved another setting, say),
 restoring the old bytes would throw that change away. Undo then says so,
 and on `yes` puts back only the `statusLine` that was there before setup
-(from the backup), or removes the key when there was none, and keeps
-every other key as it is now, written as JSON indented by 2 spaces. A
-settings file setup created that holds nothing else afterwards is
-removed. When the `statusLine` itself changed, or the file is not a JSON
+(from the backup, an explicit `null` included), or removes the key when
+there was none, and keeps every other key as it is now, written as JSON
+indented as the file was before setup (2 spaces when it had no
+indentation to go by). When the result is the same content as the file
+before setup (only the formatting changed since), undo puts back the
+file's exact bytes from before setup instead, or removes a file setup
+created. When the `statusLine` itself changed, or the file is not a JSON
 object, undo refuses, writes nothing, and names the file. Undo reads each
 file again just before it writes, and refuses if one changed since it
 showed the change. It does not print the old `statusLine`, which may hold

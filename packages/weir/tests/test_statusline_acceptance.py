@@ -14,7 +14,8 @@ counting rule, and checked against where the fixture put each value.
 3. Neither the segment nor its cache holds a value or a 6-character run of one.
 4. `setup` shows the exact change and writes nothing until an explicit yes;
    with yes it adds the segment beside the existing status line command.
-5. `undo` restores the files setup changed, byte for byte.
+5. `undo` restores the files setup changed, byte for byte; when other
+   settings changed since, it takes back only the statusLine setup wrote.
 6. The /weir report lists, per credential, its source, the turn and tool
    call, where it now sits, and advice; the installed /weir command runs it.
 """
@@ -468,6 +469,65 @@ def test_undo_removes_the_status_line_it_added_and_keeps_later_settings(
 
     assert run.exit_code == 0, run.stderr
     assert json.loads(claude.settings.read_text()) == {"model": "fake-model"}
+
+
+@sx.posix_shell
+def test_undo_puts_back_an_explicit_null_status_line_and_the_original_indent(
+    tmp_path: Path,
+) -> None:
+    claude = sx.build(tmp_path)
+    claude.settings.parent.mkdir(parents=True, exist_ok=True)
+    original = {"statusLine": None, "theme": "dark"}
+    claude.settings.write_text("{\n\t\"statusLine\": null,\n\t\"theme\": \"dark\"\n}\n")
+    assert _setup(claude, answer="yes\n").exit_code == 0
+    later = {**json.loads(claude.settings.read_text()), "model": "fake-model"}
+    claude.settings.write_text(json.dumps(later))
+
+    run = _undo(claude, answer="yes\n")
+
+    assert run.exit_code == 0, run.stderr
+    expected = {**original, "model": "fake-model"}
+    assert claude.settings.read_text() == json.dumps(expected, indent="\t") + "\n"
+
+
+@sx.posix_shell
+@pytest.mark.parametrize(
+    "original",
+    [b"", b"  \n\t\n", json.dumps(_EXISTING, indent=4).encode(), b'{"theme":"dark"}'],
+)
+def test_undo_writes_the_original_bytes_when_only_the_formatting_changed(
+    tmp_path: Path, original: bytes
+) -> None:
+    """Claude Code rewrites the settings after setup with nothing but
+    setup's statusLine added: once that is taken back the content is the
+    file before setup, so undo puts back its exact bytes."""
+    claude = sx.build(tmp_path)
+    claude.settings.parent.mkdir(parents=True, exist_ok=True)
+    claude.settings.write_bytes(original)
+    assert _setup(claude, answer="yes\n").exit_code == 0
+    claude.settings.write_text(json.dumps(json.loads(claude.settings.read_text())))
+
+    run = _undo(claude, answer="yes\n")
+
+    assert run.exit_code == 0, run.stderr
+    assert claude.settings.read_bytes() == original
+    assert not Path(str(claude.settings) + ".weir-backup").exists()
+
+
+@sx.posix_shell
+def test_undo_says_it_removes_a_status_line_the_file_did_not_have(tmp_path: Path) -> None:
+    claude = sx.build(tmp_path)
+    claude.settings.parent.mkdir(parents=True, exist_ok=True)
+    claude.settings.write_text('{"theme": "dark"}')
+    assert _setup(claude, answer="yes\n").exit_code == 0
+    later = {**json.loads(claude.settings.read_text()), "model": "fake-model"}
+    claude.settings.write_text(json.dumps(later))
+
+    shown = _undo(claude, "--dry-run")
+
+    assert shown.exit_code == 0, shown.stderr
+    assert "(there was none: remove it)" in shown.stdout
+    assert "from the backup" not in shown.stdout
 
 
 @sx.posix_shell

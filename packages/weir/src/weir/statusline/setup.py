@@ -3,9 +3,12 @@
 Setup adds the weir segment to Claude Code's user settings, beside the
 status line command already there (that command keeps running, and its
 output is printed first), and installs the /weir command file. It shows
-the exact change first and writes only after an explicit yes. Undo puts
-back the bytes setup replaced, and removes what setup created, refusing
-when a file changed after setup.
+the exact change first and writes only after an explicit yes. Undo has
+two cases. When every file is unchanged since setup, it puts back the
+bytes setup replaced and removes what setup created. When the settings
+changed after setup but their statusLine is still the one setup wrote, it
+puts back only the statusLine there was before setup and keeps every later
+change. It refuses when the statusLine itself changed.
 
 The undo record lives in the weir state directory and holds paths and an
 HMAC-SHA256, under the inventory's fingerprint key, of the bytes setup
@@ -311,8 +314,9 @@ class Restore:
     original: bytes | None
     # The file's bytes when undo planned, keyed: undo writes only over them
     planned_mac: str
-    # The settings changed after setup but statusLine is still setup's: the
-    # file with only statusLine taken back, every other change kept
+    # The settings changed after setup but statusLine is still setup's, and
+    # other content changed too: the file with only statusLine taken back,
+    # every other change kept
     rewrite: bytes | None = None
 
 
@@ -331,38 +335,45 @@ def _changed_after_setup(key: bytes, path: Path, written_mac: str) -> bool:
     return current is None or not hmac.compare_digest(_digest(key, current), written_mac)
 
 
+def _settings_before(original: bytes | None) -> object:
+    """The settings before setup: no file, or a blank one, holds none."""
+    return json.loads(original) if original is not None and original.strip() else {}
+
+
+def _indent(original: bytes | None) -> str | int:
+    """The indentation the settings had before setup, so a rewrite keeps
+    it; 2 spaces when they had none to go by."""
+    found = re.search(rb"\n([ \t]+)\S", original or b"")
+    return found.group(1).decode() if found else 2
+
+
 def _take_back_line(
     key: bytes, current: bytes | None, line_mac: str | None, original: bytes | None
-) -> bytes | None:
+) -> tuple[dict[str, object], dict[str, object]] | None:
     """The settings with only statusLine taken back to what it was before
-    setup (removed, when there was none), when the file changed after setup
-    but its statusLine is still exactly the one setup wrote. None otherwise.
-    Empty bytes: nothing but setup's statusLine is left, in a file setup
-    created, so the file goes."""
+    setup (removed, when there was none), and the settings before setup,
+    when the file changed after setup but its statusLine is still exactly
+    the one setup wrote. None otherwise."""
     if current is None or line_mac is None:
         return None
     try:
         settings: object = json.loads(current)
-        before: object = (
-            json.loads(original) if original is not None and original.strip() else {}
-        )
+        original_settings = _settings_before(original)
     except (ValueError, UnicodeDecodeError):
         return None
-    if not isinstance(settings, dict) or not isinstance(before, dict):
+    if not isinstance(settings, dict) or not isinstance(original_settings, dict):
         return None
     now: dict[str, object] = settings  # type: ignore[assignment]
+    before: dict[str, object] = original_settings  # type: ignore[assignment]
     if "statusLine" not in now or not hmac.compare_digest(
         _digest(key, _canonical(now["statusLine"])), line_mac
     ):
         return None
-    old: object = before.get("statusLine")  # type: ignore[union-attr]
-    if old is None:
-        del now["statusLine"]
+    if "statusLine" in before:
+        now["statusLine"] = before["statusLine"]
     else:
-        now["statusLine"] = old
-    if not now and original is None:
-        return b""
-    return json.dumps(now, indent=2, ensure_ascii=False).encode() + b"\n"
+        del now["statusLine"]
+    return now, before
 
 
 def _changed_error(path: Path, record_path: Path) -> SetupError:
@@ -405,10 +416,16 @@ def plan_undo(cache: Path) -> UndoPlan | None:
             restores.append(Restore(path, backup, original, written_mac))
             continue
         current = _read(path)
-        rewrite = _take_back_line(key, current, line_mac, original)
-        if rewrite is None or current is None:
+        taken = _take_back_line(key, current, line_mac, original)
+        if taken is None or current is None:
             raise _changed_error(path, record_path)
-        restores.append(Restore(path, backup, original, _digest(key, current), rewrite))
+        now, before = taken
+        planned = _digest(key, current)
+        if _canonical(now) == _canonical(before):
+            restores.append(Restore(path, backup, original, planned))
+            continue
+        rewrite = json.dumps(now, indent=_indent(original), ensure_ascii=False).encode() + b"\n"
+        restores.append(Restore(path, backup, original, planned, rewrite))
     return UndoPlan(record_path, key, restores, dirs, cache_dir, state_dirs)
 
 
@@ -416,12 +433,13 @@ def describe_undo(plan: UndoPlan) -> list[str]:
     lines: list[str] = []
     for r in plan.restores:
         if r.rewrite is not None:
+            before = _settings_before(r.original)
+            had_line = isinstance(before, dict) and "statusLine" in before
             lines.append(
                 f"{r.path} changed after setup, so its bytes are not restored whole: put back"
                 " only its statusLine as it was before setup"
-                + (" (there was none: remove it)" if r.original is None else ", from the backup")
+                + (", from the backup" if had_line else " (there was none: remove it)")
                 + ", and keep every other setting as it is now"
-                + ("; nothing else is left, so remove the file" if r.rewrite == b"" else "")
             )
         elif r.backup is None:
             lines.append(f"remove {r.path} (setup created it)")
@@ -442,7 +460,7 @@ def apply_undo(plan: UndoPlan) -> None:
         if _changed_after_setup(plan.key, r.path, r.planned_mac):
             raise _changed_error(r.path, plan.record)
     for r in plan.restores:
-        if r.rewrite:
+        if r.rewrite is not None:
             write_atomic(r.path, r.rewrite, stat.S_IMODE(r.path.stat().st_mode))
             if r.backup is not None:
                 r.backup.unlink()
