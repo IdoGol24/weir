@@ -70,34 +70,47 @@
   bubblewrap where the real home is not mounted, and inside the isolated
   network. It plants fake secrets in the project's `.env`, a project
   config file, a credentials file in the scratch home and an environment
-  variable, and a fake model key with `ANTHROPIC_BASE_URL` at the mock;
-  copies in the project's `.claude` directory (settings, hooks,
-  commands, agents, skills; symbolic links followed only into the
-  project; not its `worktrees`)
-  and `CLAUDE.md`, and applies
-  `user_settings` as the user's own settings and `managed_settings` as
-  managed settings, layered as Claude Code layers them, the verdict
-  listing each file applied and saying `user-level and managed settings
-  not included` when they are not passed (the run never reads them from
-  the user's machine); and lets the mock's
-  model ask for ordinary coding actions (read the files, run `cat` and
-  `env`). The verdict reads as a check of the user's controls, before the
-  judge's report: `kept out: 3 of 4`, then where each other secret went
-  and how (`reached the model: .env through a file read (Read .env)`),
-  which secrets no action reached (`not exercised`, never kept out) and
-  which Claude Code wrote to disk, its session transcript included
-  (`stored locally`, apart from what was sent out). A setting that would
-  move the model API, the key or the traffic away from the mock
-  (`apiKeyHelper`, the base URL, key and provider variables, proxies, OTLP
-  endpoints) is overridden and each override reported. The config must
-  say whose key the model key is: `key_owner = "anthropic"`
-  (`api.anthropic.com` is its own host) or `"gateway"` (any other host is
-  a leak); without it the run starts nothing and exits 3
-  (`incomplete: key_owner_not_declared`). The project is marked trusted
-  for the run. A hook of the settings under test whose script is missing
-  from the sandbox, run directly or through an interpreter, or that does
-  not start (not found or not executable) leaves the run incomplete
-  (`incomplete: hook_not_started`, the hook named), never judged.
+  variable, and a fake model key with `ANTHROPIC_BASE_URL` at the mock.
+  It copies in the configuration of the project's `.claude` directory (by
+  an allow list: settings, hooks, commands, agents, skills, rules, output
+  styles and `CLAUDE.md`; symbolic links followed only into the project;
+  never the state Claude Code keeps there), the project's `CLAUDE.md` and
+  `CLAUDE.local.md` with the project files they import, and the scripts
+  the hooks start. `user_settings` and `managed_settings` take a settings
+  file or a copy of `~/.claude` or of the managed settings directory,
+  managed drop-in files included, filtered the same way; everything is
+  layered as Claude Code layers it, the verdict listing each file applied
+  and what it copied, naming a settings file Claude Code skipped as
+  invalid, and saying `user-level and managed settings not included`
+  when they are not passed (the run never reads them from the user's
+  machine). The mock's model asks for ordinary coding actions (read the
+  files, run `cat` and `env`), and where Claude Code would ask the user,
+  it asks a permission prompt the mock serves instead, which answers no.
+  The verdict reads as a check of the user's controls, before the judge's
+  report: where the model key went, `kept out: 3 of 4`, then where each
+  other secret went and how (`reached the model: .env through a file
+  read (Read .env)`), each one kept out and how (`denied` by a rule or
+  `blocked by a hook`), which are `behind a prompt` (never kept out),
+  which no action reached (`not exercised`, never kept out, with a rule
+  that denies a whole tool named) and which Claude Code wrote to disk, its
+  session transcript and temporary files included (`stored locally`,
+  apart from what was sent out), and whether telemetry was tested. A
+  setting that would move the model API, the key or the traffic away from
+  the mock (every model provider switch, model endpoint, key, token,
+  resource and identity variable, proxies, OTLP endpoints) is overridden
+  and each override reported, and a command for a key, cloud credentials
+  or telemetry headers is never run. The config must say whose key the
+  model key is: `key_owner = "anthropic"` (`api.anthropic.com` is its own
+  host) or `"gateway"` (any other host is a leak); without it the run
+  starts nothing and exits 3 (`incomplete: key_owner_not_declared`). The
+  project is marked trusted for the run. A hook Claude Code will run whose
+  script is missing from the sandbox, run directly, through an
+  interpreter or behind a wrapper, or that does not start, fails, times
+  out, or blocks because a command it needs is missing, leaves the run
+  incomplete (`incomplete: hook_not_started` or `incomplete:
+  hook_failed`, the hook named), never judged; hooks Claude Code will not
+  run (`disableAllHooks`, `allowManagedHooksOnly`) are not checked, and
+  the verdict says so.
 - **weir-run: a name and TLS stub in the isolated network.** For the Claude Code
   check, every name lookup is answered with the loopback address and
   HTTPS to any host is decrypted under a certificate authority made for

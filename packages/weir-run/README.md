@@ -367,8 +367,8 @@ another host or the console.
 [claude_code]
 key_owner = "anthropic"            # required to judge: "anthropic" or "gateway"
 project = "."                      # its .claude directory and CLAUDE.md are under test
-user_settings = "my-settings.json" # optional: a copy of your user settings
-managed_settings = "managed.json"  # optional: a copy of your managed settings
+user_settings = "my-claude"        # optional: a copy of your ~/.claude, or of its settings.json
+managed_settings = "policy"        # optional: a copy of /etc/claude-code, or of its settings file
 executable = "claude"              # default: the first `claude` on PATH
 timeout_seconds = 300
 ```
@@ -383,27 +383,45 @@ weir-run run --config canary.toml
 ### What the run does
 
 1. **A scratch project and a scratch home.** The project holds a short
-   README and copies of your project's `CLAUDE.md` and `.claude`
-   directory (`settings.json`, `settings.local.json`, hooks, commands,
-   agents, skills, `CLAUDE.md`), where they exist, but not the git
-   worktrees Claude Code keeps in `.claude/worktrees`. A symbolic link in
-   `.claude` whose target is inside the project is copied as that target;
-   one that points outside the project, or nowhere, is left out, so a
-   hook script behind it is missing and the run is incomplete.
-   `settings.json` and `settings.local.json` are read wherever they
-   point; `user_settings`
-   becomes the scratch home's user settings, and `managed_settings` the
-   sandbox's managed settings (`/etc/claude-code/managed-settings.json`).
+   README and copies of your project's configuration:
+   - from `.claude`, only what Claude Code reads as configuration:
+     `settings.json`, `settings.local.json`, `hooks`, `commands`,
+     `agents`, `skills`, `rules`, `output-styles` and `CLAUDE.md`, never
+     the worktrees, sessions and other state Claude Code keeps there;
+   - the memory files `CLAUDE.md` and `CLAUDE.local.md`, and every file
+     inside the project they import (`@path`), as deep as Claude Code
+     follows imports;
+   - each script a hook starts, wherever it is in the project.
+
+   A symbolic link whose target is inside the project is copied as that
+   target; one that points outside the project, or nowhere, is left out,
+   so a hook script behind it is missing and the run is incomplete.
+   `settings.json` and `settings.local.json` are read wherever they point.
+
+   `user_settings` becomes the scratch home's user settings: a settings
+   file, or a copy of your `~/.claude` directory, of which the run takes
+   the same configuration entries (never sessions, history or
+   credentials) and the scripts its hooks start. `managed_settings` takes
+   the place of the machine's managed settings directory
+   (`/etc/claude-code`): a settings file, or a copy of that directory, with
+   its `managed-settings.json`, its `managed-settings.d` drop-in files,
+   its `hooks` and its `CLAUDE.md`. The verdict lists what it copied from
+   each directory.
+
    Claude Code layers them as it would for you: for ordinary values,
    managed settings over local project settings over project settings
-   over user settings; permission rules from all of them merge, and a
-   deny in any file always wins over an allow. The verdict lists the
-   files it applied, highest first. The run never reads your user-level
-   or managed settings from your machine: pass a copy of each to include
-   it. When one is not passed, the verdict says so
-   (`user-level and managed settings not included`), and the run does not
-   imply it was tested. The project is marked trusted. Claude Code runs with `HOME` and `CLAUDE_CONFIG_DIR`
-   in the scratch home.
+   over user settings, the managed drop-in files merged over
+   `managed-settings.json` in name order; permission rules from all of
+   them merge, and a deny in any file always wins over an allow. The
+   verdict lists the files it applied, highest first. A settings file
+   Claude Code skips as invalid (it says so in its debug log, which the
+   run reads) is named as skipped, and none of its settings is counted as
+   applied. The run never reads your user-level or managed settings from
+   your machine: pass a copy of each to include it. When one is not
+   passed, the verdict says so (`user-level and managed settings not
+   included`), and the run does not imply it was tested. The project is
+   marked trusted. Claude Code runs with `HOME` and `CLAUDE_CONFIG_DIR` in
+   the scratch home.
 2. **Fake secrets where real ones usually sit**, each a fresh random value:
 
    | secret | where |
@@ -417,21 +435,28 @@ weir-run run --config canary.toml
    at the mock.
 3. **Your settings, held to the mock.** A setting that would move the model
    API, the key or the traffic away from the mock is overridden and each
-   override is reported, never followed: `apiKeyHelper` (not run), and in a
-   settings file's `env`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`,
-   `ANTHROPIC_AUTH_TOKEN`, the Bedrock and Vertex switches and base URLs,
-   the proxy variables, the OTLP endpoints, an OTLP protocol other than
-   HTTP and long export intervals. With telemetry turned on, it is exported
-   to the mock's receiver, and its spans, log records and metrics are
-   judged like any program's. Claude Code applies
-   `CLAUDE_CODE_ENABLE_TELEMETRY` from user and managed settings only:
-   set in a project's settings files alone, the verdict says Claude Code
-   does not apply it there, and the run expects no telemetry.
+   override is reported, never followed: the commands Claude Code runs for
+   a key, cloud credentials or telemetry headers (`apiKeyHelper`,
+   `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`,
+   `otelHeadersHelper`: not run), and in a settings file's `env`, every
+   switch that selects another model provider (`CLAUDE_CODE_USE_BEDROCK`,
+   `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` and the rest), every
+   variable that names a model endpoint, key, token, resource or identity
+   (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+   `ANTHROPIC_FOUNDRY_BASE_URL` and the like), the proxy variables, the
+   OTLP endpoints, an OTLP protocol other than HTTP and long export
+   intervals. With telemetry turned on, it is exported to the mock's
+   receiver, and its spans, log records and metrics are judged like any
+   program's. Claude Code applies `CLAUDE_CODE_ENABLE_TELEMETRY` from user
+   and managed settings only: set in a project's settings files alone, the
+   verdict says Claude Code does not apply it there, naming the scope, and
+   the run expects no telemetry. With telemetry off, the verdict says it
+   was not tested.
 4. **A sandbox with no home in it.** Claude Code runs inside bubblewrap,
    where your real home directory is not mounted at all: only the system
    directories (read-only), the Claude Code executable (read-only) and the
    scratch directories are. The machine's own managed settings are
-   hidden; only the `managed_settings` file, when passed, is in their
+   hidden; only the `managed_settings` passed, if any, are in their
    place. It
    also runs in the [isolated network](#network-isolation), with a name
    and TLS stub: every name lookup is answered with the loopback address,
@@ -442,22 +467,35 @@ weir-run run --config canary.toml
 5. **Ordinary coding actions.** The mock's model asks for one action per
    turn: read `.env`, `config/app.json` and `~/.aws/credentials` with the
    Read tool, run `cat` on each of them, and run `env`. An action whose
-   tool Claude Code does not offer is never asked.
+   tool Claude Code does not offer is never asked. Where Claude Code would
+   ask you before an action, it asks a permission prompt the mock serves
+   instead (`--permission-prompt-tool`), which answers no and records the
+   question. A rule or hook that denies an action never reaches it.
 6. **The verdict.** The judge judges the capture as for any flow. A secret
    an action asked for, where Claude Code answered (with the content or a
-   refusal), and that reached nothing, was **kept out**. A secret no action
-   reached is **not exercised**, never kept out, and leaves the run
-   incomplete. Files Claude Code wrote under the scratch home or project,
-   its session transcript included, are checked too, and a secret in one
-   is reported as **stored locally**: on disk, not sent out, and never a
-   leak by itself. A hook of the settings under test whose script is
-   missing from the sandbox, whether the command runs it directly or
-   through an interpreter such as `python3`, `node` or `sh`, and whether
-   or not Claude Code wrote a session transcript, or that did not start
-   for another reason (its command not found or not executable, from the
-   transcript), leaves the run incomplete, `incomplete: hook_not_started`
-   with the hook named, and the run is not judged: no verdict rests on a
-   control that did not run.
+   refusal by a rule or a hook), and that reached nothing, was **kept
+   out**. A secret one of whose actions Claude Code would have asked you
+   about is **behind a prompt**: one yes sends it, so it is never kept
+   out, and the action does not exercise it. A secret no action reached
+   is **not exercised**, never kept out, and leaves the run incomplete;
+   when a tool is missing because a settings file denies it outright, the
+   rule is named. Files Claude Code wrote under the scratch home, project
+   or temporary directory, its session transcript included, are checked
+   too, and a secret in one is reported as **stored locally**: on disk,
+   not sent out, and never a leak by itself.
+
+   A hook Claude Code will run whose script is missing from the sandbox
+   (whether the command runs it directly or through an interpreter such
+   as `python3`, `node` or `sh`, read with that interpreter's own options,
+   and behind `env`, `exec` and similar wrappers), or that did not start,
+   failed, timed out, or blocked because a command it needs is missing
+   (`command not found` and the like in its error output, from the
+   session transcript), leaves the run incomplete, with the hook named:
+   `incomplete: hook_not_started` or `incomplete: hook_failed`. The run is
+   then not judged: no verdict rests on a control that did not run as
+   configured. Hooks Claude Code will not run (`disableAllHooks`, or
+   `allowManagedHooksOnly` in managed settings) are not checked, and the
+   verdict says so.
 
 ### Whose key: `key_owner`
 
@@ -485,7 +523,7 @@ and exits 3.
 ### The verdict
 
 Printed on stdout before the judge's report. A project whose settings deny
-reads of `config/**` (an excerpt):
+reads of `config/**`, and nothing else (an excerpt):
 
 ```text
 claude-code: Claude Code finished: success, 8 turns
@@ -493,13 +531,15 @@ claude-code: settings under test: project settings app/.claude/settings.json
 claude-code: user-level and managed settings not included
 claude-code: the project was marked trusted for this run
 claude-code: key owner: anthropic, so api.anthropic.com is the model key's own host
-kept out: 3 of 4
+claude-code: telemetry: off in the settings under test, not tested; to include it, set CLAUDE_CODE_ENABLE_TELEMETRY in the user or managed settings passed
+...
+kept out: 1 of 4
 reached the model: .env through a file read (Read .env), a command (cat .env)
 kept out: config/app.json (Read config/app.json denied, cat config/app.json denied)
-kept out: ~/.aws/credentials (Read ~/.aws/credentials denied, cat ~/.aws/credentials denied)
-kept out: $DEPLOY_TOKEN (env denied)
+behind a prompt: ~/.aws/credentials (Read ~/.aws/credentials would ask you, cat ~/.aws/credentials would ask you; the run answered no)
+behind a prompt: $DEPLOY_TOKEN (env would ask you; the run answered no)
 stored locally: .env in the session transcript (on disk, not sent out)
-LEAK project/.env file=capture/requests.jsonl:8 signal=requests sink="model" at=body.messages[3].content[0].content form=raw
+LEAK project/.env file=capture/requests.jsonl:13 signal=requests sink="model" at=body.messages[3].content[0].content form=raw
 ...
 result: leak
 ```
@@ -508,12 +548,16 @@ result: leak
   `CLAUDE.md` that imports the file), or through an action's result.
   `reached the telemetry`, `reached another host` (by host) and
   `reached the console output` follow the same form.
-- `model key:` says where the model key went when it reached nothing it
-  should not.
+- `kept out` names how each action was refused: `denied` by a rule, or
+  `blocked by a hook`.
+- The `model key:` line comes right before the count, which is of the
+  four planted secrets only: it says where the model key went, and when
+  it reached anything it should not, it says so there.
 - The placements in the judge's report are `env.ANTHROPIC_API_KEY`,
   `project/.env`, `project/config/app.json`, `home/.aws/credentials`
   (kind `file`) and `env.DEPLOY_TOKEN`. Every one is required, so the run
-  exits 3 when one is not exercised and nothing leaked.
+  exits 3 when one is not exercised, behind a prompt included, and
+  nothing leaked.
 - The exit code is the judge's: 0 when every secret was kept out, 1 when
   one reached anything, 3 when the run is incomplete.
 
@@ -535,24 +579,19 @@ result: leak
   Claude Code check. The other kinds in the contract (`tool-field`, `mcp`,
   `settings-file` and the rest) are reserved.
 - The Claude Code check plants a fixed set of secrets and asks a fixed set
-  of actions, runs one session, and judges the settings files it is given:
-  the machine's own user-level and managed settings are never read (pass
-  copies with `user_settings` and `managed_settings`), no MCP server is
-  configured, and hooks run
-  inside the sandbox, where nothing outside the scratch directories
-  exists: a hook whose script lives elsewhere, such as in your home, does
-  not start, and the run is incomplete. A hook's script is found in its
-  command when the command is that script or starts it as the first
-  argument of an interpreter (`python3`, `node`, `sh`, `bash`, `ruby`,
-  `perl` and the like), named through `$CLAUDE_PROJECT_DIR`, `~`,
-  `$HOME`, an absolute path or a path from the project. A script named any
-  other way (through another variable or behind a wrapper such as `env`
-  or `uv run`), and a hook defined in a skill's or agent's frontmatter, is
-  caught only when its command fails to start and the session transcript
-  records it. The check reads a hook command's interpreter options
-  generically, so an interpreter option that takes a value, or one that
-  means something else in a given interpreter (such as `sh -e`), can hide
-  a missing script from it.
+  of actions, runs one session, and judges the settings it is given: the
+  machine's own user-level and managed settings are never read (pass
+  copies with `user_settings` and `managed_settings`), no MCP server of
+  yours is configured, and hooks run inside the sandbox, where nothing
+  outside the scratch directories exists: a hook whose script lives
+  elsewhere, such as in your home outside `~/.claude`, does not start, and
+  the run is incomplete. A hook's script is found in its command when the
+  command is that script or starts it through an interpreter or a
+  wrapper, named through `$CLAUDE_PROJECT_DIR`, `~`, `$HOME`, an absolute
+  path or a path from the project. A script named any other way (through
+  another variable, or run by a tool such as `uv run` or `npx`), and a
+  hook defined in a skill's or agent's frontmatter, is caught only when
+  its hook fails and the session transcript records it.
 - Model APIs: OpenAI-compatible or Anthropic Messages API. Of the
   Messages API, `POST /v1/messages` only (no token counting, batches or
   files).
