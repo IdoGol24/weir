@@ -565,7 +565,10 @@ def test_a_saved_output_that_holds_an_old_session_is_stored_not_sent(tmp_path: P
 
     audit = claude.audit()
     formats = {f["file"]: f["format"] for f in audit["files"]}  # type: ignore[union-attr]
-    assert formats[str(saved)] == "claude-code-tool-results"
+    # The audit names a file found under a given directory as the directory
+    # as given, then the names below it joined by "/".
+    shown = f"{claude.session_dir()}/{saved.relative_to(claude.session_dir()).as_posix()}"
+    assert formats[shown] == "claude-code-tool-results"
     expected = sx.expected_counts(claude.setup, audit)
     assert expected == (0, 0, False)
     assert run.stdout == sx.segment_for(expected) + "\n"
