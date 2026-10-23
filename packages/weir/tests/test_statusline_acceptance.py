@@ -270,7 +270,11 @@ def test_neither_the_segment_nor_its_cache_holds_a_value(tmp_path: Path) -> None
 
 _EXISTING = {
     "statusLine": {
-        "type": "command", "command": "cat >/dev/null; printf 'existing status\\n'", "padding": 1,
+        "type": "command",
+        "command": sx.python_command(
+            "import sys; sys.stdin.read(); sys.stdout.write('existing status')"
+        ),
+        "padding": 1,
     },
     "permissions": {"deny": ["Read(./secrets/**)"]},
 }

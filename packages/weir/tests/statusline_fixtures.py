@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -174,15 +175,28 @@ def segment_for(counts: tuple[int, int, bool]) -> str:
 
 def run_shell(command: str, stdin: str, env: Mapping[str, str]) -> Run:
     """Run a status line command in a shell, with the session JSON on stdin,
-    as Claude Code does. The environment holds the fake home and PATH."""
+    as Claude Code does. The environment holds the fake home and PATH.
+    Windows' "\r\n" line ends in the output read back as "\n"."""
     full = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env}
     proc = subprocess.run(
         ["sh", "-c", command], input=stdin.encode(), capture_output=True, env=full, timeout=120,
         check=False,
     )
-    return Run(proc.returncode, proc.stdout.decode(), proc.stderr.decode())
+
+    def text(data: bytes) -> str:
+        return data.decode().replace("\r\n", "\n")
+
+    return Run(proc.returncode, text(proc.stdout), text(proc.stderr))
 
 
 def weir_command() -> str:
-    """How setup is expected to start weir: this interpreter, `-m weir`."""
-    return f"{sys.executable} -m weir"
+    """How setup is expected to start weir: this interpreter, quoted for
+    the shell, `-m weir`."""
+    return f"{shlex.quote(sys.executable)} -m weir"
+
+
+def python_command(code: str) -> str:
+    """A command that runs `code` in this interpreter, the same in a POSIX
+    shell and in Windows' cmd.exe (the shell `run_beside` uses there).
+    `code` holds no double quote."""
+    return f'"{sys.executable}" -c "{code}"'

@@ -183,7 +183,8 @@ def test_the_cache_holds_no_value_or_file_name_in_any_encoding(tmp_path: Path) -
 
 
 def test_a_failing_existing_command_shows_the_segment_alone() -> None:
-    assert run_beside("echo shown; exit 3", b"{}", lambda: "weir: x") == "weir: x"
+    failing = sx.python_command("import sys; sys.stdout.write('shown'); sys.exit(3)")
+    assert run_beside(failing, b"{}", lambda: "weir: x") == "weir: x"
     assert run_beside("true", b"{}", lambda: "weir: x") == "weir: x"
 
 

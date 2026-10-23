@@ -278,8 +278,8 @@ def test_a_change_in_the_read_part_is_read_again_from_the_start(tmp_path: Path) 
 
 def test_the_fingerprint_key_is_a_file_only_its_owner_can_read(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
-    mode = stat.S_IMODE(claude.setup.key.stat().st_mode)
-    assert mode == 0o600
+    if os.name == "posix":  # owner and mode bits are POSIX
+        assert stat.S_IMODE(claude.setup.key.stat().st_mode) == 0o600
     session = fx.Session()
     session.prompt("hello")
     session.write(claude.transcript())
