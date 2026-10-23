@@ -367,7 +367,8 @@ another host or the console.
 [claude_code]
 key_owner = "anthropic"            # required to judge: "anthropic" or "gateway"
 project = "."                      # its .claude directory and CLAUDE.md are under test
-user_settings = "my-settings.json" # optional: applied as your user settings
+user_settings = "my-settings.json" # optional: a copy of your user settings
+managed_settings = "managed.json"  # optional: a copy of your managed settings
 executable = "claude"              # default: the first `claude` on PATH
 timeout_seconds = 300
 ```
@@ -385,12 +386,17 @@ weir-run run --config canary.toml
    README and copies of your project's `CLAUDE.md` and whole `.claude`
    directory (`settings.json`, `settings.local.json`, hooks, commands,
    agents, skills, `CLAUDE.md`), where they exist; `user_settings`
-   becomes the scratch home's user settings. Claude Code layers them as
-   it would for you: for ordinary values, local project settings over
-   project settings over user settings; permission rules from all of
-   them merge, and a deny in any file always wins over an allow. The
-   verdict lists the files it applied, local first. The project is
-   marked trusted. Claude Code runs with `HOME` and `CLAUDE_CONFIG_DIR`
+   becomes the scratch home's user settings, and `managed_settings` the
+   sandbox's managed settings (`/etc/claude-code/managed-settings.json`).
+   Claude Code layers them as it would for you: for ordinary values,
+   managed settings over local project settings over project settings
+   over user settings; permission rules from all of them merge, and a
+   deny in any file always wins over an allow. The verdict lists the
+   files it applied, highest first. The run never reads your user-level
+   or managed settings from your machine: pass a copy of each to include
+   it. When one is not passed, the verdict says so
+   (`user-level and managed settings not included`), and the run does not
+   imply it was tested. The project is marked trusted. Claude Code runs with `HOME` and `CLAUDE_CONFIG_DIR`
    in the scratch home.
 2. **Fake secrets where real ones usually sit**, each a fresh random value:
 
@@ -415,7 +421,9 @@ weir-run run --config canary.toml
 4. **A sandbox with no home in it.** Claude Code runs inside bubblewrap,
    where your real home directory is not mounted at all: only the system
    directories (read-only), the Claude Code executable (read-only) and the
-   scratch directories are. Machine-wide managed settings are hidden. It
+   scratch directories are. The machine's own managed settings are
+   hidden; only the `managed_settings` file, when passed, is in their
+   place. It
    also runs in the [isolated network](#network-isolation), with a name
    and TLS stub: every name lookup is answered with the loopback address,
    and HTTPS to any host is decrypted under a certificate authority made
@@ -470,6 +478,7 @@ reads of `config/**` (an excerpt):
 ```text
 claude-code: Claude Code finished: success, 8 turns
 claude-code: settings under test: project settings app/.claude/settings.json
+claude-code: user-level and managed settings not included
 claude-code: the project was marked trusted for this run
 claude-code: key owner: anthropic, so api.anthropic.com is the model key's own host
 kept out: 3 of 4
@@ -515,7 +524,9 @@ result: leak
   `settings-file` and the rest) are reserved.
 - The Claude Code check plants a fixed set of secrets and asks a fixed set
   of actions, runs one session, and judges the settings files it is given:
-  managed settings are hidden, no MCP server is configured, and hooks run
+  the machine's own user-level and managed settings are never read (pass
+  copies with `user_settings` and `managed_settings`), no MCP server is
+  configured, and hooks run
   inside the sandbox, where nothing outside the scratch directories
   exists: a hook whose script lives elsewhere, such as in your home, does
   not start, and the run is incomplete.

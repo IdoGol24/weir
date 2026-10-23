@@ -12,12 +12,15 @@ mock, and judges what it sent:
    for an Anthropic key, its own host (`key_owner`).
 2. **Settings under test.** The project's whole `.claude` directory (its
    `settings.json` and `settings.local.json`, hooks, commands, agents and
-   skills) and its `CLAUDE.md`, and a supplied user settings file, are
-   copied where Claude Code reads them in the scratch project and home, so
-   it layers them as it would for the user. A setting that would move the
-   model API, the key or the telemetry away from the mock is overridden,
-   and each override is reported; it is never followed. The scratch config
-   marks the project trusted.
+   skills) and its `CLAUDE.md`, and the user and managed settings files the
+   config passes, are copied where Claude Code reads them in the scratch
+   project, the scratch home and the sandbox's managed settings directory,
+   so it layers them as it would for the user. The run never reads a real
+   home or system settings location: user-level and managed settings the
+   config does not pass are not included, and the verdict says so. A
+   setting that would move the model API, the key or the telemetry away
+   from the mock is overridden, and each override is reported; it is never
+   followed. The scratch config marks the project trusted.
 3. **Run.** Inside bubblewrap, where the real home is not mounted at all,
    and inside the isolated network with the name and TLS stub, so every
    other host it tries is named and what it sends there is judged. The
@@ -71,7 +74,11 @@ SANDBOX_PATH = "/usr/local/bin:/usr/bin:/bin"
 # Directories a program needs from the host, read-only. The real home and
 # every other user directory stay out of the sandbox.
 SYSTEM_DIRECTORIES = ("bin", "sbin", "lib", "lib32", "lib64", "libx32")
+# Where Claude Code reads managed settings on Linux. In the sandbox the
+# host's copy is never mounted; a managed settings file the config passes
+# is mounted there instead.
 MANAGED_SETTINGS = Path("/etc/claude-code")
+MANAGED_SETTINGS_FILE = MANAGED_SETTINGS / "managed-settings.json"
 # The shell's exit codes for a command it could not start: not executable,
 # not found.
 HOOK_NOT_STARTED = (126, 127)
@@ -176,6 +183,7 @@ EXPORT_INTERVALS = {"OTEL_METRIC_EXPORT_INTERVAL": "1000", "OTEL_LOGS_EXPORT_INT
 
 # How the verdict names each settings scope.
 SCOPES = {
+    "managed": "managed settings",
     "local": "local project settings",
     "project": "project settings",
     "user": "user settings",
@@ -186,7 +194,7 @@ SCOPES = {
 class SettingsFile:
     """One settings file under test, as the run applies it."""
 
-    scope: str  # "local", "project" or "user"
+    scope: str  # "managed", "local", "project" or "user"
     path: Path
     data: dict[str, Any]
     overrides: list[str] = field(default_factory=list[str])
@@ -268,7 +276,14 @@ class Layout:
     def resolv(self) -> Path:
         return self.root / "resolv.conf"
 
+    @property
+    def managed(self) -> Path:
+        """The managed settings file, mounted at MANAGED_SETTINGS_FILE."""
+        return self.root / "managed" / MANAGED_SETTINGS_FILE.name
+
     def settings(self, scope: str) -> Path:
+        if scope == "managed":
+            return self.managed
         if scope == "user":
             return self.config / "settings.json"
         name = "settings.local.json" if scope == "local" else "settings.json"
@@ -340,10 +355,13 @@ def _settings_file(scope: str, path: Path) -> SettingsFile:
 
 
 def settings_under_test(spec: ClaudeCodeSpec) -> list[SettingsFile]:
-    """The project's .claude/settings.local.json and .claude/settings.json,
-    where it has them, and the user settings the config supplies, if any:
-    highest precedence first, as Claude Code layers them."""
+    """The managed settings the config passes, if any, the project's
+    .claude/settings.local.json and .claude/settings.json, where it has
+    them, and the user settings the config passes, if any: highest
+    precedence first, as Claude Code layers them."""
     found: list[SettingsFile] = []
+    if spec.managed_settings is not None:
+        found.append(_settings_file("managed", spec.managed_settings))
     for scope, name in (("local", "settings.local.json"), ("project", "settings.json")):
         path = spec.project / ".claude" / name
         if path.exists():
@@ -384,7 +402,7 @@ def plant(layout: Layout, settings: Sequence[SettingsFile], run: CheckRun) -> No
         target.write_text(secret.template.replace(VALUE, value), encoding="utf-8")
     for applied in settings:
         target = layout.settings(applied.scope)
-        target.parent.mkdir(exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(applied.data, indent=2), encoding="utf-8")
     config = {"projects": {str(layout.project): {"hasTrustDialogAccepted": True}}}
     (layout.config / ".claude.json").write_text(json.dumps(config), encoding="utf-8")
@@ -417,10 +435,33 @@ def environment(layout: Layout, run: CheckRun) -> dict[str, str]:
     return env
 
 
+def _etc(layout: Layout) -> list[str]:
+    """/etc for the sandbox: each host entry read-only but the managed
+    settings directory, which holds only the managed settings file the
+    config passes, if any."""
+    command = ["--tmpfs", "/etc"]
+    for entry in sorted(Path("/etc").iterdir()):
+        if entry == MANAGED_SETTINGS:
+            continue
+        if entry.is_symlink():
+            command += ["--symlink", os.readlink(entry), str(entry)]
+        else:
+            command += ["--ro-bind", str(entry), str(entry)]
+    if layout.managed.is_file():
+        command += ["--dir", str(MANAGED_SETTINGS)]
+        command += ["--ro-bind", str(layout.managed), str(MANAGED_SETTINGS_FILE)]
+    resolv = Path(os.path.realpath("/etc/resolv.conf"))
+    if not resolv.parent.is_relative_to("/etc"):
+        command += ["--dir", str(resolv.parent)]
+    command += ["--ro-bind", str(layout.resolv), str(resolv)]
+    return [*command, "--remount-ro", "/etc"]
+
+
 def sandbox(bwrap: str, executable: Path, layout: Layout, env: Mapping[str, str]) -> list[str]:
     """The bubblewrap command around Claude Code: the system directories
     read-only, the scratch directories, the executable, and nothing of the
-    real home. Names resolve through the stub."""
+    real home or of the host's managed settings. Names resolve through the
+    stub."""
     command = [bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts"]
     command += ["--die-with-parent", "--new-session", "--ro-bind", "/usr", "/usr"]
     for name in SYSTEM_DIRECTORIES:
@@ -429,13 +470,7 @@ def sandbox(bwrap: str, executable: Path, layout: Layout, env: Mapping[str, str]
             command += ["--symlink", os.readlink(path), str(path)]
         elif path.is_dir():
             command += ["--ro-bind", str(path), str(path)]
-    command += ["--ro-bind", "/etc", "/etc"]
-    if MANAGED_SETTINGS.is_dir():
-        command += ["--tmpfs", str(MANAGED_SETTINGS)]
-    resolv = Path(os.path.realpath("/etc/resolv.conf"))
-    if not resolv.parent.is_relative_to("/etc"):
-        command += ["--dir", str(resolv.parent)]
-    command += ["--ro-bind", str(layout.resolv), str(resolv)]
+    command += _etc(layout)
     command += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
     command += ["--ro-bind", str(executable), str(executable)]
     command += ["--bind", str(layout.root), str(layout.root), "--chdir", str(layout.project)]
@@ -710,6 +745,11 @@ def verdict(
     return lines
 
 
+# The settings the run includes only when the config passes them: it never
+# reads them from the user's machine.
+NOT_PASSED = (("user", "user-level"), ("managed", "managed"))
+
+
 def _settings_lines(settings: Sequence[SettingsFile], result: str) -> list[str]:
     lines = [f"claude-code: {result}"]
     for applied in settings:
@@ -718,6 +758,10 @@ def _settings_lines(settings: Sequence[SettingsFile], result: str) -> list[str]:
         )
     if not settings:
         lines.append("claude-code: settings under test: none, so Claude Code's defaults")
+    scopes = {applied.scope for applied in settings}
+    missing = [what for scope, what in NOT_PASSED if scope not in scopes]
+    if missing:
+        lines.append(f"claude-code: {' and '.join(missing)} settings not included")
     lines.append("claude-code: the project was marked trusted for this run")
     return lines
 

@@ -185,6 +185,8 @@ class ClaudeCodeSpec:
     # A settings file applied as the user's own settings, beside the
     # project's .claude/settings.json.
     user_settings: Path | None = None
+    # A settings file applied as managed settings, above every other file.
+    managed_settings: Path | None = None
     executable: str = "claude"
     timeout_seconds: float = 300.0
 

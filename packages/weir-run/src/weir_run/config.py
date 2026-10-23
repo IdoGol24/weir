@@ -35,6 +35,7 @@ _CLAUDE_CODE = {
     "key_owner",
     "project",
     "user_settings",
+    "managed_settings",
     "executable",
     "timeout_seconds",
 }
@@ -178,10 +179,12 @@ def _claude_code(t: dict[str, object], base: Path) -> ClaudeCodeSpec:
             ' or "gateway" (a key for the gateway at the base URL)'
         )
     settings = _opt_str(t, "user_settings", where)
+    managed = _opt_str(t, "managed_settings", where)
     return ClaudeCodeSpec(
         key_owner=key_owner,
         project=(base / _str(t, "project", where, ".")).resolve(),
         user_settings=None if settings is None else (base / settings).resolve(),
+        managed_settings=None if managed is None else (base / managed).resolve(),
         executable=_str(t, "executable", where, "claude"),
         timeout_seconds=_timeout(t, where),
     )

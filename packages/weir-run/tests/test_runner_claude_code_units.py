@@ -79,12 +79,14 @@ def _load(tmp_path: Path, text: str) -> RunSpec:
 def test_a_claude_code_config_resolves_its_paths_against_the_config(tmp_path: Path) -> None:
     spec = _load(
         tmp_path,
-        '[claude_code]\nkey_owner = "gateway"\nproject = "app"\nuser_settings = "me.json"\n',
+        '[claude_code]\nkey_owner = "gateway"\nproject = "app"\nuser_settings = "me.json"\n'
+        'managed_settings = "it/managed.json"\n',
     )
     assert spec.claude_code is not None
     assert spec.claude_code.key_owner == "gateway"
     assert spec.claude_code.project == (tmp_path / "app").resolve()
     assert spec.claude_code.user_settings == (tmp_path / "me.json").resolve()
+    assert spec.claude_code.managed_settings == (tmp_path / "it" / "managed.json").resolve()
 
 
 @pytest.mark.parametrize(

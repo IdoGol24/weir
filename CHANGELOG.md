@@ -73,8 +73,11 @@
   variable, and a fake model key with `ANTHROPIC_BASE_URL` at the mock;
   copies in the project's whole `.claude` directory (settings, hooks,
   commands, agents, skills) and `CLAUDE.md`, and applies
-  `user_settings` as the user's own settings, layered as Claude Code
-  layers them, the verdict listing each file applied; and lets the mock's
+  `user_settings` as the user's own settings and `managed_settings` as
+  managed settings, layered as Claude Code layers them, the verdict
+  listing each file applied and saying `user-level and managed settings
+  not included` when they are not passed (the run never reads them from
+  the user's machine); and lets the mock's
   model ask for ordinary coding actions (read the files, run `cat` and
   `env`). The verdict reads as a check of the user's controls, before the
   judge's report: `kept out: 3 of 4`, then where each other secret went
