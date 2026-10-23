@@ -241,6 +241,10 @@ def _digest(key: bytes, data: bytes) -> str:
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
+def _canonical(value: object) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+
 def apply_setup(paths: Paths, plan: Plan, key: bytes) -> None:
     """Write the undo record first, then the backups, then the files.
     Refuses, writing nothing, when a file changed since the plan was shown
@@ -257,8 +261,12 @@ def apply_setup(paths: Paths, plan: Plan, key: bytes) -> None:
                 "backup": None if change.before is None
                 else str(change.path.absolute()) + BACKUP_SUFFIX,
                 "written_mac": _digest(key, change.after),
+                # The statusLine setup wrote, so undo can take back just that
+                # key from a settings file changed since (keyed: the line
+                # holds the old command, which may hold a credential).
+                "line_mac": _digest(key, _canonical(plan.line_after)) if n == 0 else None,
             }
-            for change in plan.changes
+            for n, change in enumerate(plan.changes)
         ],
         "created_dirs": [str(d.absolute()) for d in plan.created_dirs],
     }
@@ -282,8 +290,11 @@ class Restore:
     # None: setup created the file; undo removes it
     backup: Path | None
     original: bytes | None
-    # The bytes setup wrote, as the record keeps them: keyed
-    written_mac: str
+    # The file's bytes when undo planned, keyed: undo writes only over them
+    planned_mac: str
+    # The settings changed after setup but statusLine is still setup's: the
+    # file with only statusLine taken back, every other change kept
+    rewrite: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -297,6 +308,38 @@ class UndoPlan:
 def _changed_after_setup(key: bytes, path: Path, written_mac: str) -> bool:
     current = _read(path)
     return current is None or not hmac.compare_digest(_digest(key, current), written_mac)
+
+
+def _take_back_line(
+    key: bytes, current: bytes | None, line_mac: str | None, original: bytes | None
+) -> bytes | None:
+    """The settings with only statusLine taken back to what it was before
+    setup (removed, when there was none), when the file changed after setup
+    but its statusLine is still exactly the one setup wrote. None otherwise.
+    Empty bytes: nothing but setup's statusLine is left, in a file setup
+    created, so the file goes."""
+    if current is None or line_mac is None:
+        return None
+    try:
+        settings = json.loads(current)
+        before = json.loads(original) if original is not None and original.strip() else {}
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(settings, dict) or not isinstance(before, dict):
+        return None
+    now: dict[str, object] = settings  # type: ignore[assignment]
+    if "statusLine" not in now or not hmac.compare_digest(
+        _digest(key, _canonical(now["statusLine"])), line_mac
+    ):
+        return None
+    old: object = before.get("statusLine")  # type: ignore[union-attr]
+    if old is None:
+        del now["statusLine"]
+    else:
+        now["statusLine"] = old
+    if not now and original is None:
+        return b""
+    return json.dumps(now, indent=2, ensure_ascii=False).encode() + b"\n"
 
 
 def _changed_error(path: Path, record_path: Path) -> SetupError:
@@ -316,7 +359,10 @@ def plan_undo(cache: Path) -> UndoPlan | None:
         if record.get("schema") != UNDO_SCHEMA:
             raise ValueError(record_path)
         key_path = Path(record["key"])
-        files = [(Path(e["path"]), e["backup"], str(e["written_mac"])) for e in record["files"]]
+        files = [
+            (Path(e["path"]), e["backup"], str(e["written_mac"]), e.get("line_mac"))
+            for e in record["files"]
+        ]
         dirs = [Path(d) for d in record["created_dirs"]]
     except (ValueError, KeyError, TypeError, AttributeError):
         raise SetupError(f"{record_path}: not an undo record weir wrote", 2) from None
@@ -325,21 +371,34 @@ def plan_undo(cache: Path) -> UndoPlan | None:
     except AuditInputError as exc:
         raise SetupError(f"{exc}; the undo record needs the key setup used", 2) from None
     restores: list[Restore] = []
-    for path, backup_name, written_mac in files:
-        if _changed_after_setup(key, path, written_mac):
-            raise _changed_error(path, record_path)
+    for path, backup_name, written_mac, line_mac in files:
         backup = None if backup_name is None else Path(backup_name)
         original = None if backup is None else _read(backup)
         if backup is not None and original is None:
             raise SetupError(f"{backup}: the backup setup kept is gone; nothing restored")
-        restores.append(Restore(path, backup, original, written_mac))
+        if not _changed_after_setup(key, path, written_mac):
+            restores.append(Restore(path, backup, original, written_mac))
+            continue
+        current = _read(path)
+        rewrite = _take_back_line(key, current, line_mac, original)
+        if rewrite is None or current is None:
+            raise _changed_error(path, record_path)
+        restores.append(Restore(path, backup, original, _digest(key, current), rewrite))
     return UndoPlan(record_path, key, restores, dirs)
 
 
 def describe_undo(plan: UndoPlan) -> list[str]:
     lines: list[str] = []
     for r in plan.restores:
-        if r.backup is None:
+        if r.rewrite is not None:
+            lines.append(
+                f"{r.path} changed after setup, so its bytes are not restored whole: put back"
+                " only its statusLine as it was before setup"
+                + (" (there was none: remove it)" if r.original is None else ", from the backup")
+                + ", and keep every other setting as it is now"
+                + ("; nothing else is left, so remove the file" if r.rewrite == b"" else "")
+            )
+        elif r.backup is None:
             lines.append(f"remove {r.path} (setup created it)")
         else:
             lines.append(f"restore {r.path} to its bytes before setup, from {r.backup}")
@@ -352,10 +411,14 @@ def apply_undo(plan: UndoPlan) -> None:
     """Refuses, writing nothing, when a file changed since the plan was
     shown."""
     for r in plan.restores:
-        if _changed_after_setup(plan.key, r.path, r.written_mac):
+        if _changed_after_setup(plan.key, r.path, r.planned_mac):
             raise _changed_error(r.path, plan.record)
     for r in plan.restores:
-        if r.original is None:
+        if r.rewrite:
+            write_atomic(r.path, r.rewrite, stat.S_IMODE(r.path.stat().st_mode))
+            if r.backup is not None:
+                r.backup.unlink()
+        elif r.original is None:
             r.path.unlink()
         else:
             mode = stat.S_IMODE(r.path.stat().st_mode)

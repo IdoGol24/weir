@@ -305,18 +305,31 @@ segment, or when a different `commands/weir.md` exists.
 **Undo** reads the undo record and shows what it will do: put each file
 setup changed back to its bytes before setup, from its backup, and remove
 each file and directory setup created. With `--dry-run` it stops there;
-otherwise it asks, as setup does. It refuses, and writes nothing, when a
-file changed after setup (its keyed MAC is not the one the record holds
-for the bytes setup wrote), naming the file, and checks again just before
-it writes: restoring the old bytes would throw that change away. After undo the files are byte for byte what they
-were, and the backup and the record are gone. With no undo record it says
-there is nothing to undo.
+otherwise it asks, as setup does, and writes only on the exact answer
+`yes`. After undo the files are byte for byte what they were, and the
+backup and the record are gone. With no undo record it says there is
+nothing to undo.
+
+When the settings file changed after setup (its keyed MAC is not the one
+the record holds for the bytes setup wrote) but its `statusLine` is still
+exactly the one setup wrote (Claude Code saved another setting, say),
+restoring the old bytes would throw that change away. Undo then says so,
+and on `yes` puts back only the `statusLine` that was there before setup
+(from the backup), or removes the key when there was none, and keeps
+every other key as it is now, written as JSON indented by 2 spaces. A
+settings file setup created that holds nothing else afterwards is
+removed. When the `statusLine` itself changed, or the file is not a JSON
+object, undo refuses, writes nothing, and names the file. Undo reads each
+file again just before it writes, and refuses if one changed since it
+showed the change. It does not print the old `statusLine`, which may hold
+a credential.
 
 The undo record holds paths (the fingerprint key's among them), the
-directories setup created, and an HMAC-SHA256 under the fingerprint key of
-each file's bytes as setup wrote them: no unkeyed hash of a settings file,
-which may hold a credential. Undo needs the key setup used. The backup
-holds the settings file's own bytes, beside it, as private as the file.
+directories setup created, and HMAC-SHA256 values under the fingerprint
+key of each file's bytes as setup wrote them and of the `statusLine` it
+wrote: no unkeyed hash of a settings file, which may hold a credential.
+Undo needs the key setup used. The backup holds the settings file's own
+bytes, beside it, as private as the file.
 
 **The key.** Every command here reads the fingerprint key from a file
 only its owner can read, as `weir inventory` creates it (mode 0600). A key
