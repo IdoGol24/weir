@@ -65,7 +65,10 @@ judge was written. Each expectation is one rule of the check's verdict:
     caught like any other missing script;
 25. a settings file Claude Code skips as invalid is named as skipped,
     never as applied;
-26. a step a hook blocked is named as blocked by a hook.
+26. a step a hook blocked is named as blocked by a hook;
+27. a missing script is caught when its interpreter is named by its path;
+28. a settings file Claude Code skips as invalid never sets whether the
+    run expects telemetry.
 
 Every value is a fake the runner generates; the tests never see one. The
 tests that run Claude Code skip where it, bubblewrap or an isolated
@@ -759,3 +762,33 @@ def test_a_step_a_hook_blocked_is_named_as_blocked_by_a_hook(
     assert (
         "kept out: .env (Read .env blocked by a hook, cat .env blocked by a hook)" in run.lines
     ), run.result.stdout
+
+
+@needs_claude_code
+@pytest.mark.parametrize(
+    "program", ["/usr/bin/python3", "/usr/bin/env python3"], ids=["interpreter", "env"]
+)
+def test_a_missing_script_started_by_an_interpreter_named_by_its_path_leaves_the_run_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str], program: str
+) -> None:
+    command = f'{program} "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard.py'
+    run = _run(tmp_path, monkeypatch, judge, settings=_guarded(command))
+    script = "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py"
+    assert (
+        f"claude-code: hook PreToolUse:Read|Bash did not run: {command}"
+        f" (its script {script} is missing)" in run.lines
+    ), run.result.stdout
+    _not_judged(run, "hook_not_started")
+
+
+@needs_claude_code
+def test_a_skipped_settings_file_never_sets_whether_telemetry_is_expected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    user = {"cleanupPeriodDays": 0, **TELEMETRY_ON}
+    run = _run(tmp_path, monkeypatch, judge, user_settings=user)
+    path = (tmp_path / "user_settings.json").resolve()
+    skipped = f"claude-code: Claude Code skipped user settings {path} as invalid: "
+    assert any(ln.startswith(skipped) for ln in run.lines), run.result.stdout
+    assert "incomplete: empty_capture" not in run.lines, run.result.stdout
+    assert TELEMETRY_OFF in run.lines, run.result.stdout

@@ -399,6 +399,12 @@ def test_every_provider_switch_endpoint_and_key_helper_is_overridden() -> None:
         ("env -u HOME node x.js", ["x.js"]),
         ("exec python3 x.py", ["x.py"]),
         ("./guard.sh && python3 -W ignore y.py", ["./guard.sh", "y.py"]),
+        ("/usr/bin/python3 x.py", ["/usr/bin/python3", "x.py"]),
+        ("/usr/bin/env python3 x.py", ["/usr/bin/env", "x.py"]),
+        ("timeout 5 python3 x.py", ["x.py"]),
+        ("timeout -s KILL 5 node x.js", ["x.js"]),
+        ("nice -n 5 node x.js", ["x.js"]),
+        ("/usr/bin/timeout 5 ./guard.sh", ["/usr/bin/timeout", "./guard.sh"]),
     ],
 )
 def test_the_script_a_hook_starts_is_found_for_each_interpreter(
@@ -661,3 +667,17 @@ def test_a_settings_file_claude_code_skipped_as_invalid_is_read_from_its_debug_l
     assert skipped == {
         settings[0].path: "cleanupPeriodDays: Number must be greater than or equal to 1"
     }
+
+
+@pytest.mark.parametrize(
+    "program", ["/usr/bin/python3", "/usr/bin/env python3"], ids=["interpreter", "env"]
+)
+def test_a_script_started_by_an_interpreter_named_by_its_path_is_checked(
+    tmp_path: Path, program: str
+) -> None:
+    layout = claude_code.Layout(tmp_path)
+    layout.project.mkdir()
+    command = f'{program} "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard.py'
+    settings = [_hook_settings("project", tmp_path / "settings.json", command)]
+    missing = claude_code.missing_scripts(settings, layout)
+    assert [script for _, _, script in missing] == ["$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py"]
