@@ -345,6 +345,14 @@ def _checkpoint_time(state: Path) -> int:
     return max(times, default=0)
 
 
+def _checkpoint_offset(state: Path) -> int:
+    """How far the checkpoints say the files were read, in bytes."""
+    paths = state.glob("*.json") if state.is_dir() else []
+    return sum(
+        entry["offset"] for p in paths for entry in json.loads(p.read_bytes())["files"].values()
+    )
+
+
 def _wait_for_checkpoint(state: Path, before: int, proc: subprocess.Popen[bytes]) -> bool:
     """Until the run writes a checkpoint: True, or False if it ended first."""
     deadline = time.monotonic() + 60
@@ -368,14 +376,19 @@ def _ended(proc: subprocess.Popen[bytes]) -> bytes:
     return out
 
 
+_UNPROBED_KILLS = 4  # killed runs before the first probe
+
+
 @pytest.mark.skipif(os.name != "posix", reason="SIGTERM and SIGKILL as Claude Code sends them")
 def test_a_first_scan_cancelled_again_and_again_still_completes(tmp_path: Path) -> None:
     """Claude Code cancels a status line run when a newer update arrives.
     Each run here is the real `python -m weir statusline` process, killed
     with SIGTERM or SIGKILL at a random point after it saved a checkpoint.
-    Every killed run saved progress first (a checkpoint newer than the one
-    it started from). After each kill a run with no time to spare shows
-    `scanning…` and how far the scan got, which never goes back."""
+    Every killed run saved progress first: its checkpoint reads further
+    than the one it started from, the first runs included, which nothing
+    but killed runs touch. After each later kill a run with no time to
+    spare shows `scanning…` and how far the scan got, which never goes
+    back."""
     seed = random.randrange(1 << 32)
     print("seed:", seed)
     rng = random.Random(seed)
@@ -392,6 +405,7 @@ def test_a_first_scan_cancelled_again_and_again_still_completes(tmp_path: Path) 
     finished: bytes | None = None
     for n in range(200):
         before = _checkpoint_time(claude.state)
+        offset = _checkpoint_offset(claude.state)
         proc = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=claude.env(),
@@ -415,6 +429,9 @@ def test_a_first_scan_cancelled_again_and_again_still_completes(tmp_path: Path) 
         assert proc.returncode in ((128 + sig, -sig) if sig == signal.SIGTERM else (-sig,))
         cleanly += proc.returncode == 128 + sig
         kills[sig] += 1
+        assert _checkpoint_offset(claude.state) > offset, (n, offset)
+        if n < _UNPROBED_KILLS:
+            continue
 
         probe = claude.statusline(extra=["--budget-ms", "0"])
         found = re.fullmatch(r"weir: (?:\d+ in context, \d+ sent, )?scanning… (\d+)%\n",

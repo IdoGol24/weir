@@ -257,7 +257,7 @@ class Reader:
         for path in files:
             key = self._mac("path", os.fsencode(path))
             try:
-                entry, file_done, size = self._file(path, self._entries.get(key))
+                entry, file_done, size = self._file(path, key)
             except OSError:
                 found.unknown = True
                 continue
@@ -265,7 +265,6 @@ class Reader:
             done += file_done
             if entry is not None:
                 keep[key] = entry
-                self._entries[key] = entry
                 found.add(entry.lines)
                 if entry.tail is not None:
                     found.add(entry.tail)
@@ -277,7 +276,10 @@ class Reader:
         every run moves the reading on."""
         return self._stepped and time.monotonic() >= self._deadline
 
-    def _file(self, path: str, cached: _Entry | None) -> tuple[_Entry | None, int, int]:
+    def _file(self, path: str, key: str) -> tuple[_Entry | None, int, int]:
+        """Read one file on from its cached entry. A new entry is kept under
+        `key` before its first step, so every checkpoint holds its progress."""
+        cached = self._entries.get(key)
         st = os.stat(path)
         if cached is not None and cached.done and cached.unchanged(st):
             return cached, st.st_size, st.st_size
@@ -303,7 +305,9 @@ class Reader:
                 # format without reading the rest: a long transcript is read
                 # in the steps the deadline bounds, from its start, the
                 # bytes already read taken as they are.
-                entry = self._new_entry(st, Format.CLAUDE_CODE, certain=True)
+                entry = self._entries[key] = self._new_entry(
+                    st, Format.CLAUDE_CODE, certain=True
+                )
                 return self._lines(path, st, entry, handle, b"", b"", read=first)
             handle.seek(0)
             data = handle.read()
@@ -324,6 +328,7 @@ class Reader:
             entry = cached
         else:
             entry, head, window = self._new_entry(st, fmt, certain=certain), b"", b""
+            self._entries[key] = entry
         entry.certain = certain
         if fmt not in _LINEWISE:
             # A whole-file format: one step, all or nothing.
