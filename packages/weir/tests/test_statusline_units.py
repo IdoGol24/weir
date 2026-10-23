@@ -489,3 +489,23 @@ def test_undo_applies_only_on_the_exact_answer_yes(tmp_path: Path, answer: str) 
     assert run.exit_code == 0, run.stderr
     assert "not applied" in run.stdout
     assert _files(claude.setup.home) == before
+
+
+@pytest.mark.parametrize("where", ["transcript", "subagent"])
+def test_an_empty_session_file_is_unknown_as_the_audit_says(tmp_path: Path, where: str) -> None:
+    claude = sx.build(tmp_path)
+    if where == "transcript":
+        claude.transcript().parent.mkdir(parents=True, exist_ok=True)
+        claude.transcript().write_bytes(b"")
+    else:
+        _session(claude).write(claude.transcript())
+        empty = claude.session_dir() / "subagents" / "agent-a1.jsonl"
+        empty.parent.mkdir(parents=True)
+        empty.write_bytes(b"")
+
+    run = claude.statusline()
+
+    audit = claude.audit()
+    assert audit["unknown"]  # the audit lists the empty file as unknown
+    assert run.stdout == sx.segment_for(sx.expected_counts(claude.setup, audit)) + "\n"
+    assert "unknown" in run.stdout

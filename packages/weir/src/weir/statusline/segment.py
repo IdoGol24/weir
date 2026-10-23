@@ -405,6 +405,10 @@ class Reader:
             # The bytes after the last line end change the format: read whole.
             return self._whole(path, st, entry, handle)
         entry.tail = self._audit(path, bytes(pending), entry.format) if pending else Tally()
+        if entry.format is Format.UNKNOWN:
+            # A file in no format the audit reads is unknown however little
+            # it holds: an empty transcript is not a clean one.
+            entry.tail.unknown = True
         self.save()
         return entry, size, size
 
