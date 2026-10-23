@@ -342,8 +342,10 @@ def _take_back_line(
     if current is None or line_mac is None:
         return None
     try:
-        settings = json.loads(current)
-        before = json.loads(original) if original is not None and original.strip() else {}
+        settings: object = json.loads(current)
+        before: object = (
+            json.loads(original) if original is not None and original.strip() else {}
+        )
     except (ValueError, UnicodeDecodeError):
         return None
     if not isinstance(settings, dict) or not isinstance(before, dict):
