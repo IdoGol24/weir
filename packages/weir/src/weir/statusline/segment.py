@@ -2,12 +2,13 @@
 
 Claude Code runs the status line after every assistant message and cancels
 a run that is still going when the next one starts, so the segment reads a
-session in steps and keeps what each step found: a session file is read in
-chunks of whole lines, each chunk is audited with `weir.audit` as the
-format the file's path and the lines read so far give, and the credential
-ids it found are cached with the byte offset reached. A file that only grew
-is read from that offset on; a file that changed in any other way, or whose
-format a later line changes, is read again from the start.
+session in steps and keeps what each step found: a file is read in chunks
+of whole lines (one that may be a whole-file format, in one step), each
+chunk is audited with `weir.audit` as the format the file's path and the
+lines read so far give, and the credential ids it found are cached with the
+byte offset reached. A file that only grew is read from that offset on; a
+file that changed in any other way, or whose format a later line changes,
+is read again from the start.
 
 The cache holds credential ids, offsets, sizes and keyed MACs (HMAC-SHA256
 under the inventory's fingerprint key), never a value, a fragment, a file
@@ -30,7 +31,12 @@ import msgspec
 
 from weir.audit import Chunk, Form, Format, Inputs, Kind, Report, audit_chunks
 from weir.audit.formats import (
-    Signs, json_lines, may_be_whole, recognise, recognise_signs, signs,
+    Signs,
+    json_lines,
+    may_be_whole,
+    recognise,
+    recognise_signs,
+    signs,
 )
 from weir.statusline.files import write_private
 
