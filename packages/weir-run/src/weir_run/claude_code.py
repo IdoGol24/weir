@@ -355,6 +355,15 @@ class Layout:
             return self.managed_dir / MANAGED_DROP_INS / applied.path.name
         return self.settings(applied.scope)
 
+    def seen(self, applied: SettingsFile) -> Path:
+        """The path Claude Code names a settings file under test by, from
+        inside the sandbox: the managed directory is mounted at
+        MANAGED_SETTINGS."""
+        target = self.target(applied)
+        if target.is_relative_to(self.managed_dir):
+            return MANAGED_SETTINGS / target.relative_to(self.managed_dir)
+        return target
+
     def file(self, secret: Secret) -> Path:
         return (self.project if secret.root == "project" else self.home) / secret.path
 
@@ -938,8 +947,11 @@ class Interpreter:
     inline: frozenset[str] = frozenset()  # code or a module follows: no script
     valued: frozenset[str] = frozenset()  # take the next argument as their value
     script: frozenset[str] = frozenset()  # their value is the script
-    subcommands: frozenset[str] = frozenset()  # skipped before the script
-    inline_subcommands: frozenset[str] = frozenset()  # run code, no script
+    # After these, only an argument that names a file is a script.
+    runs: frozenset[str] = frozenset()
+    # Only an argument that names a file is a script; another is a
+    # subcommand or a task, which starts none.
+    files_only: bool = False
 
 
 _SHELL = Interpreter(
@@ -967,6 +979,7 @@ INTERPRETERS = {
                 "--title",
             }
         ),
+        runs=frozenset({"--run"}),
     ),
     "shell": _SHELL,
     "ruby": Interpreter(
@@ -980,13 +993,14 @@ INTERPRETERS = {
     ),
     "deno": Interpreter(
         valued=frozenset({"-c", "--config", "--import-map", "--env-file", "--location"}),
-        subcommands=frozenset({"run"}),
-        inline_subcommands=frozenset({"eval", "repl"}),
+        runs=frozenset({"run"}),
+        files_only=True,
     ),
     "bun": Interpreter(
         inline=frozenset({"-e", "--eval", "-p", "--print"}),
         valued=frozenset({"-r", "--preload", "--cwd", "--env-file"}),
-        subcommands=frozenset({"run"}),
+        runs=frozenset({"run"}),
+        files_only=True,
     ),
 }
 _FAMILY = (
@@ -995,6 +1009,7 @@ _FAMILY = (
     (re.compile(r"(?:ba|da|z|k)?sh"), "shell"),
     (re.compile(r"ruby|perl|php|deno|bun"), ""),
 )
+_SCRIPT_SUFFIXES = frozenset({".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"})
 # Programs that run the command after them: (options that take a value).
 WRAPPERS: dict[str, frozenset[str]] = {
     "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
@@ -1016,12 +1031,25 @@ def _family(program: str) -> Interpreter | None:
     return None
 
 
+def _names_a_file(argument: str) -> bool:
+    return "/" in argument or Path(argument).suffix in _SCRIPT_SUFFIXES
+
+
+def _options(argument: str) -> list[tuple[str, str]]:
+    """Each option an argument sets, with the rest of the argument after
+    it: a long option alone, a cluster of single-letter options letter by
+    letter."""
+    if argument.startswith("--"):
+        return [(argument, "")]
+    return [(argument[0] + letter, argument[n + 2 :]) for n, letter in enumerate(argument[1:])]
+
+
 def _script(words: Sequence[str]) -> list[str]:
     """The scripts one simple command of a hook starts: a program named by
     a path, and the script an interpreter starts, read with that
-    interpreter's own options. A program named by a path is judged by its
-    name too, so a wrapper or an interpreter named by its path is read as
-    when it is named alone."""
+    interpreter's own options, a cluster of them letter by letter. A
+    program named by a path is judged by its name too, so a wrapper or an
+    interpreter named by its path is read as when it is named alone."""
     words = [*words]
     found: list[str] = []
     while True:
@@ -1046,17 +1074,24 @@ def _script(words: Sequence[str]) -> list[str]:
     interpreter = _family(Path(program).name)
     if interpreter is None:
         return found
-    i = 0
+    i, files_only = 0, interpreter.files_only
     while i < len(arguments):
         argument = arguments[i]
-        if argument in interpreter.inline or argument in interpreter.inline_subcommands:
+        if argument in interpreter.runs:
+            i, files_only = i + 1, True
+        elif argument.startswith(("-", "+")):
+            step = 1
+            for option, rest in _options(argument):
+                if option in interpreter.inline:
+                    return found
+                if option in interpreter.script:
+                    return [*found, rest] if rest else found + arguments[i + 1 : i + 2]
+                if option in interpreter.valued:
+                    step = 1 if rest else 2
+                    break
+            i += step
+        elif files_only and not _names_a_file(argument):
             return found
-        if argument in interpreter.script:
-            return found + arguments[i + 1 : i + 2]
-        if argument in interpreter.valued:
-            i += 2
-        elif argument in interpreter.subcommands or argument.startswith(("-", "+")):
-            i += 1
         else:
             return [*found, argument]
     return found
@@ -1197,7 +1232,7 @@ _SKIPPED = re.compile(
 def skipped_settings(layout: Layout, settings: Sequence[SettingsFile]) -> dict[Path, str]:
     """The settings files under test Claude Code skipped as invalid, from
     its debug log, and why: none of their settings applied."""
-    by_target = {str(layout.target(s)): s.path for s in settings}
+    by_target = {str(layout.seen(s)): s.path for s in settings}
     skipped: dict[Path, list[str]] = {}
     if layout.debug_log.is_file():
         for line in layout.debug_log.read_text(encoding="utf-8", errors="replace").splitlines():

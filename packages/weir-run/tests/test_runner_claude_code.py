@@ -61,8 +61,9 @@ judge was written. Each expectation is one rule of the check's verdict:
     and the verdict says so;
 23. the verdict says when telemetry is off, and names the scope a switch
     Claude Code does not apply was set in;
-24. a hook that starts a missing script through a shell option is
-    caught like any other missing script;
+24. a hook that starts a missing script through an interpreter option,
+    alone or in a cluster of options, is caught like any other missing
+    script;
 25. a settings file Claude Code skips as invalid is named as skipped,
     never as applied;
 26. a step a hook blocked is named as blocked by a hook;
@@ -724,12 +725,17 @@ def test_the_verdict_says_when_telemetry_is_off_and_names_the_scope_of_an_unappl
 
 
 @needs_claude_code
-def test_a_hook_that_starts_a_missing_script_with_a_shell_option_leaves_the_run_incomplete(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+@pytest.mark.parametrize(
+    ("program", "name"),
+    [("sh -e", "guard.sh"), ("python3 -uW ignore", "guard.py")],
+    ids=["option", "cluster"],
+)
+def test_a_hook_that_starts_a_missing_script_with_an_interpreter_option_leaves_the_run_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str], program: str, name: str
 ) -> None:
-    command = 'sh -e "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard.sh'
+    command = f'{program} "$CLAUDE_PROJECT_DIR"/.claude/hooks/{name}'
     run = _run(tmp_path, monkeypatch, judge, settings=_guarded(command))
-    script = "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh"
+    script = f"$CLAUDE_PROJECT_DIR/.claude/hooks/{name}"
     assert (
         f"claude-code: hook PreToolUse:Read|Bash did not run: {command}"
         f" (its script {script} is missing)" in run.lines

@@ -405,6 +405,25 @@ def test_every_provider_switch_endpoint_and_key_helper_is_overridden() -> None:
         ("timeout -s KILL 5 node x.js", ["x.js"]),
         ("nice -n 5 node x.js", ["x.js"]),
         ("/usr/bin/timeout 5 ./guard.sh", ["/usr/bin/timeout", "./guard.sh"]),
+        ('bash -lc "jq -e . >/dev/null"', []),
+        ('sh -ec "exit 0"', []),
+        ("sh -eo pipefail x.sh", ["x.sh"]),
+        ("perl -ne 'print' x.txt", []),
+        ("python3 -Bc 'print(1)'", []),
+        ("python3 -uW ignore x.py", ["x.py"]),
+        ("python3 -Werror x.py", ["x.py"]),
+        ("ruby -rjson x.rb", ["x.rb"]),
+        ("deno fmt", []),
+        ("deno task check", []),
+        ("deno run lint", []),
+        ("deno x.ts", ["x.ts"]),
+        ("deno run -A ./tools/check", ["./tools/check"]),
+        ("bun run lint", []),
+        ("bun test", []),
+        ("bun x prettier", []),
+        ("bun x.ts", ["x.ts"]),
+        ("node --run lint", []),
+        ("node --run ./x.js", ["./x.js"]),
     ],
 )
 def test_the_script_a_hook_starts_is_found_for_each_interpreter(
@@ -667,6 +686,24 @@ def test_a_settings_file_claude_code_skipped_as_invalid_is_read_from_its_debug_l
     assert skipped == {
         settings[0].path: "cleanupPeriodDays: Number must be greater than or equal to 1"
     }
+
+
+@pytest.mark.parametrize(
+    "name", ["managed-settings.json", "managed-settings.d/10-a.json"], ids=["file", "drop-in"]
+)
+def test_a_managed_settings_file_claude_code_skipped_is_read_by_its_path_in_the_sandbox(
+    tmp_path: Path, name: str
+) -> None:
+    layout = claude_code.Layout(tmp_path / "scratch")
+    passed = tmp_path / "policy" / name
+    settings = [claude_code.SettingsFile("managed", passed, {})]
+    layout.debug_log.parent.mkdir(parents=True, exist_ok=True)
+    layout.debug_log.write_text(
+        "2026-10-23T10:14:15.850Z [ERROR] Invalid setting skipped without dialog"
+        f" (automated session): /etc/claude-code/{name}: cleanupPeriodDays: bad\n",
+        encoding="utf-8",
+    )
+    assert claude_code.skipped_settings(layout, settings) == {passed: "cleanupPeriodDays: bad"}
 
 
 @pytest.mark.parametrize(
