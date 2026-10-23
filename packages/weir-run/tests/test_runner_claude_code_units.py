@@ -688,31 +688,30 @@ def test_a_settings_file_claude_code_skipped_as_invalid_is_read_from_its_debug_l
     }
 
 
-# Each case a managed settings file and the keys the check cannot read in it.
+# Each case a managed settings file and the keys the check cannot read in
+# it, each backed by a live case in test_runner_claude_code.py.
 MANAGED_VALUES: list[tuple[dict[str, Any], list[str]]] = [
-    ({"allowManagedHooksOnly": True, "disableAllHooks": False}, []),
+    ({"allowManagedHooksOnly": True}, []),
+    ({"allowManagedHooksOnly": False}, []),
+    ({"disableAllHooks": True}, []),
+    ({"disableAllHooks": False}, []),
     ({"allowManagedHooksOnly": "yes"}, ["allowManagedHooksOnly"]),
-    ({"disableAllHooks": 1}, ["disableAllHooks"]),
-    ({"cleanupPeriodDays": 0, "model": 5}, []),
+    ({"cleanupPeriodDays": 0}, []),
     ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": 1, "OTEL_LOGS_EXPORTER": "otlp"}}, []),
     ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": True}}, []),
+    ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": "1", "OTHER_SETTING": {"x": "y"}}}, []),
+    ({"env": {"OTEL_LOGS_EXPORTER": {"type": "otlp"}}}, ["env.OTEL_LOGS_EXPORTER"]),
+    ({"permissions": {"deny": ["Read(./.env)", "Bash(cat:*)"]}}, []),
     (
-        {"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": {"on": 1}}},
-        ["env.CLAUDE_CODE_ENABLE_TELEMETRY"],
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Read|Bash", "hooks": [{"type": "command", "command": "a.sh"}]}
+                ]
+            }
+        },
+        [],
     ),
-    ({"env": {"OTEL_METRICS_EXPORTER": ["otlp"]}}, ["env.OTEL_METRICS_EXPORTER"]),
-    ({"env": {"OTHER": {"x": 1}}}, []),
-    ({"permissions": "bad"}, ["permissions"]),
-    ({"permissions": {"deny": "Read(./.env)"}}, ["permissions.deny"]),
-    ({"permissions": {"allow": ["Bash"], "ask": [5]}}, ["permissions.ask[0]"]),
-    ({"hooks": 5}, ["hooks"]),
-    ({"hooks": {"PreToolUse": "x"}}, ["hooks.PreToolUse"]),
-    ({"hooks": {"PreToolUse": [{"matcher": 1, "hooks": []}]}}, ["hooks.PreToolUse[0].matcher"]),
-    (
-        {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": 5}]}]}},
-        ["hooks.Stop[0].hooks[0].command"],
-    ),
-    ({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "a.sh"}]}]}}, []),
 ]
 
 

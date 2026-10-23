@@ -74,11 +74,15 @@ judge was written. Each expectation is one rule of the check's verdict:
     Code drops that value and applies the rest, so the file is under test,
     its telemetry switch is expected to export, and its
     allowManagedHooksOnly keeps the project hooks from running;
-30. a managed value the check reads that is not of the type Claude Code
-    accepts leaves the run incomplete, with the value named, never judged:
-    an `allowManagedHooksOnly` that is not true or false keeps the project
-    hooks checked, and a telemetry exporter that is not a string never
-    ends as a false empty capture.
+30. a managed value the check reads that is not in a form a live run
+    showed Claude Code applies leaves the run incomplete, with the value
+    named, never judged: an `allowManagedHooksOnly` that is not true or
+    false keeps the project hooks checked, and a telemetry exporter that
+    is not a string never ends as a false empty capture;
+31. the forms the check takes managed values in are the ones Claude Code
+    applies: the telemetry switch as a number, as true, and as a string
+    beside a non-telemetry value of another type, exports telemetry and is
+    judged; each hooks switch, true or false, decides which hooks run.
 
 Every value is a fake the runner generates; the tests never see one. The
 tests that run Claude Code skip where it, bubblewrap or an isolated
@@ -809,6 +813,12 @@ def test_a_skipped_settings_file_never_sets_whether_telemetry_is_expected(
     assert TELEMETRY_OFF in run.lines, run.result.stdout
 
 
+def _exported(run: Outcome) -> int:
+    """The telemetry records the judge counted in the capture."""
+    coverage = run.report.get("coverage", {})
+    return sum(coverage.get(k, 0) for k in ("spans", "log_records", "metric_data_points"))
+
+
 @needs_claude_code
 def test_a_managed_settings_file_with_an_invalid_value_is_applied_without_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
@@ -820,7 +830,7 @@ def test_a_managed_settings_file_with_an_invalid_value_is_applied_without_it(
         run.result.stdout
     )
     assert not any(ln.startswith("claude-code: Claude Code skipped ") for ln in run.lines)
-    assert "incomplete: empty_capture" not in run.lines, run.result.stdout
+    assert _exported(run) > 0, run.result.stdout
     assert any(
         ln.startswith("claude-code: hooks: allowManagedHooksOnly in managed settings ")
         for ln in run.lines
@@ -859,7 +869,45 @@ def test_a_managed_telemetry_exporter_that_is_not_a_string_is_never_a_false_empt
     path = (tmp_path / "managed_settings.json").resolve()
     assert (
         f"claude-code: managed settings {path}: env.OTEL_LOGS_EXPORTER is an object, not a"
-        " string, number or boolean; Claude Code does not apply it as written" in run.lines
+        " string; Claude Code does not apply it as written" in run.lines
     ), run.result.stdout
-    assert "incomplete: empty_capture" not in run.lines, run.result.stdout
     _not_judged(run, "managed_setting_invalid")
+
+
+@needs_claude_code
+@pytest.mark.parametrize(
+    "env",
+    [
+        {**TELEMETRY_ON["env"], "CLAUDE_CODE_ENABLE_TELEMETRY": 1},
+        {**TELEMETRY_ON["env"], "CLAUDE_CODE_ENABLE_TELEMETRY": True},
+        {**TELEMETRY_ON["env"], "OTHER_SETTING": {"not": "a string"}},
+    ],
+    ids=["number", "true", "beside-an-object"],
+)
+def test_a_managed_telemetry_switch_claude_code_applies_exports_and_is_judged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str], env: dict[str, Any]
+) -> None:
+    run = _run(tmp_path, monkeypatch, judge, managed_settings={"env": env})
+    assert "incomplete: managed_setting_invalid" not in run.lines, run.result.stdout
+    assert _exported(run) > 0, run.result.stdout
+    assert any(h["sink"] == "model" for h in run.hits(DOTENV)), run.result.stdout
+
+
+@needs_claude_code
+@pytest.mark.parametrize("switch", ["allowManagedHooksOnly", "disableAllHooks"])
+@pytest.mark.parametrize("value", [True, False])
+def test_a_managed_hooks_switch_claude_code_applies_decides_which_hooks_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str], switch: str, value: bool
+) -> None:
+    run = _run(
+        tmp_path, monkeypatch, judge, settings=_guarded(GUARD), managed_settings={switch: value}
+    )
+    if value:
+        # Claude Code runs no project hook: its missing script does not matter.
+        assert any(ln.startswith(f"claude-code: hooks: {switch} in ") for ln in run.lines), (
+            run.result.stdout
+        )
+        assert any(h["sink"] == "model" for h in run.hits(DOTENV)), run.result.stdout
+    else:
+        # Claude Code runs the project hook, whose script is missing.
+        _not_judged(run, "hook_not_started")

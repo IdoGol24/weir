@@ -30,8 +30,9 @@ mock, and judges what it sent:
    Claude Code skips a project, local or user settings file with an
    invalid value, but keeps a managed one: it applies the rest and reads
    the invalid value its own way, mostly without saying so. So a managed
-   value the check reads that is not of the type Claude Code accepts
-   (`unreadable_managed`) leaves the run incomplete, with the value named.
+   value the check reads that is not of a type a live run showed Claude
+   Code applies (`unreadable_managed`) leaves the run incomplete, with the
+   value named.
 3. **Run.** Inside bubblewrap, where the real home is not mounted at all,
    and inside the isolated network with the name and TLS stub, so every
    other host it tries is named and what it sends there is judged. The
@@ -293,10 +294,11 @@ def apply_settings(data: dict[str, Any]) -> tuple[dict[str, Any], list[str], boo
     return out, overrides, telemetry
 
 
-# The managed values the check reads, each with the JSON types Claude Code
-# accepts for it: a value of another type is not applied as written.
-_SCALAR = (str, int, float)  # bool is an int
-_TELEMETRY_ENV = re.compile(rf"{TELEMETRY_SWITCH}|OTEL_(?:LOGS|METRICS|TRACES)_EXPORTER")
+# The managed values the check reads, each with the JSON types a live run
+# showed Claude Code applies as written: a value of another type is not
+# known to be applied, so the run is not judged on it.
+_SWITCH = (str, int)  # bool is an int
+_EXPORTER = re.compile(r"OTEL_(?:LOGS|METRICS|TRACES)_EXPORTER")
 
 
 def _kind(value: object) -> str:
@@ -316,21 +318,22 @@ def _read_values(
 ) -> Iterator[tuple[str, object, type | tuple[type, ...], str]]:
     """(key, value, accepted types, what they are) for each value the check
     reads from a settings file: the hooks switches, the telemetry switch
-    and exporters, the permission rules and the hooks."""
+    and exporters, the deny rules and the hooks."""
     for name in ("allowManagedHooksOnly", "disableAllHooks"):
         if name in data:
             yield name, data[name], bool, "true or false"
     for name, value in _obj(data.get("env")).items():
-        if _TELEMETRY_ENV.fullmatch(name):
-            yield f"env.{name}", value, _SCALAR, "a string, number or boolean"
+        if name == TELEMETRY_SWITCH:
+            yield f"env.{name}", value, _SWITCH, "a string, a whole number or true or false"
+        elif _EXPORTER.fullmatch(name):
+            yield f"env.{name}", value, str, "a string"
     if "permissions" in data:
         yield "permissions", data["permissions"], dict, "an object"
     permissions = _obj(data.get("permissions"))
-    for kind in ("allow", "deny", "ask"):
-        if kind in permissions:
-            yield f"permissions.{kind}", permissions[kind], list, "an array"
-            for i, rule in enumerate(_list(permissions[kind])):
-                yield f"permissions.{kind}[{i}]", rule, str, "a string"
+    if "deny" in permissions:
+        yield "permissions.deny", permissions["deny"], list, "an array"
+        for i, rule in enumerate(_list(permissions["deny"])):
+            yield f"permissions.deny[{i}]", rule, str, "a string"
     if "hooks" in data:
         yield "hooks", data["hooks"], dict, "an object"
     for event, groups in _obj(data.get("hooks")).items():
@@ -351,10 +354,10 @@ def _read_values(
 
 
 def unreadable_managed(settings: Sequence[SettingsFile]) -> list[tuple[SettingsFile, str, str]]:
-    """Each managed value the check reads that is not of the type Claude
-    Code accepts, as (file, key, what it is): Claude Code keeps the file
-    and reads such a value its own way, mostly without saying so, so the
-    check cannot tell what it applied."""
+    """Each managed value the check reads that is not of a type a live run
+    showed Claude Code applies, as (file, key, what it is): Claude Code
+    keeps the file and reads such a value its own way, mostly without
+    saying so, so the check cannot tell what it applied."""
     return [
         (found, key, f"{_kind(value)}, not {expected}")
         for found in settings

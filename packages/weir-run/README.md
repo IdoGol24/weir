@@ -419,13 +419,17 @@ weir-run run --config canary.toml
    applied. Claude Code skips a project, local or user settings file with
    an invalid value, but keeps a managed one: it applies the rest of the
    file and reads the invalid value its own way, as on for some settings
-   and as absent for others, mostly without saying so. So a managed value
-   the check reads (`allowManagedHooksOnly`, `disableAllHooks`, the hooks,
-   the permission rules, and `CLAUDE_CODE_ENABLE_TELEMETRY` and the
-   `OTEL_*_EXPORTER` variables in `env`) that is not of the type Claude
-   Code accepts leaves the run incomplete, with the value named
-   (`incomplete: managed_setting_invalid`), never judged. Any other
-   invalid managed value is applied as Claude Code applies it. The run
+   and as absent for others, mostly without saying so. So the managed
+   values the check reads are taken only in the forms a live run showed
+   Claude Code applies: `allowManagedHooksOnly` and `disableAllHooks` as
+   `true` or `false`; `CLAUDE_CODE_ENABLE_TELEMETRY` in `env` as a
+   string, a whole number or `true` or `false`, and each
+   `OTEL_*_EXPORTER` there as a string; `permissions.deny` as an array of
+   strings; and `hooks` as an object of arrays of groups, each with a
+   string `matcher` and an array of hooks whose `type` and `command` are
+   strings. A value in any other form leaves the run incomplete, with the
+   value named (`incomplete: managed_setting_invalid`), never judged. Any
+   other managed value is applied as Claude Code applies it. The run
    never reads your user-level or managed settings from your machine:
    pass a copy of each to include it. When one is not passed, the verdict
    says so (`user-level and managed settings not included`), and the run

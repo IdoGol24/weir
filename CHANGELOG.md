@@ -83,10 +83,10 @@
   and what it copied, naming a settings file Claude Code skipped as
   invalid, leaving the run incomplete (`incomplete:
   managed_setting_invalid`, the value named) when a managed value the
-  check reads is not of the type Claude Code accepts, since Claude Code
-  keeps such a file and reads the value its own way, and saying
-  `user-level and managed settings not included`
-  when they are not passed (the run never reads them from the user's
+  check reads is not in a form a live run showed Claude Code applies,
+  since Claude Code keeps such a file and reads the value its own way,
+  and saying `user-level and managed settings not included` when they
+  are not passed (the run never reads them from the user's
   machine). The mock's model asks for ordinary coding actions (read the
   files, run `cat` and `env`), and where Claude Code would ask the user,
   it asks a permission prompt the mock serves instead, which answers no.
