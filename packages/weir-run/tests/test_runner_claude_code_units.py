@@ -404,7 +404,7 @@ def test_every_provider_switch_endpoint_and_key_helper_is_overridden() -> None:
 def test_the_script_a_hook_starts_is_found_for_each_interpreter(
     command: str, scripts: list[str]
 ) -> None:
-    assert claude_code._scripts(command) == scripts
+    assert claude_code.hook_scripts(command) == scripts
 
 
 def _tree(root: Path, files: dict[str, str]) -> None:
