@@ -25,7 +25,8 @@
   Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
   schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
 - **weir-scan: `weir audit` finds a credential a tool call sends by name.**
-  A string in a tool call's arguments that expands the name of an
+  The command a shell runs (the `command` argument of Claude Code's `Bash`
+  or `PowerShell` tool) that expands the name of an
   environment variable credential as `$NAME`, `${NAME}` with any modifier,
   or PowerShell's `$env:NAME` is a `tool_call` hit with the new form
   `name`, since the tool's shell sends whatever the variable holds. An
@@ -34,7 +35,7 @@
   for every such variable, its value read or not, so one the store
   holds no fingerprint of is `in_tool_call` when a tool call names it, and
   `not_checkable` only when none does. A name anywhere else, such as a
-  prompt, is not a hit. The `weir-audit/1` schema's `form` gains `name`.
+  prompt, another argument or a file the agent writes, is not a hit. The `weir-audit/1` schema's `form` gains `name`.
 - **weir-scan: `weir statusline`, a Claude Code status-line segment and a
   `/weir` session report (experimental).** The segment reads the session
   JSON Claude Code passes on stdin, audits that session's transcript,

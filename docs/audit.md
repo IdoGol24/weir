@@ -196,8 +196,10 @@ first form in the table above that holds it.
 
 A tool call can send a credential without holding its value: a shell
 command that reads `$ACME_API_TOKEN` sends whatever the variable holds in
-the agent's environment. So a string in a `tool_call` place (below) is
-also searched for the names of the **environment variables**: the
+the agent's environment. So the string a shell runs, the `command`
+argument of a tool call to Claude Code's `Bash` or `PowerShell` tool (the
+`Bash` tool runs background shells too), is also searched for the names
+of the **environment variables**: the
 credentials whose inventory `source` is `environment` and whose
 `detectors` hold `launch_env` or `startup_file`, the assignments in the
 launch environment and in the shell startup files that export into it. A
@@ -210,13 +212,15 @@ shell variable name: a letter or `_`, then letters, digits or `_`), not
 followed by a letter, digit or `_`, and the `$` not just after a `\` or
 another `$`. Such a string is a hit of kind `tool_call` with form `name`
 for every environment variable of that name. A name in any other place
-(a prompt, a tool result) is not a hit: nothing there expands it.
+(a prompt, a tool result, another argument, a file the agent writes with
+the `Write` tool) is not a hit: no shell expands it there.
 
 The audit reads the reference, not the shell: it does not parse quoting
-(`'$NAME'` in single quotes counts), and it does not know whether the tool
-runs a shell at all (a file the agent writes that holds `$NAME` counts).
-A reference by name says the tool call could send the credential; a hit by
-value says it held it.
+(`'$NAME'` in single quotes counts, since nested shells such as
+`bash -c '... $NAME'` make a quote-aware rule unsafe), and it does not see
+a shell another tool runs (an MCP tool, or a script the agent wrote and a
+`Bash` command then runs by its file name). A reference by name says the
+tool call could send the credential; a hit by value says it held it.
 
 ### What a hit means
 

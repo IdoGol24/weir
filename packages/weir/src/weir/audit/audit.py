@@ -106,7 +106,7 @@ class _Auditor:
         for fp, form in self.matcher.find(site.string).items():
             found = _Found(self.by_fingerprint[fp], file.path, line, fmt, site, Form(form.value))
             self.found.append(found)
-        if site.place.kind is Kind.TOOL_CALL:
+        if _expanded_by_a_shell(site.place):
             named = self.references.find(site.string)
             if named:
                 self.found.append(
@@ -269,6 +269,19 @@ def _state(credential: Credential, counts: dict[Kind, int]) -> State:
         if counts.get(kind):
             return state
     return State.NOT_FOUND
+
+
+# docs/audit.md, "References by name": the tools whose `command` argument a
+# shell runs, so a `$NAME` there sends what the variable holds. Claude Code's
+# Bash tool also runs its background shells.
+_SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
+
+
+def _expanded_by_a_shell(place: Place) -> bool:
+    return (
+        place.kind is Kind.TOOL_CALL and place.tool in _SHELL_TOOLS
+        and place.argument == ("command",)
+    )
 
 
 def _references(credentials: Sequence[Credential]) -> References:
