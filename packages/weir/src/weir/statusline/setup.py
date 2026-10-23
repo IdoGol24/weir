@@ -458,7 +458,10 @@ def apply_undo(plan: UndoPlan) -> None:
     shown."""
     for r in plan.restores:
         if _changed_after_setup(plan.key, r.path, r.planned_mac):
-            raise _changed_error(r.path, plan.record)
+            raise SetupError(
+                f"{r.path} changed since the change was shown; nothing restored."
+                " Run weir statusline undo again"
+            )
     for r in plan.restores:
         if r.rewrite is not None:
             write_atomic(r.path, r.rewrite, stat.S_IMODE(r.path.stat().st_mode))

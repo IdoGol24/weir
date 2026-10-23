@@ -422,10 +422,19 @@ def test_undo_refuses_settings_that_changed_while_it_asked(tmp_path: Path) -> No
     claude.settings.write_bytes(edited)
     before = _files(claude.setup.home)
 
-    with pytest.raises(statusline_setup.SetupError, match="changed after setup"):
+    with pytest.raises(statusline_setup.SetupError) as refused:
         statusline_setup.apply_undo(plan)
 
     assert _files(claude.setup.home) == before
+    # The statusLine is still setup's, so the advice is to run undo again, not
+    # a hand edit; and running it again does take the statusLine back.
+    assert "changed since the change was shown" in str(refused.value)
+    assert "weir statusline undo again" in str(refused.value)
+    assert "by hand" not in str(refused.value)
+    again = statusline_setup.plan_undo(claude.state)
+    assert again is not None
+    statusline_setup.apply_undo(again)
+    assert json.loads(claude.settings.read_bytes()) == {"model": "x", "theme": "dark"}
 
 
 # --- variables, not shapes, are counted by name ------------------------------------
