@@ -400,7 +400,8 @@ from a real session, setting or credential.
 `packages/weir/tests/test_statusline_large_session.py` generates a fake
 transcript of about 50 MB and checks the incremental read: a first refresh
 reads the whole file, and a refresh after a few appended records reads
-only those bytes and the two 4 KiB windows, counted outside the code under
+only those bytes, the two 4 KiB windows and the one 1 MiB block it
+checks, counted outside the code under
 test (every read the process makes, and the kernel's `rchar` where it
 keeps one), with both timings printed. It also scans every cache file for
 each planted value and every 6-character run of one, and checks the key
