@@ -586,3 +586,40 @@ def test_two_values_under_one_variable_name_are_two_credentials(
     # Two values, two blocks: one per place the inventory found a value.
     headings = [line for line in shown.lines if line.startswith(fx.GH + " (")]
     assert sorted(headings) == [f"{fx.GH} (launch env)", f"{fx.GH} (~/.bashrc)"]
+
+
+def test_the_report_advises_taking_an_export_out_of_its_startup_file(tmp_path: Path) -> None:
+    """A credential ~/.bashrc exports comes back with the next shell unless
+    the export is taken out of that file."""
+    claude, ids = _two_values(tmp_path)
+    report = json.loads(claude.setup.report.read_text())
+    (startup,) = [
+        c for c in report["credentials"]
+        if c["id"] in ids and c["location"]["kind"] == "file"
+    ]
+    display = startup["location"]["display"]
+    session = fx.Session()
+    session.prompt("show me the bashrc")
+    session.tool_use("Bash", {"command": "cat ~/.bashrc"}, "t1")
+    session.tool_result("t1", f"export {fx.GH}=\"{_OTHER_GH}\"\n")
+    session.write(claude.transcript())
+
+    shown = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
+
+    block = _report_blocks(shown.stdout)[f"{fx.GH} ({display})"]
+    (source,) = [line for line in block if line.startswith("source: ")]
+    (advice,) = [line for line in block if line.startswith("advice: ")]
+    assert source == f"source: {display}, a shell startup file that exports it into the environment"
+    assert f"take it out of {display}" in advice
+    assert "from the environment Claude Code starts with" not in advice
+
+
+def _report_blocks(stdout: str) -> dict[str, list[str]]:
+    blocks: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in stdout.splitlines():
+        if line and not line.startswith(" "):
+            current = blocks.setdefault(line, [])
+        elif line.startswith("  ") and current is not None:
+            current.append(line.strip())
+    return blocks

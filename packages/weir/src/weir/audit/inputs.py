@@ -17,7 +17,14 @@ from pathlib import Path
 
 import msgspec
 
-from weir.inventory._types import INVENTORY_SCHEMA, STORE_SCHEMA, Inventory, Store, ValueState
+from weir.inventory._types import (
+    INVENTORY_SCHEMA,
+    STORE_SCHEMA,
+    Inventory,
+    LocationKind,
+    Store,
+    ValueState,
+)
 from weir.inventory.keyfile import key_file_problem
 
 # docs/inventory.md, "The store": the version of the fingerprint input and
@@ -53,6 +60,9 @@ class Credential:
     fingerprint: bytes | None
     # An environment variable the agent's shell can expand by `name`.
     variable: bool = False
+    # Found in a file (a shell startup file, for an environment credential),
+    # not in the launch environment itself.
+    in_file: bool = False
 
 
 @dataclass(frozen=True)
@@ -148,6 +158,7 @@ def load_inputs(report_path: Path, store_path: Path, key_path: Path) -> Inputs:
             scope=c.scope, value_state=c.value_state.value, fingerprint=stored.get(c.id),
             variable=c.source.value == "environment"
             and not _ASSIGNMENT_DETECTORS.isdisjoint(c.detectors),
+            in_file=c.location.kind is LocationKind.FILE,
         ))
     if literal != set(stored):
         raise AuditInputError(

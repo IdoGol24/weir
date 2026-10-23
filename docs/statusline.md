@@ -204,12 +204,12 @@ The lines of a block:
 | line | what it says |
 | --- | --- |
 | heading | the credential as the audit prints it: inventory name, location and scope; for several records, each name once with every place it was found, `GH_TOKEN (launch env, ~/.bashrc)` |
-| `source` | where the inventory found it: the location and scope, and the source in words, for each record, separated by `;` |
+| `source` | where the inventory found it: the location and scope, and the source in words, for each record, separated by `;`. A record a shell startup file holds says so: `~/.bashrc, a shell startup file that exports it into the environment` |
 | `entered the context` | how many places in the session put the value in the context, and the first: its turn, what it sat in (a tool result, a prompt, the model's own text, a subagent's), its file and line. A place every record of the credential matches (a `$NAME` that names both) is one place; one held by value and named there counts by value |
 | `sent in a tool call` | how many places in tool calls, `by value`, `by name` or both, and the first: its turn, the tool, the argument, its file and line |
 | `unknown` | hits whose kind the audit cannot tell, and the first |
 | `now sits in` | the session files that hold the value, then the conversation the model received when the value entered the context, and wherever each tool sent it; for a credential sent by name only, that no session file holds the value |
-| `advice` | rotate it at its issuer; for each record, remove it from the launch environment, or take it out of the file it came from or deny the agent read access to that file; delete the session files that hold it once it is rotated. A credential only `stored` or `unknown` gets what to check instead |
+| `advice` | rotate it at its issuer; for each record, remove it from the launch environment, take it out of the shell startup file that exports it (removing it from the environment alone, the next shell puts it back), or take it out of the file it came from or deny the agent read access to that file; delete the session files that hold it once it is rotated. A credential only `stored` or `unknown` gets what to check instead |
 
 
 Every string in it comes from the audit report, which already applied the

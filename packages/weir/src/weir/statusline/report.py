@@ -147,7 +147,8 @@ def _times(count: int) -> str:
 
 
 def _advice(
-    members: Sequence[CredentialResult], state: State, reached: bool, value_files: Sequence[str]
+    members: Sequence[CredentialResult], state: State, reached: bool, value_files: Sequence[str],
+    startup: frozenset[str],
 ) -> str:
     if not reached:
         if state is State.UNKNOWN:
@@ -155,7 +156,11 @@ def _advice(
         return "nothing reached the agent; Claude Code keeps it in the bookkeeping named above"
     parts = ["rotate it at its issuer"]
     for c in members:
-        if c.source == "environment":
+        if c.id in startup and c.source == "environment":
+            # Removing it from the environment alone: the next shell the
+            # startup file runs puts it straight back.
+            parts.append(f"take it out of {c.display}, which exports it into the environment")
+        elif c.source == "environment":
             parts.append(f"remove {c.name} from the environment Claude Code starts with")
         else:
             parts.append(f"take it out of {c.display}, or deny the agent read access to that file")
@@ -176,8 +181,10 @@ def _heading(members: Sequence[CredentialResult]) -> str:
     return ", ".join(f"{name} ({', '.join(where)})" for name, where in places.items())
 
 
-def _source(c: CredentialResult) -> str:
+def _source(c: CredentialResult, startup: frozenset[str]) -> str:
     scope = "" if c.scope is None else f" ({c.scope})"
+    if c.id in startup and c.source == "environment":
+        return f"{c.display}{scope}, a shell startup file that exports it into the environment"
     return f"{c.display}{scope}, {_SOURCES.get(c.source, c.source)}"
 
 
@@ -197,11 +204,12 @@ def _one_per_place(hits: Sequence[Hit]) -> list[Hit]:
 
 
 def _block(
-    members: Sequence[CredentialResult], state: State, all_hits: Sequence[Hit], turns: Turns
+    members: Sequence[CredentialResult], state: State, all_hits: Sequence[Hit], turns: Turns,
+    startup: frozenset[str],
 ) -> Iterator[str]:
     hits = _one_per_place(all_hits)
     yield _heading(members)
-    yield "  source: " + "; ".join(dict.fromkeys(_source(c) for c in members))
+    yield "  source: " + "; ".join(dict.fromkeys(_source(c, startup) for c in members))
     entered = [
         h for h in hits
         if h.kind is Kind.CONTEXT or (h.kind is Kind.TOOL_CALL and h.form is not Form.NAME)
@@ -235,7 +243,8 @@ def _block(
     if tools:
         sits += "; and wherever the " + ", ".join(tools) + " tool call sent it"
     yield f"  now sits in: {sits}"
-    yield f"  advice: {_advice(members, state, bool(entered or sent), value_files)}"
+    advice = _advice(members, state, bool(entered or sent), value_files, startup)
+    yield f"  advice: {advice}"
 
 
 def _block_groups(inputs: Inputs) -> dict[str, str]:
@@ -273,6 +282,7 @@ def report_lines(
     )
     found = tally(report)
     groups = _block_groups(inputs)
+    startup = frozenset(c.id for c in inputs.credentials if c.in_file)
     context, sent = counted(found, inputs)
     lines = [segment_text(context, sent, unknown=found.unknown)]
     shown = next((f.file for f in report.files if f.file == transcript), "[withheld]")
@@ -296,7 +306,7 @@ def report_lines(
     for m, state in blocks:
         lines.append("")
         hits = [h for c in m for h in by_credential.get(c.id, [])]
-        lines.extend(_block(m, state, hits, turns))
+        lines.extend(_block(m, state, hits, turns, startup))
     rest = [m for m in members.values() if m not in reached]
     not_checkable = sum(all(c.state is State.NOT_CHECKABLE for c in m) for m in rest)
     not_found = len(rest) - not_checkable
