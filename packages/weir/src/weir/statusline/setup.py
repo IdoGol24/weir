@@ -153,7 +153,21 @@ def _read(path: Path) -> bytes | None:
         raise SetupError(f"{path}: cannot be read ({exc.strerror})", 2) from None
 
 
+def check_shell() -> None:
+    """Setup supports POSIX shells only for now: the segment runs the
+    existing status line command through the system shell, and on Windows
+    that is not the shell the command was written for. Checked before
+    anything is read."""
+    if os.name != "posix":
+        raise SetupError(
+            "weir statusline setup supports POSIX shells (Linux, macOS) only for now:"
+            " on Windows it would run your status line command in a shell it was not"
+            " written for; nothing changed", 2,
+        )
+
+
 def plan_setup(paths: Paths) -> Plan:
+    check_shell()
     if paths.undo_record.exists():
         raise SetupError(
             f"already set up (undo record {paths.undo_record}); run weir statusline undo first"

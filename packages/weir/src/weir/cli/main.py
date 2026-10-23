@@ -656,6 +656,11 @@ def statusline_setup_command(
     """(experimental) Add the weir segment beside the status line in
     Claude Code's user settings and install the /weir command. Shows the
     exact change, then writes only after you type yes."""
+    try:
+        statusline_setup.check_shell()
+    except statusline_setup.SetupError as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(exc.code) from exc
     paths = statusline_setup.Paths(
         claude_dir=_claude_dir(claude_dir), report=report_path, store=store_path, key=key_path,
         cache=cache or _default_cache(),

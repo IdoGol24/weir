@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import io
 import os
 import stat
 import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath
+from typing import BinaryIO
 
 import msgspec
 
@@ -31,6 +33,11 @@ from weir.audit.formats import is_session_record, json_lines, recognise
 from weir.statusline.files import write_private
 
 CACHE_SCHEMA = "weir-statusline-cache/1"
+# A temporary cache file this old is one a run killed mid-write left behind
+# (SIGKILL ends a run without cleanup); a live run's is far younger.
+_STALE_TEMP_S = 60.0
+# The word the segment shows until every file is read to its end.
+SCANNING = "scanning\u2026"
 # A step reads at least one whole line and stops at the first line end past this.
 CHUNK_BYTES = 64 * 1024
 # The bytes at the start of a file, and the bytes before the offset, whose
@@ -96,13 +103,13 @@ def value_groups(inputs: Inputs) -> dict[str, str]:
 
 
 def segment_text(
-    context: int, sent: int, *, unknown: bool, checking: int | None = None
+    context: int, sent: int, *, unknown: bool, scanning: int | None = None
 ) -> str:
     """The segment's words (docs/statusline.md, "The segment")."""
     counts = f"{context} in context, {sent} sent"
-    if checking is not None:
-        return f"weir: {counts}, checking {checking}%" if context or sent else (
-            f"weir: checking {checking}%"
+    if scanning is not None:
+        return f"weir: {counts}, {SCANNING} {scanning}%" if context or sent else (
+            f"weir: {SCANNING} {scanning}%"
         )
     if unknown and not (context or sent):
         return "weir: unknown"
@@ -218,8 +225,16 @@ class Reader:
     # -- the cache file --
 
     def load(self, inputs_bytes: bytes) -> None:
-        """Read the cache, dropping it when the inventory changed."""
+        """Read the cache, dropping it when the inventory changed, and
+        remove what a killed run left half-written."""
         self._inputs_mac = self._mac("inputs", inputs_bytes)
+        now = time.time()
+        for temp in self._path.parent.glob(f".{self._path.name}.*"):
+            try:
+                if now - temp.stat().st_mtime > _STALE_TEMP_S:
+                    temp.unlink()
+            except OSError:
+                pass  # gone already, or another run's: the next run tries again
         try:
             cache = msgspec.json.decode(self._path.read_bytes(), type=_Cache)
         except (OSError, msgspec.DecodeError):
@@ -275,29 +290,40 @@ class Reader:
         with open(path, "rb") as handle:
             if cached is not None and cached.certain and cached.same_file(st):
                 # A session file for sure: when its read part is unchanged at
-                # both ends, read only what was appended.
+                # both ends, read on from the offset, never the read part.
                 head = handle.read(min(cached.offset, _PREFIX_BYTES))
-                start = max(0, cached.offset - _PREFIX_BYTES)
-                handle.seek(start)
-                data = handle.read()
-                if self._read_part_unchanged(cached, head, data[: cached.offset - start]):
-                    return self._lines(path, st, cached, data, start)
+                handle.seek(max(0, cached.offset - _PREFIX_BYTES))
+                window = handle.read(cached.offset - max(0, cached.offset - _PREFIX_BYTES))
+                if self._read_part_unchanged(cached, head, window):
+                    return self._lines(path, st, cached, handle, head, window)
                 handle.seek(0)
+            first = self._first_lines(handle, st.st_size)
+            if first is not None:
+                # A message record in the first whole lines settles the
+                # format without reading the rest: a long transcript is read
+                # in the steps the deadline bounds, from its start, the
+                # bytes already read taken as they are.
+                entry = self._new_entry(st, Format.CLAUDE_CODE, certain=True)
+                return self._lines(path, st, entry, handle, b"", b"", read=first)
+            handle.seek(0)
             data = handle.read()
-        fmt, certain = self._recognise(path, data)
+        lines = json_lines(data)
+        fmt = recognise(path, data, lines, self._projects)
+        certain = fmt is Format.CLAUDE_CODE and any(
+            is_session_record(line.parsed) for line in lines
+        )
+        head = window = b""
+        if cached is not None:
+            head = data[: min(cached.offset, _PREFIX_BYTES)]
+            window = data[max(0, cached.offset - _PREFIX_BYTES) : cached.offset]
         resume = (
             cached is not None and cached.format is fmt and fmt in _LINEWISE
-            and cached.same_file(st)
-            and self._read_part_unchanged(
-                cached, data[: min(cached.offset, _PREFIX_BYTES)],
-                data[max(0, cached.offset - _PREFIX_BYTES) : cached.offset],
-            )
+            and cached.same_file(st) and self._read_part_unchanged(cached, head, window)
         )
-        entry = cached if resume and cached is not None else _Entry(
-            dev=st.st_dev, ino=st.st_ino, size=st.st_size, mtime_ns=st.st_mtime_ns, format=fmt,
-            certain=certain, offset=0, head_mac=self._mac("head", b""),
-            prefix_mac=self._mac("prefix", b""), lines=Tally(), tail=None,
-        )
+        if resume and cached is not None:
+            entry = cached
+        else:
+            entry, head, window = self._new_entry(st, fmt, certain=certain), b"", b""
         entry.certain = certain
         if fmt not in _LINEWISE:
             # A whole-file format: one step, all or nothing.
@@ -310,7 +336,16 @@ class Reader:
             self._stepped = True
             self.save()
             return entry, len(data), len(data)
-        return self._lines(path, st, entry, data, 0)
+        source = io.BytesIO(data)
+        source.seek(entry.offset)
+        return self._lines(path, st, entry, source, head, window)
+
+    def _new_entry(self, st: os.stat_result, fmt: Format, *, certain: bool) -> _Entry:
+        return _Entry(
+            dev=st.st_dev, ino=st.st_ino, size=st.st_size, mtime_ns=st.st_mtime_ns, format=fmt,
+            certain=certain, offset=0, head_mac=self._mac("head", b""),
+            prefix_mac=self._mac("prefix", b""), lines=Tally(), tail=None,
+        )
 
     def _read_part_unchanged(self, cached: _Entry, head: bytes, before_offset: bytes) -> bool:
         return (
@@ -318,49 +353,66 @@ class Reader:
             and hmac.compare_digest(self._mac("prefix", before_offset), cached.prefix_mac)
         )
 
-    def _recognise(self, path: str, data: bytes) -> tuple[Format, bool]:
-        """The file's format, and whether it is a Claude Code session for
-        sure. A message record in the first whole lines settles both
-        without parsing the rest, so a first read of a long transcript
-        costs its auditing steps, which the deadline bounds."""
-        first = data.find(b"\n", CHUNK_BYTES - 1)
-        if first >= 0 and any(
-            is_session_record(line.parsed) for line in json_lines(data[: first + 1])
+    @staticmethod
+    def _first_lines(handle: BinaryIO, size: int) -> bytes | None:
+        """The bytes read from the start, when the first whole lines (at
+        least CHUNK_BYTES) hold a Claude Code message record: the file is a
+        session file whatever the rest holds. None otherwise."""
+        first = handle.read(min(size, CHUNK_BYTES))
+        while (cut := first.find(b"\n", CHUNK_BYTES - 1)) < 0 and len(first) < size:
+            more = handle.read(min(CHUNK_BYTES, size - len(first)))
+            if not more:
+                break
+            first += more
+        if cut >= 0 and any(
+            is_session_record(line.parsed) for line in json_lines(first[: cut + 1])
         ):
-            return Format.CLAUDE_CODE, True
-        lines = json_lines(data)
-        fmt = recognise(path, data, lines, self._projects)
-        return fmt, fmt is Format.CLAUDE_CODE and any(
-            is_session_record(line.parsed) for line in lines
-        )
+            return first
+        return None
 
     def _lines(
-        self, path: str, st: os.stat_result, entry: _Entry, data: bytes, base: int
+        self, path: str, st: os.stat_result, entry: _Entry, handle: BinaryIO, head: bytes,
+        window: bytes, read: bytes = b"",
     ) -> tuple[_Entry, int, int]:
-        """Read whole lines from the entry's offset on. `data` holds the
-        file's bytes from `base` on."""
-        end = base + data.rfind(b"\n") + 1  # the end of the last whole line
+        """Read whole lines from the entry's offset on, in steps of at least
+        CHUNK_BYTES, from `handle`. `read` holds bytes from the offset on
+        already read, and `handle` stands just after them. `head` and
+        `window` are the file's first bytes up to the offset (at most
+        _PREFIX_BYTES) and the _PREFIX_BYTES before it. Only the bytes of
+        the step being taken are held, and only up to the size `st` gave."""
+        size = st.st_size
         entry.tail = None
         self._stamp(entry, st)
-        while entry.offset < end:
+        pending = read  # bytes from the offset on, read and not yet audited
+        read_to = entry.offset + len(read)
+        handle.seek(read_to)
+        while True:
             if self._over():
                 self.save()
-                return entry, entry.offset, st.st_size
-            stop = data.find(b"\n", entry.offset - base + CHUNK_BYTES - 1)
-            stop = end if stop < 0 else min(end, base + stop + 1)
-            chunk = data[entry.offset - base : stop - base]
+                return entry, entry.offset, size
+            while (cut := pending.find(b"\n", CHUNK_BYTES - 1)) < 0 and read_to < size:
+                more = handle.read(min(CHUNK_BYTES, size - read_to))
+                if not more:
+                    break
+                pending += more
+                read_to += len(more)
+            if cut < 0:
+                cut = pending.rfind(b"\n")  # the last whole line left
+                if cut < 0:
+                    break
+            chunk, pending = pending[: cut + 1], pending[cut + 1 :]
             entry.lines.add(self._audit(path, chunk, entry.format))
-            entry.offset = stop
-            if base == 0:
-                entry.head_mac = self._mac("head", data[: min(stop, _PREFIX_BYTES)])
-            window = data[max(0, stop - base - _PREFIX_BYTES) : stop - base]
+            if entry.offset < _PREFIX_BYTES:
+                head = (head + chunk)[:_PREFIX_BYTES]
+                entry.head_mac = self._mac("head", head)
+            entry.offset += len(chunk)
+            window = (window + chunk)[-_PREFIX_BYTES:]
             entry.prefix_mac = self._mac("prefix", window)
             self._stepped = True
             self.save()
-        tail = data[end - base :]
-        entry.tail = self._audit(path, tail, entry.format) if tail else Tally()
+        entry.tail = self._audit(path, pending, entry.format) if pending else Tally()
         self.save()
-        return entry, st.st_size, st.st_size
+        return entry, size, size
 
     def _stamp(self, entry: _Entry, st: os.stat_result) -> None:
         entry.dev, entry.ino = st.st_dev, st.st_ino
@@ -385,5 +437,5 @@ def read_session(
     reader.save()
     context, sent = counted(found, value_groups(inputs))
     if done < total:
-        return segment_text(context, sent, unknown=found.unknown, checking=done * 100 // total)
+        return segment_text(context, sent, unknown=found.unknown, scanning=done * 100 // total)
     return segment_text(context, sent, unknown=found.unknown)

@@ -25,11 +25,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import audit_fixtures as fx
+import pytest
 from click.testing import CliRunner
 
 from weir.cli.main import main
 
 PROJECT = "-fake-home-work-proj"
+
+# docs/statusline.md, "Setup and undo": setup supports POSIX shells only.
+posix_shell = pytest.mark.skipif(
+    os.name != "posix", reason="weir statusline setup supports POSIX shells only"
+)
 
 
 @dataclass(frozen=True)

@@ -21,9 +21,13 @@ import io
 import json
 import mmap
 import os
+import random
 import re
 import shutil
+import signal
 import stat
+import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -215,11 +219,20 @@ def test_a_refresh_reads_only_what_was_appended_to_a_50_mb_session(
 
     with monkeypatch.context() as patch:
         patch.setattr(json, "loads", counted_loads)
-        stepped, _, _, stepped_s = _measured(
+        stepped, stepped_read, _, stepped_s = _measured(
             lambda: claude.statusline(extra=["--budget-ms", "0"]), monkeypatch
         )
-    assert re.fullmatch(r"weir: checking \d+%\n", stepped.stdout)
+    assert re.fullmatch(r"weir: scanning\u2026 \d+%\n", stepped.stdout)
     assert parsed[0] <= 4 * 64 * 1024
+    # It reads the step's bytes, not the rest of the file, and so does the
+    # next run, which resumes from its checkpoint.
+    assert stepped_read <= 4 * 64 * 1024 + 2 * inputs
+    resumed, resumed_read, _, _ = _measured(
+        lambda: claude.statusline(extra=["--budget-ms", "0"]), monkeypatch
+    )
+    assert re.fullmatch(r"weir: scanning\u2026 \d+%\n", resumed.stdout)
+    checkpoint = sum(p.stat().st_size for p in claude.state.rglob("*") if p.is_file())
+    assert resumed_read <= 4 * 64 * 1024 + 2 * 4096 + 2 * (inputs + checkpoint)
     assert stepped_s < full_s
     shutil.rmtree(claude.state)
     kept.rename(claude.state)
@@ -229,6 +242,7 @@ def test_a_refresh_reads_only_what_was_appended_to_a_50_mb_session(
         "full_refresh_bytes_read": full_read, "full_refresh_s": round(full_s, 3),
         "incremental_refresh_bytes_read": again_read, "incremental_refresh_s": round(again_s, 3),
         "first_step_s": round(stepped_s, 3), "first_step_bytes_parsed": parsed[0],
+        "first_step_bytes_read": stepped_read, "resumed_step_bytes_read": resumed_read,
         "kernel_full_refresh_bytes_read": full_kernel,
         "kernel_incremental_refresh_bytes_read": again_kernel,
     }
@@ -320,3 +334,116 @@ def test_a_key_file_others_can_read_is_refused(tmp_path: Path, mode: int) -> Non
     assert f"fingerprint key {key} is readable or writable by others" in inventory.stderr
     # Refused, never repaired behind the person's back.
     assert stat.S_IMODE(key.stat().st_mode) == mode
+
+
+# --- a first scan that Claude Code cancels again and again ---------------------------
+
+
+def _checkpoint_time(state: Path) -> int:
+    """The newest modification time of a checkpoint (not a temporary file)."""
+    times = [p.stat().st_mtime_ns for p in state.glob("*.json")] if state.is_dir() else []
+    return max(times, default=0)
+
+
+def _wait_for_checkpoint(state: Path, before: int, proc: subprocess.Popen[bytes]) -> bool:
+    """Until the run writes a checkpoint: True, or False if it ended first."""
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if _checkpoint_time(state) > before:
+            return True
+        if proc.poll() is not None:
+            return False
+        time.sleep(0.005)
+    raise AssertionError("the status line run wrote no checkpoint in 60 s")
+
+
+def _ended(proc: subprocess.Popen[bytes]) -> bytes:
+    """What the run printed, once it has ended."""
+    assert proc.stdout is not None and proc.stderr is not None
+    out = proc.stdout.read()
+    proc.stderr.read()
+    proc.wait()
+    proc.stdout.close()
+    proc.stderr.close()
+    return out
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGTERM and SIGKILL as Claude Code sends them")
+def test_a_first_scan_cancelled_again_and_again_still_completes(tmp_path: Path) -> None:
+    """Claude Code cancels a status line run when a newer update arrives.
+    Each run here is the real `python -m weir statusline` process, killed
+    with SIGTERM or SIGKILL at a random point after it saved a checkpoint.
+    Every killed run saved progress first (a checkpoint newer than the one
+    it started from). After each kill a run with no time to spare shows
+    `scanning…` and how far the scan got, which never goes back."""
+    seed = random.randrange(1 << 32)
+    print("seed:", seed)
+    rng = random.Random(seed)
+    claude = sx.build(tmp_path)
+    _large_session(claude)
+    payload = sx.status_json(claude.transcript(), fx.SESSION_ID).encode()
+    command = [
+        sys.executable, "-m", "weir", "statusline", *claude.inputs(),
+        "--cache", str(claude.state), "--budget-ms", "600000",
+    ]
+    kills = {signal.SIGTERM: 0, signal.SIGKILL: 0}
+    cleanly = 0
+    shown: list[int] = []
+    finished: bytes | None = None
+    for n in range(200):
+        before = _checkpoint_time(claude.state)
+        proc = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=claude.env(),
+        )
+        assert proc.stdin is not None
+        proc.stdin.write(payload)
+        proc.stdin.close()
+        saved = _wait_for_checkpoint(claude.state, before, proc)
+        if saved:
+            time.sleep(rng.uniform(0.05, 0.6))
+        if proc.poll() is not None:
+            finished = _ended(proc)
+            break
+        sig = (signal.SIGTERM, signal.SIGKILL)[n % 2]
+        proc.send_signal(sig)
+        _ended(proc)
+        assert saved
+        # SIGTERM ends a run as an exception would (exit 143), so a checkpoint
+        # being written is removed, not left half-written; one that lands
+        # just as the run ends meets the default handler (-15).
+        assert proc.returncode in ((128 + sig, -sig) if sig == signal.SIGTERM else (-sig,))
+        cleanly += proc.returncode == 128 + sig
+        kills[sig] += 1
+
+        probe = claude.statusline(extra=["--budget-ms", "0"])
+        found = re.fullmatch(r"weir: (?:\d+ in context, \d+ sent, )?scanning… (\d+)%\n",
+                             probe.stdout)
+        if found is None:  # the probe's own step finished the scan
+            finished = probe.stdout.encode()
+            break
+        assert not shown or int(found[1]) >= shown[-1], (shown, probe.stdout)
+        shown.append(int(found[1]))
+    assert finished is not None, "the scan never completed"
+    assert kills[signal.SIGTERM] >= 2 and kills[signal.SIGKILL] >= 2, kills
+    assert cleanly >= 1
+
+    resumed = claude.statusline()
+    uninterrupted = claude.invoke(
+        ["statusline", *claude.inputs(), "--cache", str(tmp_path / "fresh"),
+         "--budget-ms", "600000"],
+        stdin=payload.decode(),
+    )
+    expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
+    assert expected == "weir: 1 in context, 0 sent\n"
+    assert uninterrupted.stdout == expected
+    assert resumed.stdout == expected
+    assert finished.decode() == expected
+    print("kills:", {s.name: k for s, k in kills.items()}, "progress shown:", shown)
+
+    # Every checkpoint, and any temporary file a killed run left, is value-free.
+    cached = [p for p in claude.state.rglob("*") if p.is_file()]
+    assert cached
+    for p in cached:
+        cfx.assert_value_free(p.name + "\n" + p.read_bytes().decode("utf-8", "replace"),
+                              claude.setup.values.values())

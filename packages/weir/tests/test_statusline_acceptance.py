@@ -168,14 +168,14 @@ def test_a_long_session_is_read_over_several_runs_and_never_shows_a_false_count(
         run = claude.statusline(extra=["--budget-ms", "0"])
         assert run.exit_code == 0
         outputs.append(run.stdout)
-        if "checking" not in run.stdout:
+        if "scanning\u2026" not in run.stdout:
             break
 
     expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
     assert outputs[-1] == expected
     assert len(outputs) > 2, "the session should take several runs at a zero budget"
     for partial in outputs[:-1]:
-        assert re.fullmatch(r"weir: (\d+ in context, \d+ sent, )?checking \d+%\n", partial)
+        assert re.fullmatch(r"weir: (\d+ in context, \d+ sent, )?scanning\u2026 \d+%\n", partial)
 
 
 # --- 2. unknown, never a false zero --------------------------------------------
@@ -298,6 +298,7 @@ def _snapshot(root: Path) -> dict[str, bytes]:
     return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
+@sx.posix_shell
 def test_setup_dry_run_shows_the_change_and_writes_nothing(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     _existing_settings(claude)
@@ -317,6 +318,7 @@ def test_setup_dry_run_shows_the_change_and_writes_nothing(tmp_path: Path) -> No
     assert not claude.command_file.exists()
 
 
+@sx.posix_shell
 @pytest.mark.parametrize("answer", ["y\n", "Y\n", "YES\n", "Yes\n", "yes please\n"])
 def test_setup_applies_only_on_the_exact_answer_yes(tmp_path: Path, answer: str) -> None:
     claude = sx.build(tmp_path)
@@ -330,6 +332,7 @@ def test_setup_applies_only_on_the_exact_answer_yes(tmp_path: Path, answer: str)
     assert not claude.command_file.exists()
 
 
+@sx.posix_shell
 def test_setup_with_yes_adds_the_segment_beside_the_existing_command(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     _existing_settings(claude)
@@ -360,6 +363,7 @@ def test_setup_with_yes_adds_the_segment_beside_the_existing_command(tmp_path: P
     assert shown.stdout == "existing status | " + sx.segment_for(expected) + "\n"
 
 
+@sx.posix_shell
 def test_setup_with_no_status_line_adds_the_segment_alone(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     _counted_session(claude)
@@ -382,6 +386,7 @@ def _undo(claude: sx.Claude, *flags: str, answer: str | None = None) -> sx.Run:
     )
 
 
+@sx.posix_shell
 def test_undo_restores_the_original_bytes(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     original = _existing_settings(claude)
@@ -401,6 +406,7 @@ def test_undo_restores_the_original_bytes(tmp_path: Path) -> None:
     assert not claude.command_file.parent.exists()
 
 
+@sx.posix_shell
 def test_undo_removes_a_settings_file_setup_created(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     before = _snapshot(claude.config)
@@ -414,6 +420,7 @@ def test_undo_removes_a_settings_file_setup_created(tmp_path: Path) -> None:
     assert _snapshot(claude.config) == before
 
 
+@sx.posix_shell
 def test_undo_refuses_when_the_settings_changed_after_setup(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     _existing_settings(claude)
@@ -525,6 +532,7 @@ def test_the_weir_report_lists_source_turn_tool_call_location_and_advice(
     assert "rotate" in _field(gh, "advice")
 
 
+@sx.posix_shell
 def test_the_installed_weir_command_runs_the_report(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     _report_session(claude)

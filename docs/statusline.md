@@ -40,8 +40,8 @@ that fails:
 | `weir: C in context, S sent` | the session's files were read in full, and every one in a format the audit recognises |
 | `weir: C in context, S sent, part unknown` | as above, but some of the session is unknown (below), and C or S is not 0 |
 | `weir: unknown` | some of the session is unknown, and nothing was found in the rest: the counts would be a false zero |
-| `weir: checking P%` | the session is not read in full yet (see [Speed](#speed-and-the-cache)); P% of its bytes are; nothing found so far |
-| `weir: C in context, S sent, checking P%` | the same, with what was found so far |
+| `weir: scanning… P%` | the session is not read in full yet (see [Speed](#speed-and-the-cache)); P% of its bytes are; nothing found so far |
+| `weir: C in context, S sent, scanning… P%` | the same, with what was found so far |
 | `weir: no session` | stdin is not the status line JSON, or has no transcript path or no session id that is a plain name (it holds a `/`, or starts with a `.`, say) |
 | `weir: error, run /weir` | the inventory inputs cannot be used (a wrong key, say), or the cache cannot be written; `/weir` prints the inventory's error |
 
@@ -99,10 +99,19 @@ so the segment reads a session in steps and keeps what each step found:
   `weir.audit.audit_chunks`. A file's lines are records each on its own, so
   the chunks of a file give the hits the whole file gives. A format read
   as a whole (an OTLP file, a subagent sidecar) is one step.
-- After each step the cache is written, so a cancelled run loses at most
-  the step it was in. A run stops taking new steps once `--budget-ms`
-  (default 500) has passed, and always takes at least one, so every run
-  moves the reading on. A session not read in full shows `checking P%`.
+- After each step the cache is written: it is the checkpoint the next run
+  resumes from (per file, the byte offset reached, the keyed MACs that
+  show the part read is unchanged, and the credential ids found so far).
+  It is written whole, to a temporary file then renamed over the old one,
+  so a run Claude Code cancels at any moment loses at most the step it was
+  in and never leaves a half-written checkpoint. A run ended by SIGTERM
+  removes its temporary file; one ended by SIGKILL can leave it, and a
+  later run removes it once it is a minute old. A run stops taking new
+  steps once `--budget-ms` (default 500) has passed, and always takes at
+  least one, so every run moves the reading on, cancelled or not. A
+  session not read to the end of every file shows `scanning… P%`.
+- A step holds only its own bytes: a run reads on from the offset in
+  chunks of whole lines, never the rest of the file at once.
 - A file is read again only from where the last run stopped, as long as it
   is the same file (device and inode), it only grew, and the part already
   read is unchanged at both ends: its first 4 KiB, and the 4 KiB before
@@ -223,7 +232,12 @@ weir statusline undo [--cache DIR] [--dry-run]
 `--cache` defaults to `~/.weir/statusline`; `--claude-dir` to
 `CLAUDE_CONFIG_DIR`, else `~/.claude`.
 
-**Setup** checks the three inventory inputs as the audit does (exit 2 when
+**Setup** supports POSIX shells (Linux, macOS) only for now. On Windows
+it refuses (exit 2) before reading anything: the segment runs the
+existing status line command through the system shell, which there is not
+the shell the command was written for.
+
+It checks the three inventory inputs as the audit does (exit 2 when
 they cannot be used), then shows the exact change:
 
 - In `<Claude config dir>/settings.json` (where a symbolic link points,
@@ -307,4 +321,9 @@ only those bytes and the two 4 KiB windows, counted outside the code under
 test (every read the process makes, and the kernel's `rchar` where it
 keeps one), with both timings printed. It also scans every cache file for
 each planted value and every 6-character run of one, and checks the key
-file's mode.
+file's mode. A last test runs the real `python -m weir statusline`
+process on that transcript and kills it, with SIGTERM and SIGKILL in turn,
+at a random point after each run saved a checkpoint, again and again: a
+run after each kill shows `scanning…` and progress that never goes back,
+the scan completes, its counts equal those of one uninterrupted scan, and
+every checkpoint and leftover temporary file is value-free.

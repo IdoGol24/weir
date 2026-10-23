@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 
 import audit_fixtures as fx
@@ -215,6 +216,7 @@ def _files(root: Path) -> dict[str, bytes]:
     return {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
+@sx.posix_shell
 @pytest.mark.parametrize(
     ("settings", "code"),
     [
@@ -237,6 +239,7 @@ def test_setup_refuses_settings_it_cannot_change_safely(
     assert _files(claude.setup.home) == before
 
 
+@sx.posix_shell
 def test_setup_does_not_overwrite_a_different_weir_command(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     claude.command_file.parent.mkdir(parents=True)
@@ -250,6 +253,7 @@ def test_setup_does_not_overwrite_a_different_weir_command(tmp_path: Path) -> No
     assert _files(claude.setup.home) == before
 
 
+@sx.posix_shell
 def test_setup_twice_refuses_until_undone(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     assert _setup(claude).exit_code == 0
@@ -261,6 +265,7 @@ def test_setup_twice_refuses_until_undone(tmp_path: Path) -> None:
     assert _files(claude.setup.home) == after
 
 
+@sx.posix_shell
 def test_setup_withholds_an_existing_command_that_holds_a_credential(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     token = claude.setup.values[fx.GH]
@@ -285,6 +290,7 @@ def test_setup_with_a_wrong_key_writes_nothing(tmp_path: Path) -> None:
     assert _files(claude.setup.home) == before
 
 
+@sx.posix_shell
 def test_setup_and_undo_keep_a_symbolic_link_a_link(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     target = tmp_path / "dotfiles" / "claude-settings.json"
@@ -318,6 +324,7 @@ def test_undo_with_nothing_set_up_changes_nothing(tmp_path: Path) -> None:
 # --- what setup keeps, and files that change under it ----------------------------
 
 
+@sx.posix_shell
 def test_the_undo_record_holds_no_value_and_no_unkeyed_hash(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     v = claude.setup.values
@@ -336,6 +343,7 @@ def test_the_undo_record_holds_no_value_and_no_unkeyed_hash(tmp_path: Path) -> N
             assert hashlib.sha256(data).hexdigest() not in text, path
 
 
+@sx.posix_shell
 def test_setup_and_undo_with_a_relative_claude_dir_work_from_anywhere(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -361,6 +369,7 @@ def _paths(claude: sx.Claude) -> statusline_setup.Paths:
     )
 
 
+@sx.posix_shell
 def test_setup_refuses_settings_that_changed_while_it_asked(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     claude.settings.write_bytes(b'{"theme": "dark"}\n')
@@ -377,6 +386,7 @@ def test_setup_refuses_settings_that_changed_while_it_asked(tmp_path: Path) -> N
     assert _files(claude.setup.home) == before
 
 
+@sx.posix_shell
 def test_undo_refuses_settings_that_changed_while_it_asked(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     claude.settings.write_bytes(b'{"theme": "dark"}\n')
@@ -425,3 +435,42 @@ def test_two_loose_shapes_in_a_startup_file_are_two_credentials(tmp_path: Path) 
     expected = sx.expected_counts(claude.setup, audit)
     assert expected == (2, 0, False)
     assert run.stdout == sx.segment_for(expected) + "\n"
+
+
+def test_setup_refuses_on_windows_and_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/statusline.md: setup supports POSIX shells only, so it never runs
+    an existing status line command in a shell it was not written for."""
+    claude = sx.build(tmp_path)
+    claude.settings.write_text(json.dumps({"statusLine": {"type": "command", "command": "x"}}))
+    before = _files(claude.setup.home)
+    if os.name == "posix":
+        monkeypatch.setattr(os, "name", "nt")  # Windows, as setup sees it
+
+    runs = [_setup(claude, "--dry-run"), _setup(claude)]
+
+    monkeypatch.undo()
+    for run in runs:
+        assert run.exit_code == 2
+        assert "supports POSIX shells (Linux, macOS) only" in run.stderr
+    assert _files(claude.setup.home) == before
+
+
+def test_a_half_written_checkpoint_a_killed_run_left_is_removed(tmp_path: Path) -> None:
+    claude = sx.build(tmp_path)
+    _session(claude).write(claude.transcript())
+    claude.statusline()
+    (checkpoint,) = claude.state.glob("*.json")
+    # SIGKILL mid-write leaves the temporary file the rename never took.
+    old = claude.state / f".{checkpoint.name}.abc123"
+    young = claude.state / f".{checkpoint.name}.def456"
+    old.write_bytes(b'{"half')
+    young.write_bytes(b'{"half')
+    os.utime(old, (time.time() - 3600, time.time() - 3600))
+
+    run = claude.statusline()
+
+    assert run.stdout == sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
+    assert not old.exists()
+    assert young.exists()  # it may be a live run's

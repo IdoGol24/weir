@@ -136,7 +136,7 @@ weir statusline setup --inventory inventory.json --store store.json --key ~/.wei
 weir statusline undo
 ```
 
-Setup shows the exact change to your Claude Code settings, keeps the status line you already have (its output comes first), and writes nothing until you type `yes`; `--dry-run` only shows it. Undo puts every file back byte for byte.
+Setup shows the exact change to your Claude Code settings, keeps the status line you already have (its output comes first), and writes nothing until you type `yes`; `--dry-run` only shows it. Undo puts every file back byte for byte. Setup supports Linux and macOS for now.
 
 ## Why you can trust it
 

@@ -42,10 +42,12 @@
   credentials whose value entered the context, and those sent in a tool
   call by value or by name), `weir: unknown` when a file is in a format it
   cannot read and nothing was found elsewhere, `part unknown` beside counts
-  otherwise, and `checking P%` while a long session is still being read. It
+  otherwise, and `scanning… P%` while a long session is still being read. It
   reads a session in steps and caches what each step found (credential
   ids, offsets and keyed MACs, never a value), so it fits in a status line
-  run and picks up where the last run stopped. `weir statusline report`
+  run and picks up where the last run stopped, even when Claude Code
+  cancels runs again and again: each step's checkpoint is written
+  atomically and a cancelled run loses at most that step. `weir statusline report`
   lists, per credential, its source, the turn and tool call that put it in
   the context or sent it, where it now sits, and advice.
   `weir statusline setup` shows the exact settings change, adds the
@@ -53,7 +55,8 @@
   running, its output first) and installs the `/weir` command, writing
   nothing until you type `yes`; `--dry-run` only shows it.
   `weir statusline undo` restores the files byte for byte, and refuses when
-  one changed after setup. Display only, local and offline
+  one changed after setup. Setup supports POSIX shells (Linux, macOS) only
+  for now and refuses on Windows. Display only, local and offline
   ([docs/statusline.md](docs/statusline.md)).
 - **weir-scan: a fingerprint key file others can read is refused.**
   `weir inventory`, `weir audit` and `weir statusline` refuse (exit 2) a
