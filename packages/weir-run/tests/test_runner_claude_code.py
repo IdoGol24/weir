@@ -30,7 +30,8 @@ judge was written. Each expectation is one rule of the check's verdict:
    hook script in `.claude/hooks` that blocks reading the `.env` keeps it
    out, and so does one linked there from elsewhere in the project;
 10. a hook whose script is missing did not start: the run is incomplete,
-    exit 3, with the hook named, and not judged;
+    exit 3, with the hook named, and not judged; so is one that starts a
+    missing script through an interpreter, which itself starts;
 11. a user settings file the config passes is under test: its deny rule
     keeps the `.env` out, and the verdict names it;
 12. a managed settings file the config passes is under test, above every
@@ -334,6 +335,24 @@ def test_a_hook_whose_script_is_missing_leaves_the_run_incomplete(
     ), run.result.stdout
     assert run.lines[-2:] == ["incomplete: hook_not_started", "result: incomplete"]
     # Not judged: no leak or clean verdict rests on the broken control.
+    assert not any(ln.startswith(("kept out: ", "reached ", "LEAK ")) for ln in run.lines)
+    assert run.report == {}
+
+
+@needs_claude_code
+def test_a_hook_that_starts_a_missing_script_through_an_interpreter_leaves_the_run_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    command = 'python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/missing.py'
+    hook = {"matcher": "Read|Bash", "hooks": [{"type": "command", "command": command}]}
+    run = _run(tmp_path, monkeypatch, judge, settings={"hooks": {"PreToolUse": [hook]}})
+    assert run.result.exit_code == 3, run.result.output
+    script = "$CLAUDE_PROJECT_DIR/.claude/hooks/missing.py"
+    assert (
+        f"claude-code: hook PreToolUse:Read|Bash did not run: {command}"
+        f" (its script {script} is missing)" in run.lines
+    ), run.result.stdout
+    assert run.lines[-2:] == ["incomplete: hook_not_started", "result: incomplete"]
     assert not any(ln.startswith(("kept out: ", "reached ", "LEAK ")) for ln in run.lines)
     assert run.report == {}
 

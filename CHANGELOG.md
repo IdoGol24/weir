@@ -94,8 +94,9 @@
   (`api.anthropic.com` is its own host) or `"gateway"` (any other host is
   a leak); without it the run starts nothing and exits 3
   (`incomplete: key_owner_not_declared`). The project is marked trusted
-  for the run. A hook of the settings under test that does not start (its
-  script missing or not executable) leaves the run incomplete
+  for the run. A hook of the settings under test whose script is missing
+  from the sandbox, run directly or through an interpreter, or that does
+  not start (not found or not executable) leaves the run incomplete
   (`incomplete: hook_not_started`, the hook named), never judged.
 - **weir-run: a name and TLS stub in the isolated network.** For the Claude Code
   check, every name lookup is answered with the loopback address and

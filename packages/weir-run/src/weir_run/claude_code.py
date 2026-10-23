@@ -34,8 +34,11 @@ mock, and judges what it sent:
    not exercised, never kept out. What Claude Code wrote to disk under the
    scratch home, its session transcript included, is checked here and
    reported as stored locally, apart from what was sent out. A hook of
-   the settings under test that did not start (its script missing or not
-   executable) leaves the run incomplete, never judged on a broken control.
+   the settings under test whose script is missing from the sandbox, read
+   from the settings and the scratch project whether or not the hook
+   started (`missing_scripts`), or that did not start, from the session
+   transcript (`hooks_not_started`), leaves the run incomplete, never
+   judged on a broken control.
 
 The verdict is printed before the judge's report, as a check of the
 user's controls: "kept out: 3 of 4", then where each other secret went and
@@ -48,6 +51,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import shutil
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
@@ -84,6 +88,15 @@ MANAGED_SETTINGS_FILE = MANAGED_SETTINGS / "managed-settings.json"
 # The shell's exit codes for a command it could not start: not executable,
 # not found.
 HOOK_NOT_STARTED = (126, 127)
+# Programs a hook's command starts a script with: their first argument
+# that is not an option is the script.
+INTERPRETERS = re.compile(r"python[\d.]*|node(?:js)?|(?:ba|da|z|k)?sh|ruby|perl|php|deno|bun")
+# An interpreter option after which the next argument is code or a module,
+# not a script.
+_INLINE = frozenset({"-c", "-e", "-m", "--eval"})
+_ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=.*")
+_PROJECT_DIR = re.compile(r"\$(?:\{CLAUDE_PROJECT_DIR\}|CLAUDE_PROJECT_DIR\b)")
+_HOME_DIR = re.compile(r"\$(?:\{HOME\}|HOME\b)")
 _STEP_ID = re.compile(r"toolu_mock_step(\d+)_\d+")
 _MESSAGE = re.compile(r"body\.messages\[(\d+)\](?:\.content\[(\d+)\])?")
 
@@ -625,6 +638,99 @@ def stored_locally(layout: Layout, run: CheckRun) -> dict[str, list[str]]:
     return found
 
 
+def _hook_commands(settings: Sequence[SettingsFile]) -> Iterator[tuple[str, str]]:
+    """(hook, command) for each command hook of the settings under test."""
+    for applied in settings:
+        for event, groups in _obj(applied.data.get("hooks")).items():
+            for group in _list(groups):
+                matcher = str(_obj(group).get("matcher") or "")
+                hook = f"{event}:{matcher}" if matcher else str(event)
+                for entry in _list(_obj(group).get("hooks")):
+                    command = _obj(entry).get("command")
+                    if _obj(entry).get("type") == "command" and isinstance(command, str):
+                        yield hook, command
+
+
+def _script(words: Sequence[str]) -> str | None:
+    """The script one simple command of a hook starts, if it names one:
+    the program itself when it is a path, or an interpreter's script."""
+    words = [*words]
+    while words and _ASSIGNMENT.fullmatch(words[0]):
+        words.pop(0)
+    if not words:
+        return None
+    program, *arguments = words
+    if "/" in program:
+        return program
+    if not INTERPRETERS.fullmatch(program):
+        return None
+    for argument in arguments:
+        if argument in _INLINE:
+            return None
+        if argument.startswith("-") or (argument == "run" and program in ("deno", "bun")):
+            continue
+        return argument
+    return None
+
+
+def _scripts(command: str) -> list[str]:
+    """The scripts a hook's command starts, as the command names them."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    scripts: list[str] = []
+    words: list[str] = []
+    redirected = False
+    for token in [*tokens, ";"]:
+        if redirected:
+            redirected = False
+        elif token and all(c in "();<>|&" for c in token):
+            if "<" in token or ">" in token:
+                redirected = True
+                continue
+            script = _script(words)
+            if script is not None:
+                scripts.append(script)
+            words = []
+        else:
+            words.append(token)
+    return scripts
+
+
+def _in_sandbox(script: str, layout: Layout) -> bool:
+    """Whether a script a hook names is there for it in the sandbox. One
+    named through a variable other than the project directory or the home
+    is not judged here."""
+    expanded = _HOME_DIR.sub(str(layout.home), _PROJECT_DIR.sub(str(layout.project), script))
+    if expanded == "~" or expanded.startswith("~/"):
+        expanded = str(layout.home) + expanded[1:]
+    if "$" in expanded:
+        return True
+    path = Path(os.path.normpath(layout.project / expanded))
+    if path.is_relative_to(layout.root):
+        return path.exists()
+    if path.is_relative_to(MANAGED_SETTINGS):
+        return path == MANAGED_SETTINGS_FILE and layout.managed.is_file()
+    mounted = (*SYSTEM_DIRECTORIES, "usr", "etc", "dev", "proc")
+    return len(path.parts) > 1 and path.parts[1] in mounted and path.exists()
+
+
+def missing_scripts(settings: Sequence[SettingsFile], layout: Layout) -> list[tuple[str, str, str]]:
+    """Each hook of the settings under test whose script is not in the
+    sandbox, from the settings and the scratch project, whether or not the
+    hook ran: (hook, command, script)."""
+    found: list[tuple[str, str, str]] = []
+    for hook, command in _hook_commands(settings):
+        for script in _scripts(command):
+            entry = (hook, command, script)
+            if not _in_sandbox(script, layout) and entry not in found:
+                found.append(entry)
+    return found
+
+
 def hooks_not_started(layout: Layout) -> list[tuple[str, str, int]]:
     """Each hook of the settings under test that did not start, from the
     session transcript: (hook, command, exit code)."""
@@ -799,11 +905,19 @@ def _settings_lines(settings: Sequence[SettingsFile], result: str) -> list[str]:
 
 
 def not_started(
-    settings: Sequence[SettingsFile], hooks: Sequence[tuple[str, str, int]], result: str
+    settings: Sequence[SettingsFile],
+    missing: Sequence[tuple[str, str, str]],
+    hooks: Sequence[tuple[str, str, int]],
+    result: str,
 ) -> list[str]:
-    """The answer when a hook of the settings under test did not start:
-    the controls did not run as configured, so the run is not judged."""
+    """The answer when a hook of the settings under test is missing its
+    script or did not start: the controls did not run as configured, so
+    the run is not judged."""
     lines = _settings_lines(settings, result)
+    for hook, command, script in missing:
+        lines.append(
+            f"claude-code: hook {hook} did not run: {command} (its script {script} is missing)"
+        )
     for hook, command, code in hooks:
         why = "not found" if code == 127 else "not executable"
         lines.append(f"claude-code: hook {hook} did not start: {command} ({why}, exit {code})")
@@ -907,6 +1021,7 @@ def run_claude_code(
         )
         try:
             plant(layout, settings, run)
+            missing = missing_scripts(settings, layout)
             env = environment(layout, run)
             flow = FlowSpec(
                 id=FLOW_ID,
@@ -929,8 +1044,8 @@ def run_claude_code(
             # Claude Code's stdout is its JSON result: summarised in the
             # verdict and judged as its console output, not relayed.
             run.relay(err, streams=("stderr",))
-            if hooks:
-                lines = not_started(settings, hooks, _result(outcome.stdout, run))
+            if missing or hooks:
+                lines = not_started(settings, missing, hooks, _result(outcome.stdout, run))
                 out.write(run.redacted("\n".join(lines).encode() + b"\n"))
                 return 3
             verdict_text = run.judge(json_report=True)
