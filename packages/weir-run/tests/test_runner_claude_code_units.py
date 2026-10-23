@@ -1,7 +1,10 @@
 """The parts of the Claude Code check that need no Claude Code: the
-settings overrides, the config, the copy of the project's `.claude`
-directory, the scripted steps, the name stub's
-answers and the TLS stub, driven by a small Python flow.
+settings overrides, the config, the copies of the project's `.claude`
+directory, its memory files and the user and managed configuration, the
+scripts hooks start, the hooks Claude Code will run, the settings it
+skips, the scratch files stored locally, the permission prompt, the
+scripted steps, the name stub's answers and the TLS stub, driven by a
+small Python flow.
 
 The TLS stub tests need the isolated network. Where it is unavailable they
 skip, unless WEIR_TEST_REQUIRE_NETNS is set (CI on Linux sets it), when
@@ -323,3 +326,338 @@ def test_a_tls_connection_the_flow_does_not_complete_is_a_blocked_connection(
     assert seen["report"]["blocked"] == [
         {"kind": "connection", "host": "collector.example", "port": 443, "count": 1}
     ]
+
+
+# -- the independent check's cases ---------------------------------------------
+
+
+def test_every_provider_switch_endpoint_and_key_helper_is_overridden() -> None:
+    moved = {
+        **{
+            f"CLAUDE_CODE_USE_{p}": "1"
+            for p in (
+                "BEDROCK",
+                "VERTEX",
+                "FOUNDRY",
+                "MANTLE",
+                "ANTHROPIC_AWS",
+                "ANTHROPIC_GOOGLE_CLOUD",
+                "GATEWAY",
+            )
+        },
+        **{
+            f"ANTHROPIC_{name}": "https://elsewhere.example.invalid"
+            for name in (
+                "FOUNDRY_BASE_URL",
+                "FOUNDRY_RESOURCE",
+                "FOUNDRY_API_KEY",
+                "FOUNDRY_AUTH_TOKEN",
+                "BEDROCK_MANTLE_BASE_URL",
+                "AWS_BASE_URL",
+                "AWS_API_KEY",
+                "GOOGLE_CLOUD_BASE_URL",
+                "IDENTITY_TOKEN",
+            )
+        },
+    }
+    kept = {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1", "ANTHROPIC_MODEL": "claude-sonnet"}
+    helpers = ("awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh", "otelHeadersHelper")
+    settings = {"env": {**moved, **kept}, **{h: "print-a-secret" for h in helpers}}
+    data, overrides, _ = claude_code.apply_settings(settings)
+    assert data == {"env": kept}
+    named = {o.split(":")[0].split(" ")[0] for o in overrides}
+    assert named == {*helpers, *(f"env.{name}" for name in moved)}
+
+
+@pytest.mark.parametrize(
+    ("command", "scripts"),
+    [
+        ("sh -e x.sh", ["x.sh"]),
+        ("bash -o pipefail x.sh", ["x.sh"]),
+        ("bash --rcfile rc x.sh", ["x.sh"]),
+        ("bash -c 'echo hi'", []),
+        ("python3 -W ignore x.py", ["x.py"]),
+        ("python3 -X dev -u x.py", ["x.py"]),
+        ("python3 -m guard", []),
+        ("python3 -c 'print(1)'", []),
+        ("node -r dotenv/config x.js", ["x.js"]),
+        ("node --require=dotenv/config x.js", ["x.js"]),
+        ("node --import tsx x.ts", ["x.ts"]),
+        ("node -e 'process.exit(0)'", []),
+        ("node -p 1", []),
+        ("ruby -I lib x.rb", ["x.rb"]),
+        ("ruby -e 'exit'", []),
+        ("perl -I lib x.pl", ["x.pl"]),
+        ("perl -E 'say 1'", []),
+        ("php -d display_errors=1 x.php", ["x.php"]),
+        ("php -f x.php", ["x.php"]),
+        ("php -r 'echo 1;'", []),
+        ("deno run -A x.ts", ["x.ts"]),
+        ("deno eval 'x'", []),
+        ("bun run x.ts", ["x.ts"]),
+        ("env FOO=1 python3 x.py", ["x.py"]),
+        ("env -u HOME node x.js", ["x.js"]),
+        ("exec python3 x.py", ["x.py"]),
+        ("./guard.sh && python3 -W ignore y.py", ["./guard.sh", "y.py"]),
+    ],
+)
+def test_the_script_a_hook_starts_is_found_for_each_interpreter(
+    command: str, scripts: list[str]
+) -> None:
+    assert claude_code._scripts(command) == scripts
+
+
+def _tree(root: Path, files: dict[str, str]) -> None:
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+
+
+def _files(root: Path) -> set[str]:
+    return {p.relative_to(root).as_posix() for p in root.rglob("*") if not p.is_dir()}
+
+
+def _hook_settings(scope: str, path: Path, command: str) -> claude_code.SettingsFile:
+    hook = {"type": "command", "command": command}
+    data = {"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": [hook]}]}}
+    return claude_code.SettingsFile(scope, path, data)
+
+
+def test_the_project_claude_directory_is_copied_by_an_allow_list_with_its_hook_scripts(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "app"
+    configuration = {
+        "settings.json": "{}",
+        "settings.local.json": "{}",
+        "rules/secrets.md": "Never read .env.\n",
+        "output-styles/terse.md": "Be terse.\n",
+    }
+    _tree(project / ".claude", configuration)
+    _tree(
+        project / ".claude",
+        {
+            "scheduled_tasks.json": "[]",
+            "scheduled_tasks.lock": "",
+            "agent-memory-local/notes.md": "notes\n",
+        },
+    )
+    _tree(project, {"tools/guard.py": "print('guard')\n", "tools/unused.py": "\n"})
+    settings = [
+        _hook_settings(
+            "project",
+            project / ".claude" / "settings.json",
+            'python3 "$CLAUDE_PROJECT_DIR"/tools/guard.py',
+        )
+    ]
+
+    layout = claude_code.Layout(tmp_path / "run")
+    claude_code.prepare(ClaudeCodeSpec(key_owner=None, project=project), layout, settings)
+
+    assert _files(layout.project / ".claude") == set(configuration)
+    assert (layout.project / "tools" / "guard.py").read_text(encoding="utf-8") == "print('guard')\n"
+    assert not (layout.project / "tools" / "unused.py").exists()
+
+
+def test_the_memory_files_and_the_project_files_they_import_are_copied(tmp_path: Path) -> None:
+    project = tmp_path / "app"
+    outside = tmp_path / "outside.md"
+    outside.write_text("Kept elsewhere.\n", encoding="utf-8")
+    _tree(
+        project,
+        {
+            "CLAUDE.local.md": "Local.\n\n@docs/setup.md and @~/notes.md\n",
+            "docs/setup.md": "Setup.\n\n@../AGENTS.md\n\n```\n@docs/not-an-import.md\n```\n",
+            "AGENTS.md": f"Agents.\n\n@{outside}\n",
+            "docs/not-an-import.md": "Not imported.\n",
+        },
+    )
+    (project / "CLAUDE.md").symlink_to(outside)
+
+    layout = claude_code.Layout(tmp_path / "run")
+    claude_code.prepare(ClaudeCodeSpec(key_owner=None, project=project), layout)
+
+    assert _files(layout.project) == {
+        "CLAUDE.local.md",
+        "docs/setup.md",
+        "AGENTS.md",
+        "README.md",
+    }
+
+
+def test_a_user_and_a_managed_configuration_directory_are_copied_as_configuration_only(
+    tmp_path: Path,
+) -> None:
+    user = tmp_path / "me"
+    _tree(
+        user,
+        {
+            "settings.json": "{}",
+            "CLAUDE.md": "Mine.\n",
+            "hooks/guard.sh": "exit 0\n",
+            "commands/ship.md": "Ship it.\n",
+            ".credentials.json": '{"fake": true}',
+            "history.jsonl": "{}\n",
+            "projects/x/session.jsonl": "{}\n",
+            "scripts/check.sh": "exit 0\n",
+        },
+    )
+    managed = tmp_path / "policy"
+    _tree(
+        managed,
+        {
+            "managed-settings.json": "{}",
+            "managed-settings.d/10-base.json": "{}",
+            "hooks/audit.sh": "exit 0\n",
+            "notes.txt": "not configuration\n",
+        },
+    )
+    settings = [
+        _hook_settings("user", user / "settings.json", "~/.claude/scripts/check.sh"),
+    ]
+    spec = ClaudeCodeSpec(
+        key_owner=None, project=tmp_path / "app", user_settings=user, managed_settings=managed
+    )
+    (tmp_path / "app").mkdir()
+
+    layout = claude_code.Layout(tmp_path / "run")
+    claude_code.prepare(spec, layout, settings)
+
+    assert _files(layout.config) == {
+        "settings.json",
+        "CLAUDE.md",
+        "hooks/guard.sh",
+        "commands/ship.md",
+        "scripts/check.sh",
+    }
+    assert _files(layout.managed_dir) == {
+        "managed-settings.json",
+        "managed-settings.d/10-base.json",
+        "hooks/audit.sh",
+    }
+
+
+def test_the_settings_of_a_configuration_directory_are_under_test_in_claude_code_s_order(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "app"
+    _tree(project / ".claude", {"settings.json": "{}", "settings.local.json": "{}"})
+    user = tmp_path / "me"
+    _tree(user, {"settings.json": "{}"})
+    managed = tmp_path / "policy"
+    _tree(
+        managed,
+        {
+            "managed-settings.json": "{}",
+            "managed-settings.d/20-b.json": "{}",
+            "managed-settings.d/10-a.json": "{}",
+        },
+    )
+    spec = ClaudeCodeSpec(
+        key_owner=None, project=project, user_settings=user, managed_settings=managed
+    )
+    found = [(f.scope, f.path) for f in claude_code.settings_under_test(spec)]
+    assert found == [
+        ("managed", managed / "managed-settings.json"),
+        ("managed", managed / "managed-settings.d" / "10-a.json"),
+        ("managed", managed / "managed-settings.d" / "20-b.json"),
+        ("local", project / ".claude" / "settings.local.json"),
+        ("project", project / ".claude" / "settings.json"),
+        ("user", user / "settings.json"),
+    ]
+
+
+class _Holders:
+    """A ledger that knows one fake value."""
+
+    def holders(self, data: bytes) -> list[str]:
+        return ["project/.env"] if b"fake-held-value" in data else []
+
+
+class _Run:
+    ledger = _Holders()
+
+    def safe(self, text: str) -> str:
+        return text
+
+
+def test_files_claude_code_writes_to_its_temporary_directory_are_stored_locally(
+    tmp_path: Path,
+) -> None:
+    layout = claude_code.Layout(tmp_path)
+    for directory in (layout.home, layout.project, layout.tmp):
+        directory.mkdir()
+    (layout.tmp / "tool-output.txt").write_text("fake-held-value\n", encoding="utf-8")
+    found = claude_code.stored_locally(layout, _Run())  # type: ignore[arg-type]
+    assert found == {"project/.env": ["$TMPDIR/tool-output.txt"]}
+
+
+def test_the_permission_prompt_speaks_mcp_and_answers_no() -> None:
+    from weir_run.mock.prompt import PermissionPrompt
+
+    prompt = PermissionPrompt()
+
+    def call(message: dict[str, Any]) -> tuple[int, Any]:
+        status, body, _ = prompt.handle("POST", json.dumps(message).encode())
+        return status, json.loads(body) if body else None
+
+    status, reply = call({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    assert status == 200 and reply["result"]["capabilities"] == {"tools": {}}
+    assert call({"jsonrpc": "2.0", "method": "notifications/initialized"}) == (202, None)
+    _, tools = call({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    assert [t["name"] for t in tools["result"]["tools"]] == ["prompt"]
+    arguments = {"tool_name": "Bash", "input": {"command": "env"}, "tool_use_id": "toolu_1"}
+    _, answer = call(
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "prompt", "arguments": arguments},
+        }
+    )
+    decision = json.loads(answer["result"]["content"][0]["text"])
+    assert decision["behavior"] == "deny"
+    assert [(a.tool_name, a.tool_use_id) for a in prompt.asked] == [("Bash", "toolu_1")]
+    assert prompt.handle("GET", b"")[0] == 405
+
+
+def test_only_the_hooks_claude_code_will_run_are_checked(tmp_path: Path) -> None:
+    def hooks(*files: claude_code.SettingsFile) -> list[str]:
+        return [command for _, command in claude_code.active_hooks(files)]
+
+    managed = _hook_settings("managed", tmp_path / "m.json", "managed-hook")
+    project = _hook_settings("project", tmp_path / "p.json", "project-hook")
+    assert hooks(managed, project) == ["managed-hook", "project-hook"]
+
+    project.data["disableAllHooks"] = True
+    assert hooks(managed, project) == ["managed-hook"]
+
+    project.data.pop("disableAllHooks")
+    managed.data["allowManagedHooksOnly"] = True
+    assert hooks(managed, project) == ["managed-hook"]
+
+    managed.data["disableAllHooks"] = True
+    assert hooks(managed, project) == []
+
+
+def test_a_settings_file_claude_code_skipped_as_invalid_is_read_from_its_debug_log(
+    tmp_path: Path,
+) -> None:
+    layout = claude_code.Layout(tmp_path)
+    settings = [
+        claude_code.SettingsFile("project", tmp_path / "app" / "settings.json", {}),
+        claude_code.SettingsFile("user", tmp_path / "me" / "settings.json", {}),
+    ]
+    target = layout.settings(settings[0].scope)
+    layout.debug_log.parent.mkdir(parents=True, exist_ok=True)
+    layout.debug_log.write_text(
+        "2026-10-23T10:14:15.850Z [DEBUG] something else\n"
+        "2026-10-23T10:14:15.850Z [ERROR] Invalid setting skipped without dialog"
+        f" (automated session): {target}: cleanupPeriodDays: Number must be greater than"
+        " or equal to 1\n",
+        encoding="utf-8",
+    )
+    skipped = claude_code.skipped_settings(layout, settings)
+    assert skipped == {
+        settings[0].path: "cleanupPeriodDays: Number must be greater than or equal to 1"
+    }
