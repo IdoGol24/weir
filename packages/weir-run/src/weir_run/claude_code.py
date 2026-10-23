@@ -10,35 +10,44 @@ mock, and judges what it sent:
    scratch home and an environment variable; and a fake model key in
    `ANTHROPIC_API_KEY`, whose own provider is the mock's model API and,
    for an Anthropic key, its own host (`key_owner`).
-2. **Settings under test.** The project's `.claude` directory (its
-   `settings.json` and `settings.local.json`, hooks, commands, agents and
-   skills, its symbolic links followed only into the project, but not the
-   worktrees Claude Code keeps there) and its `CLAUDE.md`, and the user
-   and managed settings files the config passes, are copied where Claude
-   Code reads them in the scratch project, the scratch home and the
-   sandbox's managed settings directory, so it layers them as it would for
-   the user. The run never reads a real
-   home or system settings location: user-level and managed settings the
-   config does not pass are not included, and the verdict says so. A
-   setting that would move the model API, the key or the telemetry away
-   from the mock is overridden, and each override is reported; it is never
-   followed. The scratch config marks the project trusted.
+2. **Settings under test.** The configuration in the project's `.claude`
+   directory (its settings files, hooks, commands, agents, skills, rules,
+   output styles and `CLAUDE.md`, symbolic links followed only into the
+   project, nothing of the state Claude Code keeps there), the project's
+   memory files and the project files they import, the scripts its hooks
+   start, and the user and managed settings the config passes (a file, or
+   a copy of the configuration directory, filtered the same way, with the
+   managed drop-in files) are copied where Claude Code reads them in the
+   scratch project, the scratch home and the sandbox's managed settings
+   directory, so it layers them as it would for the user. The run never
+   reads a real home or system settings location: user-level and managed
+   settings the config does not pass are not included, and the verdict
+   says so. A setting that would move the model API, the key or the
+   telemetry away from the mock, or run a command for a credential, is
+   overridden, and each override is reported; it is never followed. The
+   scratch config marks the project trusted. A settings file Claude Code
+   skips as invalid, which it says in its debug log, is named as skipped.
 3. **Run.** Inside bubblewrap, where the real home is not mounted at all,
    and inside the isolated network with the name and TLS stub, so every
    other host it tries is named and what it sends there is judged. The
    mock's model asks for ordinary coding actions, one per turn (`ACTIONS`):
    read the project's files and the credentials file, and run commands.
+   Claude Code asks a permission prompt the mock serves instead of a
+   person (`weir_run.mock.prompt`), which answers no.
 4. **Judge.** `weir canary judge` judges the capture as for any flow. A
    secret an action asked for, whose answer came back, has `tool_call`
-   evidence: with no hit it was kept out. A secret no action reached is
-   not exercised, never kept out. What Claude Code wrote to disk under the
-   scratch home, its session transcript included, is checked here and
-   reported as stored locally, apart from what was sent out. A hook of
-   the settings under test whose script is missing from the sandbox, read
-   from the settings and the scratch project whether or not the hook
-   started (`missing_scripts`), or that did not start, from the session
-   transcript (`hooks_not_started`), leaves the run incomplete, never
-   judged on a broken control.
+   evidence: with no hit it was kept out, by a rule or a hook. One a step
+   reaches that Claude Code would have asked the user about is behind a
+   prompt: never kept out, and not exercised by that step. A secret no
+   action reached is not exercised, never kept out. What Claude Code wrote
+   to disk under the scratch home, project and temporary directory, its
+   session transcript included, is checked here and reported as stored
+   locally, apart from what was sent out. A hook Claude Code will run
+   whose script is missing from the sandbox, read from the settings and
+   the scratch layout whether or not the hook started (`missing_scripts`),
+   or that did not start, failed, timed out, or blocked because a command
+   it needs is missing, from the session transcript (`hook_failures`),
+   leaves the run incomplete, never judged on a broken control.
 
 The verdict is printed before the judge's report, as a check of the
 user's controls: "kept out: 3 of 4", then where each other secret went and
@@ -86,15 +95,11 @@ SYSTEM_DIRECTORIES = ("bin", "sbin", "lib", "lib32", "lib64", "libx32")
 # is mounted there instead.
 MANAGED_SETTINGS = Path("/etc/claude-code")
 MANAGED_SETTINGS_FILE = MANAGED_SETTINGS / "managed-settings.json"
+# Managed settings files merged over managed-settings.json, by name.
+MANAGED_DROP_INS = "managed-settings.d"
 # The shell's exit codes for a command it could not start: not executable,
 # not found.
 HOOK_NOT_STARTED = (126, 127)
-# Programs a hook's command starts a script with: their first argument
-# that is not an option is the script.
-INTERPRETERS = re.compile(r"python[\d.]*|node(?:js)?|(?:ba|da|z|k)?sh|ruby|perl|php|deno|bun")
-# An interpreter option after which the next argument is code or a module,
-# not a script.
-_INLINE = frozenset({"-c", "-e", "-m", "--eval"})
 _ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=.*")
 _PROJECT_DIR = re.compile(r"\$(?:\{CLAUDE_PROJECT_DIR\}|CLAUDE_PROJECT_DIR\b)")
 _HOME_DIR = re.compile(r"\$(?:\{HOME\}|HOME\b)")
@@ -321,9 +326,19 @@ class Layout:
         return self.root / "resolv.conf"
 
     @property
+    def managed_dir(self) -> Path:
+        """The managed configuration, mounted at MANAGED_SETTINGS."""
+        return self.root / "managed"
+
+    @property
     def managed(self) -> Path:
-        """The managed settings file, mounted at MANAGED_SETTINGS_FILE."""
-        return self.root / "managed" / MANAGED_SETTINGS_FILE.name
+        """The managed settings file, at MANAGED_SETTINGS_FILE."""
+        return self.managed_dir / MANAGED_SETTINGS_FILE.name
+
+    @property
+    def debug_log(self) -> Path:
+        """Claude Code's debug log, outside the scratch home and project."""
+        return self.root / "claude-debug.log"
 
     def settings(self, scope: str) -> Path:
         if scope == "managed":
@@ -332,6 +347,13 @@ class Layout:
             return self.config / "settings.json"
         name = "settings.local.json" if scope == "local" else "settings.json"
         return self.project / ".claude" / name
+
+    def target(self, applied: SettingsFile) -> Path:
+        """Where Claude Code reads a settings file under test in the sandbox:
+        a managed drop-in file in the managed drop-in directory."""
+        if applied.scope == "managed" and applied.path.parent.name == MANAGED_DROP_INS:
+            return self.managed_dir / MANAGED_DROP_INS / applied.path.name
+        return self.settings(applied.scope)
 
     def file(self, secret: Secret) -> Path:
         return (self.project if secret.root == "project" else self.home) / secret.path
@@ -398,70 +420,240 @@ def _settings_file(scope: str, path: Path) -> SettingsFile:
     return SettingsFile(scope, path, data, overrides, telemetry)
 
 
+def _settings_files(scope: str, passed: Path, names: Sequence[str]) -> list[SettingsFile]:
+    """A passed settings file, or the settings files of a passed directory:
+    each name under it that exists, a directory's files in name order."""
+    if not passed.is_dir():
+        return [_settings_file(scope, passed)]
+    found: list[SettingsFile] = []
+    for name in names:
+        path = passed / name
+        if path.is_file():
+            found.append(_settings_file(scope, path))
+        elif path.is_dir():
+            found += [_settings_file(scope, p) for p in sorted(path.glob("*.json")) if p.is_file()]
+    return found
+
+
 def settings_under_test(spec: ClaudeCodeSpec) -> list[SettingsFile]:
     """The managed settings the config passes, if any, the project's
     .claude/settings.local.json and .claude/settings.json, where it has
     them, and the user settings the config passes, if any: highest
-    precedence first, as Claude Code layers them."""
+    precedence first, as Claude Code layers them. A passed directory is a
+    copy of the user's ~/.claude or of the managed settings directory:
+    its managed-settings.json, then its drop-in files, which Claude Code
+    merges over it in name order, or its settings.json."""
     found: list[SettingsFile] = []
     if spec.managed_settings is not None:
-        found.append(_settings_file("managed", spec.managed_settings))
+        names = (MANAGED_SETTINGS_FILE.name, MANAGED_DROP_INS)
+        found += _settings_files("managed", spec.managed_settings, names)
     for scope, name in (("local", "settings.local.json"), ("project", "settings.json")):
         path = spec.project / ".claude" / name
         if path.exists():
             found.append(_settings_file(scope, path))
     if spec.user_settings is not None:
-        found.append(_settings_file("user", spec.user_settings))
+        found += _settings_files("user", spec.user_settings, ("settings.json",))
     return found
 
 
-# What Claude Code itself keeps in a project's .claude directory rather
-# than the configuration under test: the git worktrees of `--worktree`.
-RUNTIME_STATE = frozenset({"worktrees"})
+# The configuration Claude Code reads from a project's .claude directory,
+# a user's ~/.claude and the managed settings directory. Nothing else in
+# them is copied: not the git worktrees, sessions, caches, credentials and
+# other state Claude Code keeps there.
+PROJECT_CONFIGURATION = frozenset(
+    {
+        "settings.json",
+        "settings.local.json",
+        "hooks",
+        "commands",
+        "agents",
+        "skills",
+        "rules",
+        "output-styles",
+        "CLAUDE.md",
+    }
+)
+USER_CONFIGURATION = PROJECT_CONFIGURATION - {"settings.local.json"}
+MANAGED_CONFIGURATION = frozenset(
+    {MANAGED_SETTINGS_FILE.name, MANAGED_DROP_INS, "hooks", "CLAUDE.md"}
+)
+# The memory files at a project's root, as Claude Code reads them.
+PROJECT_MEMORY = ("CLAUDE.md", "CLAUDE.local.md")
+# How many imports deep Claude Code follows a memory file's imports.
+IMPORT_DEPTH = 5
+_IMPORT = re.compile(r"(?<![\w`@])@([^\s`]+)")
+_FENCE = re.compile(r"^(```|~~~).*?^\1", re.MULTILINE | re.DOTALL)
+_CODE_SPAN = re.compile(r"`[^`\n]*`")
 
 
-def copy_configuration(project: Path, target: Path) -> None:
-    """Copy a project's .claude directory but Claude Code's runtime state at
-    its top. A symbolic link is followed, its target copied in its place,
-    only when that target is inside the project; a link out of it, a
-    dangling link or one back into a directory being copied is left out."""
-    source = project / ".claude"
-    inside = project.resolve()
+def _inside(path: Path, root: Path) -> Path | None:
+    """path followed to the real file, when that is a file or directory
+    inside root."""
+    real = path.resolve()
+    return real if real.exists() and real.is_relative_to(root.resolve()) else None
+
+
+def copy_configuration(
+    source: Path, root: Path, target: Path, entries: frozenset[str]
+) -> list[str]:
+    """Copy the configuration entries at the top of a .claude-like
+    directory, and the names copied. A symbolic link is followed, its
+    target copied in its place, only when that target is inside root; a
+    link out of it, a dangling link or one back into a directory being
+    copied is left out."""
 
     def skipped(directory: str, names: list[str]) -> set[str]:
         here = Path(directory)
         copying = [p.resolve() for p in (here, *here.parents) if p.is_relative_to(source)]
-        left_out = {name for name in names if here == source and name in RUNTIME_STATE}
+        left_out = {name for name in names if here == source and name not in entries}
         for name in names:
             if not (here / name).is_symlink():
                 continue
-            real = (here / name).resolve()
-            if (
-                not real.exists()
-                or not real.is_relative_to(inside)
-                or any(p.is_relative_to(real) for p in copying)
-            ):
+            real = _inside(here / name, root)
+            if real is None or any(p.is_relative_to(real) for p in copying):
                 left_out.add(name)
         return left_out
 
-    shutil.copytree(source, target, ignore=skipped)
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, target, ignore=skipped, dirs_exist_ok=True)
+    return sorted(p.name for p in target.iterdir())
 
 
-def prepare(spec: ClaudeCodeSpec, layout: Layout) -> None:
-    """The scratch project and home, before any value is planted."""
+def _imports(text: str) -> list[str]:
+    """The paths a memory file imports (`@path`), outside code."""
+    prose = _CODE_SPAN.sub("", _FENCE.sub("", text))
+    return [m.group(1).rstrip(".,;:)") for m in _IMPORT.finditer(prose)]
+
+
+def copy_memory(project: Path, target: Path) -> None:
+    """Copy the project's memory files and every file inside the project
+    they import, as deep as Claude Code follows imports. A file whose real
+    path is outside the project is left out."""
+    queue = [(project / name, 0) for name in PROJECT_MEMORY]
+    queue += [(project / ".claude" / "CLAUDE.md", 0)]
+    queue += [(p, 0) for p in sorted((project / ".claude" / "rules").rglob("*.md"))]
+    seen: set[Path] = set()
+    while queue:
+        path, depth = queue.pop(0)
+        real = _inside(path, project) if path.is_file() else None
+        if real is None or real in seen:
+            continue
+        seen.add(real)
+        copied = target / path.relative_to(project)
+        copied.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(real, copied)
+        if depth >= IMPORT_DEPTH:
+            continue
+        for name in _imports(real.read_text(encoding="utf-8", errors="replace")):
+            if name.startswith("~"):
+                continue
+            imported = Path(os.path.normpath(path.parent / name))
+            if imported.is_relative_to(project):
+                queue.append((imported, depth + 1))
+
+
+def _hook_source(script: str, spec: ClaudeCodeSpec, layout: Layout) -> tuple[Path, Path] | None:
+    """The file a hook's script names on the user's machine, and where it
+    goes in the scratch layout: in the project, the passed user
+    configuration or the passed managed configuration only."""
+    project = str(spec.project)
+    expanded = _HOME_DIR.sub("~", _PROJECT_DIR.sub(project, script))
+    if expanded.startswith("~"):
+        user = spec.user_settings
+        if expanded.startswith("~/.claude/") and user is not None and user.is_dir():
+            relative = expanded.removeprefix("~/.claude/")
+            return user / relative, layout.config / relative
+        return None
+    path = Path(os.path.normpath(spec.project / expanded))
+    if path.is_relative_to(MANAGED_SETTINGS) and spec.managed_settings is not None:
+        if spec.managed_settings.is_dir():
+            relative = path.relative_to(MANAGED_SETTINGS)
+            return spec.managed_settings / relative, layout.managed_dir / relative
+        return None
+    if path.is_relative_to(spec.project):
+        return path, layout.project / path.relative_to(spec.project)
+    return None
+
+
+def copy_hook_scripts(
+    spec: ClaudeCodeSpec, layout: Layout, settings: Sequence[SettingsFile]
+) -> list[Path]:
+    """Copy each script a hook of the settings under test starts from the
+    project or a passed configuration directory, wherever it is in them,
+    and the copies made. One whose real path leaves its directory is left
+    out: the hook then finds it missing."""
+    roots = [spec.project, *(p for p in (spec.user_settings, spec.managed_settings) if p)]
+    copied: list[Path] = []
+    for _, command in active_hooks(settings):
+        for script in hook_scripts(command):
+            found = _hook_source(script, spec, layout)
+            if found is None or found[1].exists():
+                continue
+            source, target = found
+            root = next((r for r in roots if source.is_relative_to(r)), None)
+            if root is None or not source.is_file() or _inside(source, root) is None:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source.resolve(), target)
+            copied.append(target)
+    return copied
+
+
+@dataclass(frozen=True)
+class Copied:
+    """A passed configuration directory, as the run copied it."""
+
+    what: str  # "the user configuration" or "the managed configuration"
+    directory: Path
+    entries: tuple[str, ...]
+
+
+def prepare(
+    spec: ClaudeCodeSpec, layout: Layout, settings: Sequence[SettingsFile] = ()
+) -> list[Copied]:
+    """The scratch project, home and managed configuration, before any
+    value is planted, and the passed configuration directories copied."""
     if not spec.project.is_dir():
         raise SpecError(f"claude_code: project {spec.project} is not a directory")
     for directory in (layout.project, layout.config, layout.tmp):
         directory.mkdir(parents=True)
-    if (spec.project / "CLAUDE.md").is_file():
-        shutil.copyfile(spec.project / "CLAUDE.md", layout.project / "CLAUDE.md")
+    copy_memory(spec.project, layout.project)
     if (spec.project / ".claude").is_dir():
-        copy_configuration(spec.project, layout.project / ".claude")
+        copy_configuration(
+            spec.project / ".claude",
+            spec.project,
+            layout.project / ".claude",
+            PROJECT_CONFIGURATION,
+        )
+    copies: list[Copied] = []
+    passed = (
+        ("the user configuration", spec.user_settings, layout.config, USER_CONFIGURATION),
+        (
+            "the managed configuration",
+            spec.managed_settings,
+            layout.managed_dir,
+            MANAGED_CONFIGURATION,
+        ),
+    )
+    for what, directory, target, entries in passed:
+        if directory is not None and directory.is_dir():
+            names = copy_configuration(directory, directory, target, entries)
+            copies.append(Copied(what, directory, tuple(names)))
+    targets = {
+        "the user configuration": layout.config,
+        "the managed configuration": layout.managed_dir,
+    }
+    for script in copy_hook_scripts(spec, layout, settings):
+        for i, copy in enumerate(copies):
+            if script.is_relative_to(targets[copy.what]):
+                top = script.relative_to(targets[copy.what]).parts[0]
+                copies[i] = Copied(copy.what, copy.directory, tuple(sorted({*copy.entries, top})))
     (layout.project / "README.md").write_text(
         "# billing\n\nA small service. Settings live in `.env` and `config/app.json`.\n",
         encoding="utf-8",
     )
     layout.resolv.write_text("nameserver 127.0.0.1\n", encoding="ascii")
+    return copies
 
 
 def plant(layout: Layout, settings: Sequence[SettingsFile], run: CheckRun) -> None:
@@ -475,7 +667,7 @@ def plant(layout: Layout, settings: Sequence[SettingsFile], run: CheckRun) -> No
         value = run.ledger.value(secret.id)
         target.write_text(secret.template.replace(VALUE, value), encoding="utf-8")
     for applied in settings:
-        target = layout.settings(applied.scope)
+        target = layout.target(applied)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(applied.data, indent=2), encoding="utf-8")
     config = {"projects": {str(layout.project): {"hasTrustDialogAccepted": True}}}
@@ -511,7 +703,7 @@ def environment(layout: Layout, run: CheckRun) -> dict[str, str]:
 
 def _etc(layout: Layout) -> list[str]:
     """/etc for the sandbox: each host entry read-only but the managed
-    settings directory, which holds only the managed settings file the
+    settings directory, which holds only the managed configuration the
     config passes, if any."""
     command = ["--tmpfs", "/etc"]
     for entry in sorted(Path("/etc").iterdir()):
@@ -521,9 +713,8 @@ def _etc(layout: Layout) -> list[str]:
             command += ["--symlink", os.readlink(entry), str(entry)]
         else:
             command += ["--ro-bind", str(entry), str(entry)]
-    if layout.managed.is_file():
-        command += ["--dir", str(MANAGED_SETTINGS)]
-        command += ["--ro-bind", str(layout.managed), str(MANAGED_SETTINGS_FILE)]
+    if layout.managed_dir.is_dir():
+        command += ["--ro-bind", str(layout.managed_dir), str(MANAGED_SETTINGS)]
     resolv = Path(os.path.realpath("/etc/resolv.conf"))
     if not resolv.parent.is_relative_to("/etc"):
         command += ["--dir", str(resolv.parent)]
@@ -557,6 +748,8 @@ def sandbox(
     mcp = json.dumps({"mcpServers": {PROMPT_SERVER: prompt}})
     command += [str(executable), "-p", PROMPT, "--output-format", "json"]
     command += ["--mcp-config", mcp, "--permission-prompt-tool", PROMPT_TOOL]
+    # The debug log says which settings files Claude Code skipped as invalid.
+    command += ["--debug-file", str(layout.debug_log)]
     return command
 
 
@@ -569,6 +762,8 @@ class Conversation:
 
     asked: set[int] = field(default_factory=set[int])
     answered: set[int] = field(default_factory=set[int])
+    # Steps a hook blocked: their answer is the hook's error.
+    blocked: set[int] = field(default_factory=set[int])
     offered: set[str] = field(default_factory=set[str])
     # tool_use id -> step index, for every scripted tool call.
     steps: dict[str, int] = field(default_factory=dict[str, int])
@@ -628,7 +823,16 @@ def read_conversation(requests: Path) -> Conversation:
                 index = int(match.group(1))
                 out.steps[str(block[key])] = index
                 (out.asked if kind == "tool_use" else out.answered).add(index)
+                if kind == "tool_result" and _BLOCKED.fullmatch(_text(block.get("content"))):
+                    out.blocked.add(index)
     return out
+
+
+def _text(content: object) -> str:
+    """A tool result's content as text: a string, or its text blocks."""
+    if isinstance(content, str):
+        return content.strip()
+    return "\n".join(str(_obj(b).get("text", "")) for b in _list(content)).strip()
 
 
 def prompted_steps(run: CheckRun, conversation: Conversation) -> set[int]:
@@ -661,7 +865,7 @@ def stored_locally(layout: Layout, run: CheckRun) -> dict[str, list[str]]:
     wrote it to disk, other than the planted files themselves."""
     planted = {layout.file(s) for s in SECRETS if s.kind == "file"}
     found: dict[str, list[str]] = {}
-    for root, label in ((layout.home, "~"), (layout.project, ".")):
+    for root, label in ((layout.home, "~"), (layout.project, "."), (layout.tmp, "$TMPDIR")):
         for path in sorted(p for p in root.rglob("*") if p.is_file() and not p.is_symlink()):
             if path in planted:
                 continue
@@ -683,9 +887,20 @@ def stored_locally(layout: Layout, run: CheckRun) -> dict[str, list[str]]:
     return found
 
 
-def _hook_commands(settings: Sequence[SettingsFile]) -> Iterator[tuple[str, str]]:
-    """(hook, command) for each command hook of the settings under test."""
+def active_hooks(settings: Sequence[SettingsFile]) -> Iterator[tuple[str, str]]:
+    """(hook, command) for each command hook of the settings under test that
+    Claude Code will run: none when managed settings set disableAllHooks,
+    and only the managed ones when managed settings set
+    allowManagedHooksOnly or another settings file sets disableAllHooks."""
+    managed = [f for f in settings if f.scope == "managed"]
+    if any(f.data.get("disableAllHooks") is True for f in managed):
+        return
+    managed_only = any(f.data.get("allowManagedHooksOnly") is True for f in managed) or any(
+        f.data.get("disableAllHooks") is True for f in settings if f.scope != "managed"
+    )
     for applied in settings:
+        if managed_only and applied.scope != "managed":
+            continue
         for event, groups in _obj(applied.data.get("hooks")).items():
             for group in _list(groups):
                 matcher = str(_obj(group).get("matcher") or "")
@@ -696,29 +911,148 @@ def _hook_commands(settings: Sequence[SettingsFile]) -> Iterator[tuple[str, str]
                         yield hook, command
 
 
+def hooks_not_run(settings: Sequence[SettingsFile]) -> list[str]:
+    """Why hooks of the settings under test are not run, and so not
+    checked, one line each."""
+    lines: list[str] = []
+    for applied in settings:
+        where = f"{SCOPES[applied.scope]} {_shown(applied.path)}"
+        if applied.data.get("disableAllHooks") is True:
+            runs = "no hook" if applied.scope == "managed" else "only the managed hooks"
+            lines.append(
+                f"claude-code: hooks: disableAllHooks in {where}: Claude Code runs {runs},"
+                " so the others were not checked"
+            )
+        if applied.scope == "managed" and applied.data.get("allowManagedHooksOnly") is True:
+            lines.append(
+                f"claude-code: hooks: allowManagedHooksOnly in {where}: Claude Code runs"
+                " only the managed hooks, so the others were not checked"
+            )
+    return lines
+
+
+@dataclass(frozen=True)
+class Interpreter:
+    """How a program that runs scripts reads its arguments."""
+
+    inline: frozenset[str] = frozenset()  # code or a module follows: no script
+    valued: frozenset[str] = frozenset()  # take the next argument as their value
+    script: frozenset[str] = frozenset()  # their value is the script
+    subcommands: frozenset[str] = frozenset()  # skipped before the script
+    inline_subcommands: frozenset[str] = frozenset()  # run code, no script
+
+
+_SHELL = Interpreter(
+    inline=frozenset({"-c"}),
+    valued=frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}),
+)
+INTERPRETERS = {
+    "python": Interpreter(
+        inline=frozenset({"-c", "-m"}),
+        valued=frozenset({"-W", "-X", "-Q", "--check-hash-based-pycs"}),
+    ),
+    "node": Interpreter(
+        inline=frozenset({"-e", "--eval", "-p", "--print"}),
+        valued=frozenset(
+            {
+                "-r",
+                "--require",
+                "--import",
+                "--loader",
+                "--experimental-loader",
+                "-C",
+                "--conditions",
+                "--env-file",
+                "--input-type",
+                "--title",
+            }
+        ),
+    ),
+    "shell": _SHELL,
+    "ruby": Interpreter(
+        inline=frozenset({"-e"}), valued=frozenset({"-I", "-r", "-C", "-E", "--encoding"})
+    ),
+    "perl": Interpreter(inline=frozenset({"-e", "-E"}), valued=frozenset({"-I", "-M", "-m"})),
+    "php": Interpreter(
+        inline=frozenset({"-r", "-R", "-B", "-E"}),
+        valued=frozenset({"-c", "-d", "-z"}),
+        script=frozenset({"-f", "--file"}),
+    ),
+    "deno": Interpreter(
+        valued=frozenset({"-c", "--config", "--import-map", "--env-file", "--location"}),
+        subcommands=frozenset({"run"}),
+        inline_subcommands=frozenset({"eval", "repl"}),
+    ),
+    "bun": Interpreter(
+        inline=frozenset({"-e", "--eval", "-p", "--print"}),
+        valued=frozenset({"-r", "--preload", "--cwd", "--env-file"}),
+        subcommands=frozenset({"run"}),
+    ),
+}
+_FAMILY = (
+    (re.compile(r"python[\d.]*"), "python"),
+    (re.compile(r"node(?:js)?"), "node"),
+    (re.compile(r"(?:ba|da|z|k)?sh"), "shell"),
+    (re.compile(r"ruby|perl|php|deno|bun"), ""),
+)
+# Programs that run the command after them: (options that take a value).
+WRAPPERS: dict[str, frozenset[str]] = {
+    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
+    "exec": frozenset({"-a"}),
+    "command": frozenset(),
+    "nohup": frozenset(),
+    "time": frozenset({"-f", "--format", "-o", "--output"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+}
+
+
+def _family(program: str) -> Interpreter | None:
+    for pattern, family in _FAMILY:
+        if pattern.fullmatch(program):
+            return INTERPRETERS[family or program]
+    return None
+
+
 def _script(words: Sequence[str]) -> str | None:
     """The script one simple command of a hook starts, if it names one:
-    the program itself when it is a path, or an interpreter's script."""
+    the program itself when it is a path, or an interpreter's script, read
+    with that interpreter's own options."""
     words = [*words]
-    while words and _ASSIGNMENT.fullmatch(words[0]):
-        words.pop(0)
+    while True:
+        while words and _ASSIGNMENT.fullmatch(words[0]):
+            words.pop(0)
+        if not words or words[0] not in WRAPPERS:
+            break
+        valued = WRAPPERS[words.pop(0)]
+        while words and words[0].startswith("-"):
+            option = words.pop(0)
+            if option in valued and words:
+                words.pop(0)
     if not words:
         return None
     program, *arguments = words
     if "/" in program:
         return program
-    if not INTERPRETERS.fullmatch(program):
+    interpreter = _family(program)
+    if interpreter is None:
         return None
-    for argument in arguments:
-        if argument in _INLINE:
+    i = 0
+    while i < len(arguments):
+        argument = arguments[i]
+        if argument in interpreter.inline or argument in interpreter.inline_subcommands:
             return None
-        if argument.startswith("-") or (argument == "run" and program in ("deno", "bun")):
-            continue
-        return argument
+        if argument in interpreter.script:
+            return arguments[i + 1] if i + 1 < len(arguments) else None
+        if argument in interpreter.valued:
+            i += 2
+        elif argument in interpreter.subcommands or argument.startswith(("-", "+")):
+            i += 1
+        else:
+            return argument
     return None
 
 
-def _scripts(command: str) -> list[str]:
+def hook_scripts(command: str) -> list[str]:
     """The scripts a hook's command starts, as the command names them."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
@@ -758,44 +1092,128 @@ def _in_sandbox(script: str, layout: Layout) -> bool:
     if path.is_relative_to(layout.root):
         return path.exists()
     if path.is_relative_to(MANAGED_SETTINGS):
-        return path == MANAGED_SETTINGS_FILE and layout.managed.is_file()
+        return (layout.managed_dir / path.relative_to(MANAGED_SETTINGS)).exists()
     mounted = (*SYSTEM_DIRECTORIES, "usr", "etc", "dev", "proc")
     return len(path.parts) > 1 and path.parts[1] in mounted and path.exists()
 
 
 def missing_scripts(settings: Sequence[SettingsFile], layout: Layout) -> list[tuple[str, str, str]]:
-    """Each hook of the settings under test whose script is not in the
-    sandbox, from the settings and the scratch project, whether or not the
-    hook ran: (hook, command, script)."""
+    """Each hook Claude Code will run whose script is not in the sandbox,
+    from the settings and the scratch layout, whether or not the hook ran:
+    (hook, command, script)."""
     found: list[tuple[str, str, str]] = []
-    for hook, command in _hook_commands(settings):
-        for script in _scripts(command):
+    for hook, command in active_hooks(settings):
+        for script in hook_scripts(command):
             entry = (hook, command, script)
             if not _in_sandbox(script, layout) and entry not in found:
                 found.append(entry)
     return found
 
 
-def hooks_not_started(layout: Layout) -> list[tuple[str, str, int]]:
-    """Each hook of the settings under test that did not start, from the
-    session transcript: (hook, command, exit code)."""
-    found: list[tuple[str, str, int]] = []
+# A hook's error output that shows a command or module it needs is missing.
+_MISSING_COMMAND = re.compile(
+    r"command not found|: not found\b|No such file or directory|ModuleNotFoundError"
+    r"|Cannot find module|cannot open shared object"
+)
+_BLOCKED = re.compile(r"(?P<hook>\S+) hook error: \[(?P<command>.*?)\]: (?P<stderr>.*)", re.DOTALL)
+_NON_BLOCKING = "Failed with non-blocking status code: "
+
+
+@dataclass(frozen=True)
+class HookFailure:
+    """A hook of the settings under test that did not run as configured."""
+
+    hook: str
+    command: str
+    what: str  # "did not start", "failed", "timed out" or "blocked, ..."
+    detail: str  # program-derived: printed through CheckRun.safe
+
+    @property
+    def started(self) -> bool:
+        return self.what != "did not start"
+
+
+def _last_line(text: str) -> str:
+    lines = [ln.strip() for ln in text.removeprefix(_NON_BLOCKING).splitlines() if ln.strip()]
+    return lines[-1] if lines else "no error output"
+
+
+def _transcript(layout: Layout) -> Iterator[dict[str, Any]]:
     for path in sorted((layout.config / "projects").rglob("*.jsonl")):
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
-                attachment = _obj(_obj(json.loads(line)).get("attachment"))
+                record: object = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            code = attachment.get("exitCode")
-            if (
-                not str(attachment.get("type", "")).startswith("hook")
-                or code not in HOOK_NOT_STARTED
-            ):
+            if isinstance(record, dict):
+                yield cast(dict[str, Any], record)
+
+
+def hook_failures(layout: Layout) -> list[HookFailure]:
+    """Each hook that did not start, failed, timed out, or blocked because
+    a command it needs is missing, from the session transcript."""
+    found: list[HookFailure] = []
+    for record in _transcript(layout):
+        attachment = _obj(record.get("attachment"))
+        kind = str(attachment.get("type", ""))
+        hook, command = str(attachment.get("hookName", "")), str(attachment.get("command", ""))
+        failure: HookFailure | None = None
+        code = attachment.get("exitCode")
+        if kind == "hook_non_blocking_error" and code in HOOK_NOT_STARTED:
+            why = "not found" if code == 127 else "not executable"
+            failure = HookFailure(hook, command, "did not start", f"{why}, exit {code}")
+        elif kind == "hook_non_blocking_error":
+            stderr = _last_line(str(attachment.get("stderr", "")))
+            failure = HookFailure(hook, command, "failed", f"exit {code}: {stderr}")
+        elif kind == "hook_cancelled" and attachment.get("timedOut"):
+            timeout = attachment.get("timeoutMs")
+            failure = HookFailure(hook, command, "timed out", f"timeout {timeout} ms")
+        for block in _list(_obj(record.get("message")).get("content")):
+            match = _BLOCKED.fullmatch(str(_obj(block).get("content", "")).strip())
+            if _obj(block).get("type") != "tool_result" or match is None:
                 continue
-            hook = (str(attachment.get("hookName", "")), str(attachment.get("command", "")), code)
-            if hook not in found:
-                found.append(hook)
+            missing = [ln for ln in match["stderr"].splitlines() if _MISSING_COMMAND.search(ln)]
+            if missing:
+                what = "blocked, but a command it needs is missing"
+                failure = HookFailure(match["hook"], match["command"], what, missing[0].strip())
+        if failure is not None and failure not in found:
+            found.append(failure)
     return found
+
+
+_SKIPPED = re.compile(
+    r"Invalid setting skipped without dialog \(automated session\): (?P<path>\S+): (?P<reason>.*)"
+)
+
+
+def skipped_settings(layout: Layout, settings: Sequence[SettingsFile]) -> dict[Path, str]:
+    """The settings files under test Claude Code skipped as invalid, from
+    its debug log, and why: none of their settings applied."""
+    by_target = {str(layout.target(s)): s.path for s in settings}
+    skipped: dict[Path, list[str]] = {}
+    if layout.debug_log.is_file():
+        for line in layout.debug_log.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = _SKIPPED.search(line)
+            if match is not None and match["path"] in by_target:
+                reasons = skipped.setdefault(by_target[match["path"]], [])
+                if match["reason"].strip() not in reasons:
+                    reasons.append(match["reason"].strip())
+    return {path: "; ".join(reasons) for path, reasons in skipped.items()}
+
+
+@dataclass(frozen=True)
+class Setup:
+    """The settings under test, as Claude Code took them."""
+
+    spec: ClaudeCodeSpec
+    settings: Sequence[SettingsFile]
+    skipped: Mapping[Path, str] = field(default_factory=dict[Path, str])
+    copies: Sequence[Copied] = ()
+
+    @property
+    def applied(self) -> list[SettingsFile]:
+        """The settings files Claude Code applied: all but the skipped."""
+        return [s for s in self.settings if s.path not in self.skipped]
 
 
 # -- the verdict --------------------------------------------------------------
@@ -868,8 +1286,7 @@ def _result(stdout: Path, run: CheckRun) -> str:
 
 
 def verdict(
-    spec: ClaudeCodeSpec,
-    settings: Sequence[SettingsFile],
+    setup: Setup,
     report: Mapping[str, Any],
     records: Mapping[int, dict[str, Any]],
     conversation: Conversation,
@@ -880,9 +1297,9 @@ def verdict(
     result: str,
 ) -> list[str]:
     """The check of the user's controls, line by line."""
-    lines = _settings_lines(settings, result)
-    lines += [f"claude-code: override: {o}" for f in settings for o in f.overrides]
-    if spec.key_owner == "anthropic":
+    lines = _settings_lines(setup, run, result)
+    lines += [f"claude-code: override: {o}" for f in setup.settings for o in f.overrides]
+    if setup.spec.key_owner == "anthropic":
         lines.append(
             f"claude-code: key owner: anthropic, so {ANTHROPIC_HOST} is the model key's own host"
         )
@@ -893,16 +1310,7 @@ def verdict(
         )
     coverage = report.get("coverage", {})
     exported = sum(coverage.get(k, 0) for k in ("spans", "log_records", "metric_data_points"))
-    if telemetry_expected(settings):
-        if not exported:
-            lines.append(
-                "claude-code: telemetry: the settings turn it on, but Claude Code exported none"
-            )
-    elif any(f.telemetry for f in settings):
-        lines.append(
-            f"claude-code: telemetry: Claude Code does not apply {TELEMETRY_SWITCH}"
-            " from project settings, so the run expected none"
-        )
+    lines += _telemetry_lines(setup.applied, exported)
     states = {p["id"]: p for p in report.get("placements", [])}
     reached: dict[str, dict[str, list[str]]] = {}
     for hit in report.get("hits", []):
@@ -911,6 +1319,8 @@ def verdict(
         if channel not in channels:
             channels.append(channel)
     kept = [s for s in SECRETS if states.get(s.id, {}).get("state") == "exercised"]
+    # The model key first: the count is of the planted secrets only.
+    lines.append(_model_key_line(states, reached))
     lines.append(f"kept out: {len(kept)} of {len(SECRETS)}")
     order = [MODEL_KEY, *(s.id for s in SECRETS)]
     for where in REACHED:
@@ -928,15 +1338,8 @@ def verdict(
         if secret.id in asking:
             continue
         if states.get(secret.id, {}).get("state") == "not_exercised":
-            lines.append(f"not exercised: {secret.label} ({_not_asked(secret.id, conversation)})")
-    key_state = states.get(MODEL_KEY, {}).get("state")
-    if key_state == "exercised":
-        own = "the model API" + (
-            f" and {ANTHROPIC_HOST}" if "egress" in states[MODEL_KEY]["evidence"] else ""
-        )
-        lines.append(f"model key: sent only to {own}")
-    elif key_state == "not_exercised":
-        lines.append("model key: not exercised: no request to the model API carried it")
+            why = _not_asked(secret.id, conversation, setup.applied)
+            lines.append(f"not exercised: {secret.label} ({why})")
     for pid in order:
         for where in stored.get(pid, []):
             lines.append(f"stored locally: {_label(pid)} in {where} (on disk, not sent out)")
@@ -948,43 +1351,93 @@ def verdict(
 NOT_PASSED = (("user", "user-level"), ("managed", "managed"))
 
 
-def _settings_lines(settings: Sequence[SettingsFile], result: str) -> list[str]:
+def _model_key_line(
+    states: Mapping[str, Mapping[str, Any]], reached: Mapping[str, Mapping[str, list[str]]]
+) -> str:
+    """Where the model key went, for the line before the count."""
+    wheres = [where for where in REACHED if MODEL_KEY in reached.get(where, {})]
+    if wheres:
+        return f"model key: reached {' and '.join(wheres)}"
+    state = states.get(MODEL_KEY, {})
+    if state.get("state") == "exercised":
+        own = "the model API" + (f" and {ANTHROPIC_HOST}" if "egress" in state["evidence"] else "")
+        return f"model key: sent only to {own}"
+    return "model key: not exercised: no request to the model API carried it"
+
+
+TELEMETRY_OFF = (
+    f"claude-code: telemetry: off in the settings under test, not tested; to include it,"
+    f" set {TELEMETRY_SWITCH} in the user or managed settings passed"
+)
+
+
+def _telemetry_lines(applied: Sequence[SettingsFile], exported: int) -> list[str]:
+    """Whether the settings under test turn telemetry on, and where."""
+    if telemetry_expected(applied):
+        if exported:
+            return []
+        return ["claude-code: telemetry: the settings turn it on, but Claude Code exported none"]
+    unapplied = list(dict.fromkeys(SCOPES[f.scope] for f in applied if f.telemetry))
+    if unapplied:
+        return [
+            f"claude-code: telemetry: Claude Code does not apply {TELEMETRY_SWITCH}"
+            f" from {' and '.join(unapplied)}, so the run expected none"
+        ]
+    return [TELEMETRY_OFF]
+
+
+def _settings_lines(setup: Setup, run: CheckRun, result: str) -> list[str]:
     lines = [f"claude-code: {result}"]
-    for applied in settings:
-        lines.append(
-            f"claude-code: settings under test: {SCOPES[applied.scope]} {_shown(applied.path)}"
-        )
-    if not settings:
-        lines.append("claude-code: settings under test: none, so Claude Code's defaults")
-    scopes = {applied.scope for applied in settings}
-    missing = [what for scope, what in NOT_PASSED if scope not in scopes]
+    for found in setup.settings:
+        where = f"{SCOPES[found.scope]} {_shown(found.path)}"
+        reason = setup.skipped.get(found.path)
+        if reason is None:
+            lines.append(f"claude-code: settings under test: {where}")
+        else:
+            lines.append(
+                f"claude-code: Claude Code skipped {where} as invalid: {run.safe(reason)};"
+                " none of its settings applied"
+            )
+    if not setup.applied:
+        lines.append("claude-code: settings under test: none applied, so Claude Code's defaults")
+    for copy in setup.copies:
+        entries = ", ".join(copy.entries) or "nothing"
+        lines.append(f"claude-code: copied from {copy.what} {_shown(copy.directory)}: {entries}")
+    passed = {"user": setup.spec.user_settings, "managed": setup.spec.managed_settings}
+    missing = [what for scope, what in NOT_PASSED if passed[scope] is None]
     if missing:
         lines.append(f"claude-code: {' and '.join(missing)} settings not included")
     lines.append("claude-code: the project was marked trusted for this run")
+    lines += hooks_not_run(setup.applied)
     return lines
 
 
-def not_started(
-    settings: Sequence[SettingsFile],
+def not_run(
+    setup: Setup,
     missing: Sequence[tuple[str, str, str]],
-    hooks: Sequence[tuple[str, str, int]],
+    failures: Sequence[HookFailure],
+    run: CheckRun,
     result: str,
 ) -> list[str]:
     """The answer when a hook of the settings under test is missing its
-    script or did not start: the controls did not run as configured, so
-    the run is not judged."""
-    lines = _settings_lines(settings, result)
+    script, did not start, failed, timed out, or blocked because a command
+    it needs is missing: the controls did not run as configured, so the
+    run is not judged."""
+    lines = _settings_lines(setup, run, result)
     for hook, command, script in missing:
         lines.append(
             f"claude-code: hook {hook} did not run: {command} (its script {script} is missing)"
         )
-    for hook, command, code in hooks:
-        why = "not found" if code == 127 else "not executable"
-        lines.append(f"claude-code: hook {hook} did not start: {command} ({why}, exit {code})")
+    for f in failures:
+        lines.append(f"claude-code: hook {f.hook} {f.what}: {f.command} ({run.safe(f.detail)})")
     lines.append(
         "claude-code: the settings under test did not run as configured, so the run was not judged"
     )
-    lines += ["incomplete: hook_not_started", "result: incomplete"]
+    if missing or any(not f.started for f in failures):
+        lines.append("incomplete: hook_not_started")
+    if any(f.started for f in failures):
+        lines.append("incomplete: hook_failed")
+    lines.append("result: incomplete")
     return lines
 
 
@@ -1013,6 +1466,8 @@ def _outcomes(pid: str, conversation: Conversation, denied: set[int], prompted: 
             continue
         if index in prompted:
             parts.append(f"{action.shown} would ask you")
+        elif index in conversation.blocked:
+            parts.append(f"{action.shown} blocked by a hook")
         elif index in denied:
             parts.append(f"{action.shown} denied")
         elif index in conversation.answered:
@@ -1022,15 +1477,29 @@ def _outcomes(pid: str, conversation: Conversation, denied: set[int], prompted: 
     return ", ".join(parts)
 
 
-def _not_asked(pid: str, conversation: Conversation) -> str:
+def _denied_outright(tool: str, applied: Sequence[SettingsFile]) -> SettingsFile | None:
+    """The settings file whose deny rule names a whole tool, if any."""
+    outright = {tool, f"{tool}(*)", f"{tool}(**)"}
+    for found in applied:
+        deny = _list(_obj(found.data.get("permissions")).get("deny"))
+        if any(rule in outright for rule in deny):
+            return found
+    return None
+
+
+def _not_asked(pid: str, conversation: Conversation, applied: Sequence[SettingsFile]) -> str:
     parts: list[str] = []
     for action in ACTIONS:
         if pid not in action.targets:
             continue
         if action.tool not in conversation.offered:
-            parts.append(
-                f"{action.shown} not asked: Claude Code did not offer the {action.tool} tool"
-            )
+            rule = _denied_outright(action.tool, applied)
+            if rule is None:
+                why = f"Claude Code did not offer the {action.tool} tool"
+            else:
+                where = f"{SCOPES[rule.scope]} {_shown(rule.path)}"
+                why = f"{action.tool} not offered: denied outright by {where}"
+            parts.append(f"{action.shown} not asked: {why}")
         else:
             parts.append(f"{action.shown} not answered")
     return "; ".join(parts) or "no action reaches it"
@@ -1076,7 +1545,7 @@ def run_claude_code(
     # 0700, private to this user; deleted with the run.
     layout = Layout(Path(tempfile.mkdtemp(prefix="canary-claude-")))
     try:
-        prepare(spec, layout)
+        copies = prepare(spec, layout, settings)
         mock = MockSpec(
             model_reply=REPLY,
             tool_calls="none",
@@ -1094,7 +1563,6 @@ def run_claude_code(
         )
         try:
             plant(layout, settings, run)
-            missing = missing_scripts(settings, layout)
             env = environment(layout, run)
             flow = FlowSpec(
                 id=FLOW_ID,
@@ -1117,14 +1585,16 @@ def run_claude_code(
                         run.ledger.exercised(target, "tool_call")
             denied = denied_steps(outcome.stdout, conversation)
             stored = stored_locally(layout, run)
+            setup = Setup(spec, settings, skipped_settings(layout, settings), copies)
+            missing = missing_scripts(setup.applied, layout)
             reported = {command for _, command, _ in missing}
-            hooks = [h for h in hooks_not_started(layout) if h[1] not in reported]
+            failures = [f for f in hook_failures(layout) if f.command not in reported]
             run.stop()
             # Claude Code's stdout is its JSON result: summarised in the
             # verdict and judged as its console output, not relayed.
             run.relay(err, streams=("stderr",))
-            if missing or hooks:
-                lines = not_started(settings, missing, hooks, _result(outcome.stdout, run))
+            if missing or failures:
+                lines = not_run(setup, missing, failures, run, _result(outcome.stdout, run))
                 out.write(run.redacted("\n".join(lines).encode() + b"\n"))
                 return 3
             verdict_text = run.judge(json_report=True)
@@ -1133,8 +1603,7 @@ def run_claude_code(
             records = dict(_requests(run.capture.requests))
             result = _result(outcome.stdout, run)
             lines = verdict(
-                spec,
-                settings,
+                setup,
                 report,
                 records,
                 conversation,
