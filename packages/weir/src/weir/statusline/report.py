@@ -69,19 +69,39 @@ class Turns:
         return self.by_tool_use.get(tool_use) if isinstance(tool_use, str) else None, True
 
 
+# Records Claude Code writes as `user` records that the person did not type
+# as a prompt: a local slash command (`/model`, say) and its output.
+_COMMAND_RECORD_STARTS = (
+    "<command-name>", "<command-message>", "<command-args>", "<local-command-stdout>",
+    "<local-command-stderr>", "<local-command-caveat>",
+)
+# Flags that mark a `user` record as not a prompt: meta records, the summary
+# that compaction writes, and records shown in the transcript view only.
+_NOT_A_PROMPT_FLAGS = ("isMeta", "isCompactSummary", "isVisibleInTranscriptOnly")
+
+
 def _is_prompt(record: dict[str, Json]) -> bool:
-    """A prompt the person typed: a `user` record, not `isMeta`, whose
-    content is a string or holds a text block and no tool result."""
-    if record.get("type") != "user" or record.get("isMeta") is True:
+    """A prompt the person typed: a `user` record with none of the flags
+    above, whose content is a string or holds a text block and no tool
+    result, and whose text is not a local command record."""
+    if record.get("type") != "user":
+        return False
+    if any(record.get(flag) is True for flag in _NOT_A_PROMPT_FLAGS):
         return False
     message = record.get("message")
     content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, str):
-        return True
-    if not isinstance(content, list):
+        texts = [content]
+    elif isinstance(content, list):
+        blocks = [b for b in content if isinstance(b, dict)]
+        if any(b.get("type") == "tool_result" for b in blocks):
+            return False
+        texts = [str(b.get("text", "")) for b in blocks if b.get("type") == "text"]
+        if not texts:
+            return False
+    else:
         return False
-    types = {str(b.get("type")) for b in content if isinstance(b, dict)}
-    return "text" in types and "tool_result" not in types
+    return not any(text.lstrip().startswith(_COMMAND_RECORD_STARTS) for text in texts)
 
 
 def read_turns(transcript: str) -> Turns:

@@ -216,8 +216,14 @@ Every string in it comes from the audit report, which already applied the
 audit's [printing rule](audit.md#printing), or is a number or a fixed word.
 
 **Turns.** Turn N starts at the Nth prompt the person typed in the main
-transcript: a `user` record, not `isMeta`, whose content is a string or
-holds a `text` block and no `tool_result` block. Records before the first
+transcript: a `user` record whose content is a string or holds a `text`
+block and no `tool_result` block. A record marked `isMeta`,
+`isCompactSummary` (the summary compaction writes) or
+`isVisibleInTranscriptOnly` is not a prompt, and neither is the record of
+a local slash command or its output: text that starts with
+`<command-name>`, `<command-message>`, `<command-args>`,
+`<local-command-stdout>`, `<local-command-stderr>` or
+`<local-command-caveat>`. Records before the first
 prompt are turn 0. A hit in a subagent transcript
 (`subagents/<agent>.jsonl`) takes the turn of the tool call that started
 the subagent: the main transcript's `tool_use` whose id is the `toolUseId`
