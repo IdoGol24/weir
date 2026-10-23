@@ -425,9 +425,9 @@ weir-run run --config canary.toml
    `true` or `false`; `CLAUDE_CODE_ENABLE_TELEMETRY` in `env` as a
    string, a whole number or `true` or `false`, and each
    `OTEL_*_EXPORTER` there as a string; `permissions.deny` as an array of
-   strings; and `hooks` as an object of arrays of groups, each with a
-   string `matcher` and an array of hooks whose `type` and `command` are
-   strings. A value in any other form leaves the run incomplete, with the
+   strings; and `hooks` as an object of arrays of groups, each group's
+   `matcher` a string and its `hooks` an array of objects whose `type`
+   and `command` are strings. A value in any other form leaves the run incomplete, with the
    value named (`incomplete: managed_setting_invalid`), never judged. Any
    other managed value is applied as Claude Code applies it. The run
    never reads your user-level or managed settings from your machine:
