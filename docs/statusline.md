@@ -307,8 +307,14 @@ setup changed back to its bytes before setup, from its backup, and remove
 each file and directory setup created. With `--dry-run` it stops there;
 otherwise it asks, as setup does, and writes only on the exact answer
 `yes`. After undo the files are byte for byte what they were, and the
-backup and the record are gone. With no undo record it says there is
-nothing to undo.
+backup and the record are gone. Undo also removes the status line's
+checkpoints from `--cache` (the files named after a session's keyed MAC,
+and any temporary file a killed run left), then each directory of
+`--cache` and its parents that setup created and that is now empty; a
+directory that existed before setup (`~/.weir`, holding the key, say)
+stays. A Claude Code session still running with the old settings can
+write a checkpoint again until it reloads them. With no undo record it
+says there is nothing to undo.
 
 When the settings file changed after setup (its keyed MAC is not the one
 the record holds for the bytes setup wrote) but its `statusLine` is still

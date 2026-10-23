@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shlex
 import stat
 import sys
@@ -241,6 +242,20 @@ def _digest(key: bytes, data: bytes) -> str:
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
+def _missing_dirs(path: Path) -> list[Path]:
+    """`path` and its parents that do not exist yet, deepest first."""
+    out: list[Path] = []
+    while not path.exists() and path != path.parent:
+        out.append(path)
+        path = path.parent
+    return out
+
+
+# The segment's checkpoint files, and the temporary files a killed run can
+# leave beside them (weir.statusline.segment, weir.statusline.files).
+_CHECKPOINT = re.compile(r"\.?[0-9a-f]{32}\.json(\..+)?")
+
+
 def _canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
@@ -269,6 +284,10 @@ def apply_setup(paths: Paths, plan: Plan, key: bytes) -> None:
             for n, change in enumerate(plan.changes)
         ],
         "created_dirs": [str(d.absolute()) for d in plan.created_dirs],
+        # The segment's checkpoints live here; undo removes them, and these
+        # directories when setup created them and they are left empty.
+        "cache": str(paths.cache.absolute()),
+        "state_dirs": [str(d) for d in _missing_dirs(paths.cache.absolute())],
     }
     write_private(paths.undo_record, json.dumps(record, indent=2).encode() + b"\n")
     for d in sorted(plan.created_dirs, key=lambda d: len(d.parts)):
@@ -303,6 +322,8 @@ class UndoPlan:
     key: bytes
     restores: list[Restore]
     created_dirs: list[Path]
+    cache: Path
+    state_dirs: list[Path]
 
 
 def _changed_after_setup(key: bytes, path: Path, written_mac: str) -> bool:
@@ -364,6 +385,8 @@ def plan_undo(cache: Path) -> UndoPlan | None:
             for e in record["files"]
         ]
         dirs = [Path(d) for d in record["created_dirs"]]
+        cache_dir = Path(record.get("cache") or record_path.parent)
+        state_dirs = [Path(d) for d in record.get("state_dirs", [])]
     except (ValueError, KeyError, TypeError, AttributeError):
         raise SetupError(f"{record_path}: not an undo record weir wrote", 2) from None
     try:
@@ -384,7 +407,7 @@ def plan_undo(cache: Path) -> UndoPlan | None:
         if rewrite is None or current is None:
             raise _changed_error(path, record_path)
         restores.append(Restore(path, backup, original, _digest(key, current), rewrite))
-    return UndoPlan(record_path, key, restores, dirs)
+    return UndoPlan(record_path, key, restores, dirs, cache_dir, state_dirs)
 
 
 def describe_undo(plan: UndoPlan) -> list[str]:
@@ -403,6 +426,9 @@ def describe_undo(plan: UndoPlan) -> list[str]:
         else:
             lines.append(f"restore {r.path} to its bytes before setup, from {r.backup}")
     for d in plan.created_dirs:
+        lines.append(f"remove the directory {d} if it is empty (setup created it)")
+    lines.append(f"remove the status line's checkpoints in {plan.cache}")
+    for d in plan.state_dirs:
         lines.append(f"remove the directory {d} if it is empty (setup created it)")
     return lines
 
@@ -431,6 +457,17 @@ def apply_undo(plan: UndoPlan) -> None:
         except OSError:
             pass  # not empty: something else lives there now
     plan.record.unlink()
+    try:
+        checkpoints = [p for p in plan.cache.iterdir() if _CHECKPOINT.fullmatch(p.name)]
+    except OSError:
+        checkpoints = []
+    for p in checkpoints:
+        p.unlink(missing_ok=True)
+    for d in sorted(plan.state_dirs, key=lambda d: -len(d.parts)):
+        try:
+            d.rmdir()
+        except OSError:
+            pass  # not empty: something else lives there now
 
 
 def confirmed(read_line: Callable[[], str]) -> bool:

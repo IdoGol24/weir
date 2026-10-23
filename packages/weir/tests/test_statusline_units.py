@@ -774,3 +774,31 @@ def test_a_cancelled_run_stops_the_existing_command_and_its_children(tmp_path: P
     for stream in (proc.stdout, proc.stderr):
         assert stream is not None
         stream.close()
+
+
+@sx.posix_shell
+@pytest.mark.parametrize("weir_dir_existed", [False, True])
+def test_undo_removes_the_checkpoints_and_the_state_dirs_setup_created(
+    tmp_path: Path, weir_dir_existed: bool
+) -> None:
+    claude = sx.build(tmp_path)
+    weir_dir = claude.state.parent
+    if weir_dir_existed:
+        weir_dir.mkdir(mode=0o700)
+        (weir_dir / "keep.txt").write_text("someone else's file\n")
+    assert not claude.state.exists()
+    _session(claude).write(claude.transcript())
+    assert _setup(claude).exit_code == 0
+    claude.statusline()
+    (checkpoint,) = [p for p in claude.state.glob("*.json") if p.name != "setup-undo.json"]
+    (claude.state / f".{checkpoint.name}.abc123").write_bytes(b"{")
+
+    run = claude.invoke(["statusline", "undo", "--cache", str(claude.state)], stdin="yes\n")
+
+    assert run.exit_code == 0, run.stderr
+    assert f"remove the status line's checkpoints in {claude.state}" in run.stdout
+    assert not claude.state.exists()
+    if weir_dir_existed:
+        assert (weir_dir / "keep.txt").read_text() == "someone else's file\n"
+    else:
+        assert not weir_dir.exists()
