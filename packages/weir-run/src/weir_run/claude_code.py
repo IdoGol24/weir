@@ -181,18 +181,34 @@ ACTIONS = (
 )
 
 # Settings that would take the model API, the key or the traffic away from
-# the mock: each is overridden and reported, never followed.
-ENDPOINT_VARIABLES = (
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "ANTHROPIC_BEDROCK_BASE_URL",
-    "ANTHROPIC_VERTEX_BASE_URL",
+# the mock: each is overridden and reported, never followed. A switch that
+# selects another model provider, and every variable that names a model
+# endpoint, key, token, resource or identity.
+PROVIDER_SWITCHES = frozenset(
+    f"CLAUDE_CODE_USE_{provider}"
+    for provider in (
+        "BEDROCK",
+        "VERTEX",
+        "FOUNDRY",
+        "MANTLE",
+        "ANTHROPIC_AWS",
+        "ANTHROPIC_GOOGLE_CLOUD",
+        "GATEWAY",
+    )
+)
+_MODEL_ENDPOINT = re.compile(
+    r"ANTHROPIC_(?:\w+_)?(?:BASE_URL|API_KEY|AUTH_TOKEN|RESOURCE)|ANTHROPIC_IDENTITY_TOKEN"
 )
 PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
-COMMAND_SETTINGS = ("apiKeyHelper",)
+# Settings that name a command Claude Code runs for a credential or a
+# header: never run.
+COMMAND_SETTINGS = {
+    "apiKeyHelper": "a command that prints a key",
+    "awsAuthRefresh": "a command that refreshes cloud credentials",
+    "awsCredentialExport": "a command that prints cloud credentials",
+    "gcpAuthRefresh": "a command that refreshes cloud credentials",
+    "otelHeadersHelper": "a command that prints telemetry headers",
+}
 TELEMETRY_SWITCH = "CLAUDE_CODE_ENABLE_TELEMETRY"
 # Claude Code applies the telemetry switch from these scopes only, never
 # from a project's settings files.
@@ -236,12 +252,10 @@ def apply_settings(data: dict[str, Any]) -> tuple[dict[str, Any], list[str], boo
     each of those at the mock."""
     out = dict(data)
     overrides: list[str] = []
-    for name in COMMAND_SETTINGS:
+    for name, what in COMMAND_SETTINGS.items():
         if name in out:
             del out[name]
-            overrides.append(
-                f"{name} (a command that prints a key): not run; the run used its fake key"
-            )
+            overrides.append(f"{name} ({what}): not run; the run used its fake key and the mock")
     raw_env = out.get("env")
     if raw_env is None:
         return out, overrides, False
@@ -251,7 +265,7 @@ def apply_settings(data: dict[str, Any]) -> tuple[dict[str, Any], list[str], boo
     telemetry = _truthy(env.get(TELEMETRY_SWITCH, ""))
     for name in sorted(env):
         upper = name.upper()
-        if name in ENDPOINT_VARIABLES:
+        if name in PROVIDER_SWITCHES or _MODEL_ENDPOINT.fullmatch(name):
             reason = "the run used the mock and its fake key instead"
         elif upper in PROXY_VARIABLES:
             reason = "the run sent nothing through a proxy"
