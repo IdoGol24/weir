@@ -6,6 +6,7 @@ from where the fixture put each value."""
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 import os
@@ -658,3 +659,25 @@ def test_command_records_and_compaction_summaries_do_not_start_a_turn(tmp_path: 
     assert next(x for x in acme if x.startswith("entered the context")).count("turn 2:") == 1
     assert "first at turn 3:" in next(x for x in acme if x.startswith("sent in a tool call"))
     assert "first at turn 2:" in next(x for x in gh if x.startswith("sent in a tool call"))
+
+
+@pytest.mark.parametrize("where", ["tool-results/t1.txt.gz", "subagents/agent-a1.jsonl", "x.gz"])
+def test_a_compressed_file_in_the_session_is_unknown_never_zero(
+    tmp_path: Path, where: str
+) -> None:
+    claude = sx.build(tmp_path)
+    session = fx.Session()
+    session.prompt("list the files")
+    session.tool_use("Bash", {"command": "ls"}, "t1")
+    session.tool_result("t1", "README.md\n")
+    session.write(claude.transcript())
+    packed = claude.session_dir() / where
+    packed.parent.mkdir(parents=True, exist_ok=True)
+    packed.write_bytes(gzip.compress(b"nothing secret in here\n"))
+
+    run = claude.statusline()
+
+    audit = claude.audit()
+    assert any(f.get("not_scanned") == "compressed" for f in audit["files"])  # type: ignore[union-attr]
+    assert run.stdout == sx.segment_for(sx.expected_counts(claude.setup, audit)) + "\n"
+    assert run.stdout == "weir: unknown\n"

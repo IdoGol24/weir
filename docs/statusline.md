@@ -82,7 +82,8 @@ other value (a `$(gh auth token)` export beside the token itself).
 
 Some of the session is **unknown** when the audit of any of its files is
 incomplete ([docs/audit.md](audit.md#unknown): an unrecognised format, a
-line that is not a record, a hit whose kind is unknown), when the
+line that is not a record, a hit whose kind is unknown, an empty file, a
+file compressed with gzip, which the audit does not scan), when the
 transcript is missing, or when the session's directory holds a symbolic
 link or an entry that is not a regular file or directory.
 

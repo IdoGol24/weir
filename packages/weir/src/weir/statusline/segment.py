@@ -38,6 +38,7 @@ from weir.audit.formats import (
     recognise_signs,
     signs,
 )
+from weir.canary.capture import compressed
 from weir.statusline.files import write_private
 
 CACHE_SCHEMA = "weir-statusline-cache/3"
@@ -46,6 +47,8 @@ CACHE_SCHEMA = "weir-statusline-cache/3"
 _STALE_TEMP_S = 60.0
 # The word the segment shows until every file is read to its end.
 SCANNING = "scanning\u2026"
+# Enough of a file's start to tell a compressed one (weir.canary.capture).
+_MAGIC_BYTES = 4
 # A step reads at least one whole line and stops at the first line end past this.
 CHUNK_BYTES = 64 * 1024
 # The bytes at the start of a file, and the bytes before the offset, whose
@@ -313,6 +316,16 @@ class Reader:
                 whole=False, offset=0, head_mac="", prefix_mac="", lines=Tally(), tail=None,
             )
             self._restart(entry)
+            handle.seek(0)
+            if compressed(handle.read(_MAGIC_BYTES)):
+                # Not scanned, as `weir audit` does not scan it: unknown,
+                # never a clean zero. Read again when it changes.
+                entry.whole = True
+                entry.offset = st.st_size
+                entry.lines = Tally(unknown=True)
+                entry.tail = Tally()
+                self.save()
+                return entry, st.st_size, st.st_size
             return self._steps(path, st, entry, handle, b"", b"")
 
     def _restart(self, entry: _Entry) -> None:
