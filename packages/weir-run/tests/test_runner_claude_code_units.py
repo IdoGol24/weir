@@ -738,3 +738,19 @@ def test_a_script_started_by_an_interpreter_named_by_its_path_is_checked(
     settings = [_hook_settings("project", tmp_path / "settings.json", command)]
     missing = claude_code.missing_scripts(settings, layout)
     assert [script for _, _, script in missing] == ["$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py"]
+
+
+def test_a_path_with_a_backslash_is_taken_literally_where_a_hook_names_the_project(
+    tmp_path: Path,
+) -> None:
+    # A backslash in a directory name, as in a Windows path, is a character
+    # of the path and never an escape.
+    root = tmp_path / "C\\Users\\run"
+    project = tmp_path / "C\\Users\\app"
+    _tree(project, {"tools/guard.py": "print('guard')\n"})
+    command = 'python3 "$CLAUDE_PROJECT_DIR"/tools/guard.py'
+    settings = [_hook_settings("project", project / ".claude" / "settings.json", command)]
+    layout = claude_code.Layout(root)
+    claude_code.prepare(ClaudeCodeSpec(key_owner=None, project=project), layout, settings)
+    assert (layout.project / "tools" / "guard.py").is_file()
+    assert claude_code.missing_scripts(settings, layout) == []
