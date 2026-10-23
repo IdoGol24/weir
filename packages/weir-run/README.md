@@ -423,7 +423,10 @@ weir-run run --config canary.toml
    the proxy variables, the OTLP endpoints, an OTLP protocol other than
    HTTP and long export intervals. With telemetry turned on, it is exported
    to the mock's receiver, and its spans, log records and metrics are
-   judged like any program's.
+   judged like any program's. Claude Code applies
+   `CLAUDE_CODE_ENABLE_TELEMETRY` from user and managed settings only:
+   set in a project's settings files alone, the verdict says Claude Code
+   does not apply it there, and the run expects no telemetry.
 4. **A sandbox with no home in it.** Claude Code runs inside bubblewrap,
    where your real home directory is not mounted at all: only the system
    directories (read-only), the Claude Code executable (read-only) and the

@@ -188,6 +188,9 @@ ENDPOINT_VARIABLES = (
 PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
 COMMAND_SETTINGS = ("apiKeyHelper",)
 TELEMETRY_SWITCH = "CLAUDE_CODE_ENABLE_TELEMETRY"
+# Claude Code applies the telemetry switch from these scopes only, never
+# from a project's settings files.
+TELEMETRY_SCOPES = ("managed", "user")
 OTLP_PROTOCOLS = ("http/protobuf", "http/json")
 _OTLP_ENDPOINT = re.compile(r"OTEL_EXPORTER_OTLP_(?:(?:TRACES|LOGS|METRICS)_)?ENDPOINT")
 _OTLP_PROTOCOL = re.compile(r"OTEL_EXPORTER_OTLP_(?:(?:TRACES|LOGS|METRICS)_)?PROTOCOL")
@@ -258,6 +261,12 @@ def apply_settings(data: dict[str, Any]) -> tuple[dict[str, Any], list[str], boo
         overrides.append(f"env.{name}: {reason}")
     out["env"] = env
     return out, overrides, telemetry
+
+
+def telemetry_expected(settings: Sequence[SettingsFile]) -> bool:
+    """Whether the settings under test turn telemetry on where Claude Code
+    applies the switch."""
+    return any(f.telemetry and f.scope in TELEMETRY_SCOPES for f in settings)
 
 
 @dataclass
@@ -847,9 +856,15 @@ def verdict(
         )
     coverage = report.get("coverage", {})
     exported = sum(coverage.get(k, 0) for k in ("spans", "log_records", "metric_data_points"))
-    if any(f.telemetry for f in settings) and not exported:
+    if telemetry_expected(settings):
+        if not exported:
+            lines.append(
+                "claude-code: telemetry: the settings turn it on, but Claude Code exported none"
+            )
+    elif any(f.telemetry for f in settings):
         lines.append(
-            "claude-code: telemetry: the settings turn it on, but Claude Code exported none"
+            f"claude-code: telemetry: Claude Code does not apply {TELEMETRY_SWITCH}"
+            " from project settings, so the run expected none"
         )
     states = {p["id"]: p for p in report.get("placements", [])}
     reached: dict[str, dict[str, list[str]]] = {}
@@ -1028,7 +1043,7 @@ def run_claude_code(
                 command=tuple(sandbox(bwrap, executable, layout, env)),
                 cwd=layout.root,
                 timeout_seconds=spec.timeout_seconds,
-                telemetry=any(f.telemetry for f in settings),
+                telemetry=telemetry_expected(settings),
             )
             outcome = run.run_flow(
                 flow, env={"PATH": os.environ.get("PATH", os.defpath), "LANG": "C.UTF-8"}

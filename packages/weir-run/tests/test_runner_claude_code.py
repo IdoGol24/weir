@@ -39,6 +39,9 @@ judge was written. Each expectation is one rule of the check's verdict:
     project's settings allow the read;
 13. without them, the verdict says that user-level and managed settings
     were not included, never that they were tested.
+14. Claude Code applies the telemetry switch from user and managed
+    settings, never from the project's: set in project settings alone, the
+    verdict says so and the run expects no telemetry, so it is judged.
 
 Every value is a fake the runner generates; the tests never see one. The
 tests that run Claude Code skip where it, bubblewrap or an isolated
@@ -407,3 +410,36 @@ def test_without_user_or_managed_settings_the_verdict_says_they_were_not_include
         "user settings" in ln or "managed settings" in ln
         for ln in run.starting("claude-code: settings under test: ")
     ), run.result.stdout
+
+
+TELEMETRY_ON = {
+    "env": {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "otlp",
+    }
+}
+PROJECT_TELEMETRY = (
+    "claude-code: telemetry: Claude Code does not apply CLAUDE_CODE_ENABLE_TELEMETRY"
+    " from project settings, so the run expected none"
+)
+
+
+@needs_claude_code
+def test_a_telemetry_switch_only_in_project_settings_is_reported_and_not_expected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    settings = {**TELEMETRY_ON, **DENY_DOTENV}
+    run = _run(tmp_path, monkeypatch, judge, settings=settings)
+    assert PROJECT_TELEMETRY in run.lines, run.result.stdout
+    assert "incomplete: empty_capture" not in run.lines, run.result.stdout
+    assert run.result.exit_code in (0, 1), run.result.output
+    assert any(ln.startswith("kept out: .env ") for ln in run.lines), run.result.stdout
+
+    # Where Claude Code honours the switch, it exports, and the line is not said.
+    (tmp_path / "user").mkdir()
+    user = _run(
+        tmp_path / "user", monkeypatch, judge, settings=settings, user_settings=TELEMETRY_ON
+    )
+    assert PROJECT_TELEMETRY not in user.lines, user.result.stdout
+    assert user.report["coverage"]["log_records"] > 0, user.result.stdout
