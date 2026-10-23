@@ -849,7 +849,8 @@ def test_a_managed_hooks_switch_that_is_not_true_or_false_keeps_the_hooks_checke
     path = (tmp_path / "managed_settings.json").resolve()
     assert (
         f"claude-code: managed settings {path}: allowManagedHooksOnly is a string, not true or"
-        " false; Claude Code does not apply it as written" in run.lines
+        " false: a form no test has shown Claude Code applies, so the run is incomplete"
+        in run.lines
     ), run.result.stdout
     script = "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py"
     assert (
@@ -869,7 +870,8 @@ def test_a_managed_telemetry_exporter_that_is_not_a_string_is_never_a_false_empt
     path = (tmp_path / "managed_settings.json").resolve()
     assert (
         f"claude-code: managed settings {path}: env.OTEL_LOGS_EXPORTER is an object, not a"
-        " string; Claude Code does not apply it as written" in run.lines
+        " string: a form no test has shown Claude Code applies, so the run is incomplete"
+        in run.lines
     ), run.result.stdout
     _not_judged(run, "managed_setting_invalid")
 

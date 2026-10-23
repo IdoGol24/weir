@@ -1535,14 +1535,14 @@ def not_run(
 ) -> list[str]:
     """The answer when a hook of the settings under test is missing its
     script, did not start, failed, timed out, or blocked because a command
-    it needs is missing, or a managed value the check reads is not of the
-    type Claude Code accepts: the controls did not run as configured, or
-    not knowably so, so the run is not judged."""
+    it needs is missing, or a managed value the check reads is in a form no
+    test has shown Claude Code applies: the controls did not run as
+    configured, or not knowably so, so the run is not judged."""
     lines = _settings_lines(setup, run, result)
     for found, key, what in unreadable:
         lines.append(
-            f"claude-code: {SCOPES[found.scope]} {_shown(found.path)}: {key} is {what};"
-            " Claude Code does not apply it as written"
+            f"claude-code: {SCOPES[found.scope]} {_shown(found.path)}: {key} is {what}:"
+            " a form no test has shown Claude Code applies, so the run is incomplete"
         )
     for hook, command, script in missing:
         lines.append(
