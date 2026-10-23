@@ -423,12 +423,61 @@ def test_undo_removes_a_settings_file_setup_created(tmp_path: Path) -> None:
 
 
 @sx.posix_shell
-def test_undo_refuses_when_the_settings_changed_after_setup(tmp_path: Path) -> None:
+def test_undo_takes_back_only_the_status_line_after_other_settings_changed(
+    tmp_path: Path,
+) -> None:
+    """Claude Code saves a setting after setup, so the file's bytes cannot
+    be restored whole: undo shows the change, puts back the old statusLine
+    on the exact answer yes, and keeps every other key as it is now."""
     claude = sx.build(tmp_path)
     _existing_settings(claude)
     assert _setup(claude, answer="yes\n").exit_code == 0
-    later = b'"theme": "dark", "permissions"'
-    edited = claude.settings.read_bytes().replace(b'"permissions"', later)
+    later = json.loads(claude.settings.read_text())
+    later["model"] = "fake-model"
+    edited = json.dumps(later, indent=2).encode()
+    claude.settings.write_bytes(edited)
+    before = _snapshot(claude.setup.home)
+
+    shown = _undo(claude, "--dry-run")
+    declined = _undo(claude, answer="y\n")
+    assert _snapshot(claude.setup.home) == before
+    run = _undo(claude, answer="yes\n")
+
+    for out in (shown, declined):
+        assert out.exit_code == 0, out.stderr
+        assert str(claude.settings) in out.stdout
+        assert "statusLine" in out.stdout
+    assert run.exit_code == 0, run.stderr
+    expected = {**later, "statusLine": _EXISTING["statusLine"]}
+    assert json.loads(claude.settings.read_text()) == expected
+    assert list(json.loads(claude.settings.read_text())) == list(expected)
+    assert not claude.command_file.exists()
+    assert not Path(str(claude.settings) + ".weir-backup").exists()
+
+
+@sx.posix_shell
+def test_undo_removes_the_status_line_it_added_and_keeps_later_settings(
+    tmp_path: Path,
+) -> None:
+    claude = sx.build(tmp_path)
+    assert _setup(claude, answer="yes\n").exit_code == 0
+    later = {**json.loads(claude.settings.read_text()), "model": "fake-model"}
+    claude.settings.write_text(json.dumps(later))
+
+    run = _undo(claude, answer="yes\n")
+
+    assert run.exit_code == 0, run.stderr
+    assert json.loads(claude.settings.read_text()) == {"model": "fake-model"}
+
+
+@sx.posix_shell
+def test_undo_refuses_when_the_status_line_changed_after_setup(tmp_path: Path) -> None:
+    claude = sx.build(tmp_path)
+    _existing_settings(claude)
+    assert _setup(claude, answer="yes\n").exit_code == 0
+    later = json.loads(claude.settings.read_text())
+    later["statusLine"]["padding"] = 3
+    edited = json.dumps(later).encode()
     claude.settings.write_bytes(edited)
 
     run = _undo(claude, answer="yes\n")
