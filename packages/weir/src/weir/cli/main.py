@@ -678,7 +678,10 @@ def statusline_setup_command(
     for line in statusline_setup.describe_setup(plan, withholder(inputs)):
         click.echo(line)
     undo = "weir statusline undo" + ("" if cache is None else f" --cache {paths.cache}")
-    click.echo(f"undo: {undo} puts every file back as it was, byte for byte")
+    click.echo(
+        f"undo: {undo} puts every file back as it was, byte for byte (only the status"
+        " line, when other settings change after setup)"
+    )
     if dry_run:
         click.echo("dry run: nothing written")
         return
