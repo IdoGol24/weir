@@ -64,7 +64,8 @@ judge was written. Each expectation is one rule of the check's verdict:
 24. a hook that starts a missing script through a shell option is
     caught like any other missing script;
 25. a settings file Claude Code skips as invalid is named as skipped,
-    never as applied.
+    never as applied;
+26. a step a hook blocked is named as blocked by a hook.
 
 Every value is a fake the runner generates; the tests never see one. The
 tests that run Claude Code skip where it, bubblewrap or an isolated
@@ -745,3 +746,16 @@ def test_a_settings_file_claude_code_skips_as_invalid_is_named_as_skipped(
     assert f"claude-code: settings under test: project settings {path}" not in run.lines
     # Its deny rules did not apply: the verdict says what Claude Code did.
     assert any(h["sink"] == "model" for h in run.hits(DOTENV)), run.report["hits"]
+
+
+@needs_claude_code
+def test_a_step_a_hook_blocked_is_named_as_blocked_by_a_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    settings = _pre_tool_use("block-secrets.sh")
+    run = _run(
+        tmp_path, monkeypatch, judge, settings=settings, hooks={"block-secrets.sh": BLOCK_DOTENV}
+    )
+    assert (
+        "kept out: .env (Read .env blocked by a hook, cat .env blocked by a hook)" in run.lines
+    ), run.result.stdout
