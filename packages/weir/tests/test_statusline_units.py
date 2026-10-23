@@ -10,6 +10,11 @@ import gzip
 import hashlib
 import json
 import os
+import random
+import signal
+import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
 
@@ -21,6 +26,7 @@ import statusline_fixtures as sx
 from weir.audit import Chunk, Form, audit_chunks, audit_files, load_inputs
 from weir.audit.matching import Matcher
 from weir.canary import Form as CanaryForm
+from weir.statusline import compose
 from weir.statusline import setup as statusline_setup
 from weir.statusline.compose import run_beside
 from weir.statusline.segment import tally
@@ -681,3 +687,90 @@ def test_a_compressed_file_in_the_session_is_unknown_never_zero(
     assert any(f.get("not_scanned") == "compressed" for f in audit["files"])  # type: ignore[union-attr]
     assert run.stdout == sx.segment_for(sx.expected_counts(claude.setup, audit)) + "\n"
     assert run.stdout == "weir: unknown\n"
+
+
+# --- the existing command is bounded and stopped with what it started ---------------
+
+
+def _running(command: str) -> bool:
+    """Whether a process runs with exactly this command line (`sleep 123.4`,
+    say), not one that only mentions it in an argument."""
+    argv = [part.encode() for part in command.split()]
+    for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            if cmdline.read_bytes().split(b"\0")[: len(argv) + 1] == [*argv, b""]:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+_PROC = pytest.mark.skipif(not Path("/proc/self/cmdline").exists(), reason="needs /proc")
+
+
+@sx.posix_shell
+@_PROC
+@pytest.mark.parametrize(
+    ("command", "shown"),
+    [
+        ("sleep {s}", "weir: x"),
+        ("sleep {s}; echo late", "weir: x"),
+        ("echo early; sleep {s}", "weir: x"),
+        ("(sleep {s}; echo bg) & echo fg", "fg | weir: x"),
+    ],
+)
+def test_an_existing_command_is_bounded_and_stopped_with_its_children(
+    monkeypatch: pytest.MonkeyPatch, command: str, shown: str
+) -> None:
+    monkeypatch.setattr(compose, "INNER_TIMEOUT_S", 1.0)
+    seconds = f"{random.randrange(100, 900)}.{random.randrange(1000, 9999)}"
+    result: list[str] = []
+    worker = threading.Thread(
+        target=lambda: result.append(
+            compose.run_beside(command.format(s=seconds), b"{}", lambda: "weir: x")
+        ),
+        daemon=True,
+    )
+
+    worker.start()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive(), "the run waited on the existing command past its bound"
+    assert result == [shown]
+    deadline = time.monotonic() + 2
+    while _running(f"sleep {seconds}") and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _running(f"sleep {seconds}"), "a child of the existing command outlived it"
+
+
+@sx.posix_shell
+@_PROC
+def test_a_cancelled_run_stops_the_existing_command_and_its_children(tmp_path: Path) -> None:
+    claude = sx.build(tmp_path)
+    _session(claude).write(claude.transcript())
+    seconds = f"{random.randrange(100, 900)}.{random.randrange(1000, 9999)}"
+    inner = f"sleep {seconds}; echo late"
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "weir", "statusline", *claude.inputs(), "--cache",
+         str(claude.state), "--inner", inner],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=claude.env(),
+    )
+    assert proc.stdin is not None
+    proc.stdin.write(sx.status_json(claude.transcript(), fx.SESSION_ID).encode())
+    proc.stdin.close()
+    deadline = time.monotonic() + 30
+    while not _running(f"sleep {seconds}") and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert _running(f"sleep {seconds}")
+
+    proc.send_signal(signal.SIGTERM)
+    proc.wait(timeout=10)
+
+    assert proc.returncode == 128 + signal.SIGTERM
+    deadline = time.monotonic() + 2
+    while _running(f"sleep {seconds}") and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _running(f"sleep {seconds}"), "the existing command outlived the cancelled run"
+    for stream in (proc.stdout, proc.stderr):
+        assert stream is not None
+        stream.close()

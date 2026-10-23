@@ -169,9 +169,16 @@ With `--inner COMMAND`, the segment runs `COMMAND` in a shell with the same
 JSON on stdin, while it reads the session, and prints that command's
 output first, then ` | ` and the segment on its last line. A command that
 exits non-zero, prints nothing, or runs more than 10 seconds shows the
-segment alone, as Claude Code would show nothing for it. When Claude Code
-cancels the run, the command is stopped with it. Its error output is
-discarded.
+segment alone, as Claude Code would show nothing for it. Its error output
+is discarded.
+
+The command runs in a process group of its own, so stopping it stops
+everything it started. It is stopped when it runs past 10 seconds, when
+Claude Code cancels the run (SIGTERM), and, half a second after the
+command itself exits, when a child it left in the background still holds
+its output open: the output printed until then is shown. Nothing it
+starts outlives the run. On a system without process groups only the
+command itself is stopped.
 
 ## The /weir report
 
