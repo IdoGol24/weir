@@ -631,12 +631,18 @@ def copy_memory(project: Path, target: Path) -> None:
                 queue.append((imported, depth + 1))
 
 
+def _literal(pattern: re.Pattern[str], path: str, text: str) -> str:
+    """text with each match of pattern replaced by path as it is: a
+    backslash in a path is a character, never an escape."""
+    return pattern.sub(lambda _: path, text)
+
+
 def _hook_source(script: str, spec: ClaudeCodeSpec, layout: Layout) -> tuple[Path, Path] | None:
     """The file a hook's script names on the user's machine, and where it
     goes in the scratch layout: in the project, the passed user
     configuration or the passed managed configuration only."""
     project = str(spec.project)
-    expanded = _HOME_DIR.sub("~", _PROJECT_DIR.sub(project, script))
+    expanded = _HOME_DIR.sub("~", _literal(_PROJECT_DIR, project, script))
     if expanded.startswith("~"):
         user = spec.user_settings
         if expanded.startswith("~/.claude/") and user is not None and user.is_dir():
@@ -1196,7 +1202,8 @@ def _in_sandbox(script: str, layout: Layout) -> bool:
     """Whether a script a hook names is there for it in the sandbox. One
     named through a variable other than the project directory or the home
     is not judged here."""
-    expanded = _HOME_DIR.sub(str(layout.home), _PROJECT_DIR.sub(str(layout.project), script))
+    in_project = _literal(_PROJECT_DIR, str(layout.project), script)
+    expanded = _literal(_HOME_DIR, str(layout.home), in_project)
     if expanded == "~" or expanded.startswith("~/"):
         expanded = str(layout.home) + expanded[1:]
     if "$" in expanded:
