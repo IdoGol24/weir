@@ -416,10 +416,20 @@ weir-run run --config canary.toml
    verdict lists the files it applied, highest first. A settings file
    Claude Code skips as invalid (it says so in its debug log, which the
    run reads) is named as skipped, and none of its settings is counted as
-   applied. The run never reads your user-level or managed settings from
-   your machine: pass a copy of each to include it. When one is not
-   passed, the verdict says so (`user-level and managed settings not
-   included`), and the run does not imply it was tested. The project is
+   applied. Claude Code skips a project, local or user settings file with
+   an invalid value, but keeps a managed one: it applies the rest of the
+   file and reads the invalid value its own way, as on for some settings
+   and as absent for others, mostly without saying so. So a managed value
+   the check reads (`allowManagedHooksOnly`, `disableAllHooks`, the hooks,
+   the permission rules, and `CLAUDE_CODE_ENABLE_TELEMETRY` and the
+   `OTEL_*_EXPORTER` variables in `env`) that is not of the type Claude
+   Code accepts leaves the run incomplete, with the value named
+   (`incomplete: managed_setting_invalid`), never judged. Any other
+   invalid managed value is applied as Claude Code applies it. The run
+   never reads your user-level or managed settings from your machine:
+   pass a copy of each to include it. When one is not passed, the verdict
+   says so (`user-level and managed settings not included`), and the run
+   does not imply it was tested. The project is
    marked trusted. Claude Code runs with `HOME` and `CLAUDE_CONFIG_DIR` in
    the scratch home.
 2. **Fake secrets where real ones usually sit**, each a fresh random value:

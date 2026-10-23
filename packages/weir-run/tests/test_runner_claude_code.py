@@ -73,7 +73,12 @@ judge was written. Each expectation is one rule of the check's verdict:
 29. a managed settings file with an invalid value is not skipped: Claude
     Code drops that value and applies the rest, so the file is under test,
     its telemetry switch is expected to export, and its
-    allowManagedHooksOnly keeps the project hooks from running.
+    allowManagedHooksOnly keeps the project hooks from running;
+30. a managed value the check reads that is not of the type Claude Code
+    accepts leaves the run incomplete, with the value named, never judged:
+    an `allowManagedHooksOnly` that is not true or false keeps the project
+    hooks checked, and a telemetry exporter that is not a string never
+    ends as a false empty capture.
 
 Every value is a fake the runner generates; the tests never see one. The
 tests that run Claude Code skip where it, bubblewrap or an isolated
@@ -823,3 +828,38 @@ def test_a_managed_settings_file_with_an_invalid_value_is_applied_without_it(
     # Claude Code ran no project hook, so its missing script did not matter.
     assert "incomplete: hook_not_started" not in run.lines, run.result.stdout
     assert any(h["sink"] == "model" for h in run.hits(DOTENV)), run.report["hits"]
+
+
+@needs_claude_code
+def test_a_managed_hooks_switch_that_is_not_true_or_false_keeps_the_hooks_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    managed = {"allowManagedHooksOnly": "yes"}
+    run = _run(tmp_path, monkeypatch, judge, settings=_guarded(GUARD), managed_settings=managed)
+    path = (tmp_path / "managed_settings.json").resolve()
+    assert (
+        f"claude-code: managed settings {path}: allowManagedHooksOnly is a string, not true or"
+        " false; Claude Code does not apply it as written" in run.lines
+    ), run.result.stdout
+    script = "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py"
+    assert (
+        f"claude-code: hook PreToolUse:Read|Bash did not run: {GUARD}"
+        f" (its script {script} is missing)" in run.lines
+    ), run.result.stdout
+    assert "incomplete: hook_not_started" in run.lines, run.result.stdout
+    _not_judged(run, "managed_setting_invalid")
+
+
+@needs_claude_code
+def test_a_managed_telemetry_exporter_that_is_not_a_string_is_never_a_false_empty_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    env = {**TELEMETRY_ON["env"], "OTEL_LOGS_EXPORTER": {"type": "otlp"}}
+    run = _run(tmp_path, monkeypatch, judge, managed_settings={"env": env})
+    path = (tmp_path / "managed_settings.json").resolve()
+    assert (
+        f"claude-code: managed settings {path}: env.OTEL_LOGS_EXPORTER is an object, not a"
+        " string, number or boolean; Claude Code does not apply it as written" in run.lines
+    ), run.result.stdout
+    assert "incomplete: empty_capture" not in run.lines, run.result.stdout
+    _not_judged(run, "managed_setting_invalid")

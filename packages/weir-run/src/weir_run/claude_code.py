@@ -27,6 +27,11 @@ mock, and judges what it sent:
    overridden, and each override is reported; it is never followed. The
    scratch config marks the project trusted. A settings file Claude Code
    skips as invalid, which it says in its debug log, is named as skipped.
+   Claude Code skips a project, local or user settings file with an
+   invalid value, but keeps a managed one: it applies the rest and reads
+   the invalid value its own way, mostly without saying so. So a managed
+   value the check reads that is not of the type Claude Code accepts
+   (`unreadable_managed`) leaves the run incomplete, with the value named.
 3. **Run.** Inside bubblewrap, where the real home is not mounted at all,
    and inside the isolated network with the name and TLS stub, so every
    other host it tries is named and what it sends there is judged. The
@@ -288,6 +293,77 @@ def apply_settings(data: dict[str, Any]) -> tuple[dict[str, Any], list[str], boo
     return out, overrides, telemetry
 
 
+# The managed values the check reads, each with the JSON types Claude Code
+# accepts for it: a value of another type is not applied as written.
+_SCALAR = (str, int, float)  # bool is an int
+_TELEMETRY_ENV = re.compile(rf"{TELEMETRY_SWITCH}|OTEL_(?:LOGS|METRICS|TRACES)_EXPORTER")
+
+
+def _kind(value: object) -> str:
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, int | float):
+        return "a number"
+    if isinstance(value, str):
+        return "a string"
+    if isinstance(value, list):
+        return "an array"
+    return "an object" if isinstance(value, dict) else "null"
+
+
+def _read_values(
+    data: dict[str, Any],
+) -> Iterator[tuple[str, object, type | tuple[type, ...], str]]:
+    """(key, value, accepted types, what they are) for each value the check
+    reads from a settings file: the hooks switches, the telemetry switch
+    and exporters, the permission rules and the hooks."""
+    for name in ("allowManagedHooksOnly", "disableAllHooks"):
+        if name in data:
+            yield name, data[name], bool, "true or false"
+    for name, value in _obj(data.get("env")).items():
+        if _TELEMETRY_ENV.fullmatch(name):
+            yield f"env.{name}", value, _SCALAR, "a string, number or boolean"
+    if "permissions" in data:
+        yield "permissions", data["permissions"], dict, "an object"
+    permissions = _obj(data.get("permissions"))
+    for kind in ("allow", "deny", "ask"):
+        if kind in permissions:
+            yield f"permissions.{kind}", permissions[kind], list, "an array"
+            for i, rule in enumerate(_list(permissions[kind])):
+                yield f"permissions.{kind}[{i}]", rule, str, "a string"
+    if "hooks" in data:
+        yield "hooks", data["hooks"], dict, "an object"
+    for event, groups in _obj(data.get("hooks")).items():
+        yield f"hooks.{event}", groups, list, "an array"
+        for g, group in enumerate(_list(groups)):
+            at = f"hooks.{event}[{g}]"
+            yield at, group, dict, "an object"
+            fields = _obj(group)
+            if "matcher" in fields:
+                yield f"{at}.matcher", fields["matcher"], str, "a string"
+            if "hooks" in fields:
+                yield f"{at}.hooks", fields["hooks"], list, "an array"
+            for h, entry in enumerate(_list(fields.get("hooks"))):
+                yield f"{at}.hooks[{h}]", entry, dict, "an object"
+                for name, value in _obj(entry).items():
+                    if name in ("type", "command"):
+                        yield f"{at}.hooks[{h}].{name}", value, str, "a string"
+
+
+def unreadable_managed(settings: Sequence[SettingsFile]) -> list[tuple[SettingsFile, str, str]]:
+    """Each managed value the check reads that is not of the type Claude
+    Code accepts, as (file, key, what it is): Claude Code keeps the file
+    and reads such a value its own way, mostly without saying so, so the
+    check cannot tell what it applied."""
+    return [
+        (found, key, f"{_kind(value)}, not {expected}")
+        for found in settings
+        if found.scope == "managed"
+        for key, value, accepted, expected in _read_values(found.data)
+        if not isinstance(value, accepted)
+    ]
+
+
 def telemetry_expected(settings: Sequence[SettingsFile]) -> bool:
     """Whether the settings under test turn telemetry on where Claude Code
     applies the switch."""
@@ -354,15 +430,6 @@ class Layout:
         if applied.scope == "managed" and applied.path.parent.name == MANAGED_DROP_INS:
             return self.managed_dir / MANAGED_DROP_INS / applied.path.name
         return self.settings(applied.scope)
-
-    def seen(self, applied: SettingsFile) -> Path:
-        """The path Claude Code names a settings file under test by, from
-        inside the sandbox: the managed directory is mounted at
-        MANAGED_SETTINGS."""
-        target = self.target(applied)
-        if target.is_relative_to(self.managed_dir):
-            return MANAGED_SETTINGS / target.relative_to(self.managed_dir)
-        return target
 
     def file(self, secret: Secret) -> Path:
         return (self.project if secret.root == "project" else self.home) / secret.path
@@ -1232,7 +1299,7 @@ _SKIPPED = re.compile(
 def skipped_settings(layout: Layout, settings: Sequence[SettingsFile]) -> dict[Path, str]:
     """The settings files under test Claude Code skipped as invalid, from
     its debug log, and why: none of their settings applied."""
-    by_target = {str(layout.seen(s)): s.path for s in settings}
+    by_target = {str(layout.target(s)): s.path for s in settings}
     skipped: dict[Path, list[str]] = {}
     if layout.debug_log.is_file():
         for line in layout.debug_log.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -1459,14 +1526,21 @@ def not_run(
     setup: Setup,
     missing: Sequence[tuple[str, str, str]],
     failures: Sequence[HookFailure],
+    unreadable: Sequence[tuple[SettingsFile, str, str]],
     run: CheckRun,
     result: str,
 ) -> list[str]:
     """The answer when a hook of the settings under test is missing its
     script, did not start, failed, timed out, or blocked because a command
-    it needs is missing: the controls did not run as configured, so the
-    run is not judged."""
+    it needs is missing, or a managed value the check reads is not of the
+    type Claude Code accepts: the controls did not run as configured, or
+    not knowably so, so the run is not judged."""
     lines = _settings_lines(setup, run, result)
+    for found, key, what in unreadable:
+        lines.append(
+            f"claude-code: {SCOPES[found.scope]} {_shown(found.path)}: {key} is {what};"
+            " Claude Code does not apply it as written"
+        )
     for hook, command, script in missing:
         lines.append(
             f"claude-code: hook {hook} did not run: {command} (its script {script} is missing)"
@@ -1480,6 +1554,8 @@ def not_run(
         lines.append("incomplete: hook_not_started")
     if any(f.started for f in failures):
         lines.append("incomplete: hook_failed")
+    if unreadable:
+        lines.append("incomplete: managed_setting_invalid")
     lines.append("result: incomplete")
     return lines
 
@@ -1639,12 +1715,14 @@ def run_claude_code(
             missing = missing_scripts(setup.applied, layout)
             reported = {command for _, command, _ in missing}
             failures = [f for f in hook_failures(layout) if f.command not in reported]
+            unreadable = unreadable_managed(setup.applied)
             run.stop()
             # Claude Code's stdout is its JSON result: summarised in the
             # verdict and judged as its console output, not relayed.
             run.relay(err, streams=("stderr",))
-            if missing or failures:
-                lines = not_run(setup, missing, failures, run, _result(outcome.stdout, run))
+            if missing or failures or unreadable:
+                result = _result(outcome.stdout, run)
+                lines = not_run(setup, missing, failures, unreadable, run, result)
                 out.write(run.redacted("\n".join(lines).encode() + b"\n"))
                 return 3
             verdict_text = run.judge(json_report=True)

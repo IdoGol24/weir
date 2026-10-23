@@ -81,7 +81,11 @@
   managed drop-in files included, filtered the same way; everything is
   layered as Claude Code layers it, the verdict listing each file applied
   and what it copied, naming a settings file Claude Code skipped as
-  invalid, and saying `user-level and managed settings not included`
+  invalid, leaving the run incomplete (`incomplete:
+  managed_setting_invalid`, the value named) when a managed value the
+  check reads is not of the type Claude Code accepts, since Claude Code
+  keeps such a file and reads the value its own way, and saying
+  `user-level and managed settings not included`
   when they are not passed (the run never reads them from the user's
   machine). The mock's model asks for ordinary coding actions (read the
   files, run `cat` and `env`), and where Claude Code would ask the user,

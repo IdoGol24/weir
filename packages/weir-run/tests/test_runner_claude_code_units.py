@@ -688,22 +688,43 @@ def test_a_settings_file_claude_code_skipped_as_invalid_is_read_from_its_debug_l
     }
 
 
-@pytest.mark.parametrize(
-    "name", ["managed-settings.json", "managed-settings.d/10-a.json"], ids=["file", "drop-in"]
-)
-def test_a_managed_settings_file_claude_code_skipped_is_read_by_its_path_in_the_sandbox(
-    tmp_path: Path, name: str
+# Each case a managed settings file and the keys the check cannot read in it.
+MANAGED_VALUES: list[tuple[dict[str, Any], list[str]]] = [
+    ({"allowManagedHooksOnly": True, "disableAllHooks": False}, []),
+    ({"allowManagedHooksOnly": "yes"}, ["allowManagedHooksOnly"]),
+    ({"disableAllHooks": 1}, ["disableAllHooks"]),
+    ({"cleanupPeriodDays": 0, "model": 5}, []),
+    ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": 1, "OTEL_LOGS_EXPORTER": "otlp"}}, []),
+    ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": True}}, []),
+    (
+        {"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": {"on": 1}}},
+        ["env.CLAUDE_CODE_ENABLE_TELEMETRY"],
+    ),
+    ({"env": {"OTEL_METRICS_EXPORTER": ["otlp"]}}, ["env.OTEL_METRICS_EXPORTER"]),
+    ({"env": {"OTHER": {"x": 1}}}, []),
+    ({"permissions": "bad"}, ["permissions"]),
+    ({"permissions": {"deny": "Read(./.env)"}}, ["permissions.deny"]),
+    ({"permissions": {"allow": ["Bash"], "ask": [5]}}, ["permissions.ask[0]"]),
+    ({"hooks": 5}, ["hooks"]),
+    ({"hooks": {"PreToolUse": "x"}}, ["hooks.PreToolUse"]),
+    ({"hooks": {"PreToolUse": [{"matcher": 1, "hooks": []}]}}, ["hooks.PreToolUse[0].matcher"]),
+    (
+        {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": 5}]}]}},
+        ["hooks.Stop[0].hooks[0].command"],
+    ),
+    ({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "a.sh"}]}]}}, []),
+]
+
+
+@pytest.mark.parametrize(("data", "keys"), MANAGED_VALUES)
+def test_a_managed_value_the_check_reads_must_be_of_the_type_claude_code_accepts(
+    tmp_path: Path, data: dict[str, Any], keys: list[str]
 ) -> None:
-    layout = claude_code.Layout(tmp_path / "scratch")
-    passed = tmp_path / "policy" / name
-    settings = [claude_code.SettingsFile("managed", passed, {})]
-    layout.debug_log.parent.mkdir(parents=True, exist_ok=True)
-    layout.debug_log.write_text(
-        "2026-10-23T10:14:15.850Z [ERROR] Invalid setting skipped without dialog"
-        f" (automated session): /etc/claude-code/{name}: cleanupPeriodDays: bad\n",
-        encoding="utf-8",
-    )
-    assert claude_code.skipped_settings(layout, settings) == {passed: "cleanupPeriodDays: bad"}
+    managed = claude_code.SettingsFile("managed", tmp_path / "managed.json", data)
+    project = claude_code.SettingsFile("project", tmp_path / "settings.json", data)
+    found = claude_code.unreadable_managed([managed, project])
+    assert [key for _, key, _ in found] == keys
+    assert all(where is managed for where, _, _ in found)
 
 
 @pytest.mark.parametrize(
