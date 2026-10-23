@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -23,17 +24,19 @@ INNER_TIMEOUT_S = 10.0
 # (a background child it left behind holds it) before that child is stopped.
 _OUTPUT_GRACE_S = 0.5
 # Each existing command runs in a process group of its own, so stopping it
-# stops what it started (POSIX; elsewhere only the command itself).
-_GROUPS = hasattr(os, "killpg")
+# stops what it started (POSIX; on Windows only the command itself).
+_GROUPS = sys.platform != "win32"
 
 
 def _stop_group(proc: subprocess.Popen[bytes]) -> None:
     """Stop the existing command and every process it started."""
     try:
-        if _GROUPS:
-            os.killpg(proc.pid, signal.SIGKILL)
-        else:
+        # Tested on sys.platform itself, not _GROUPS, so the type checker
+        # knows os.killpg exists here.
+        if sys.platform == "win32":
             proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
     except OSError:
         pass  # gone already
 
