@@ -266,8 +266,9 @@ path absolute, so they do not depend on the PATH Claude Code runs them
 with.
 
 With `--dry-run` it stops there. Otherwise it asks, and writes only when
-the answer is exactly `yes`, lower-case; any other answer (`y`, `YES`),
-or no input, writes nothing. When it writes, it writes first the undo record,
+the answer is exactly the line `yes`, lower-case, with nothing before or
+after it; any other answer (`y`, `YES`, ` yes`, `yes `), or no input,
+writes nothing. When it writes, it writes first the undo record,
 `<cache>/setup-undo.json`, then a copy of the settings file's bytes before
 setup, `settings.json.weir-backup` beside it (owner-only), then the files,
 each atomically, keeping the settings file's permissions. Just before it

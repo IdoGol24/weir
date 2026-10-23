@@ -474,3 +474,18 @@ def test_a_half_written_checkpoint_a_killed_run_left_is_removed(tmp_path: Path) 
     assert run.stdout == sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
     assert not old.exists()
     assert young.exists()  # it may be a live run's
+
+
+@sx.posix_shell
+@pytest.mark.parametrize("answer", [" yes\n", "\tyes\n", "yes \n", "YES\n", "y\n"])
+def test_undo_applies_only_on_the_exact_answer_yes(tmp_path: Path, answer: str) -> None:
+    claude = sx.build(tmp_path)
+    claude.settings.write_bytes(b'{"theme": "dark"}\n')
+    assert _setup(claude).exit_code == 0
+    before = _files(claude.setup.home)
+
+    run = claude.invoke(["statusline", "undo", "--cache", str(claude.state)], stdin=answer)
+
+    assert run.exit_code == 0, run.stderr
+    assert "not applied" in run.stdout
+    assert _files(claude.setup.home) == before

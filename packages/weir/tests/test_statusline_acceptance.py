@@ -319,7 +319,9 @@ def test_setup_dry_run_shows_the_change_and_writes_nothing(tmp_path: Path) -> No
 
 
 @sx.posix_shell
-@pytest.mark.parametrize("answer", ["y\n", "Y\n", "YES\n", "Yes\n", "yes please\n"])
+@pytest.mark.parametrize(
+    "answer", ["y\n", "Y\n", "YES\n", "Yes\n", "yes please\n", " yes\n", "\tyes\n", "yes \n"]
+)
 def test_setup_applies_only_on_the_exact_answer_yes(tmp_path: Path, answer: str) -> None:
     claude = sx.build(tmp_path)
     _existing_settings(claude)
