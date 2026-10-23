@@ -548,14 +548,14 @@ def _segment(
         session_id, transcript = session.get("session_id"), session.get("transcript_path")
     except (ValueError, AttributeError):
         return "weir: no session"
-    if not isinstance(session_id, str) or not isinstance(transcript, str) or not transcript:
+    if not (isinstance(session_id, str) and valid_session_id(session_id)
+            and isinstance(transcript, str) and transcript):
         return "weir: no session"
     try:
         inputs = load_inputs(report_path, store_path, key_path)
         inputs_bytes = report_path.read_bytes() + b"\0" + store_path.read_bytes()
         return read_session(
-            inputs, inputs_bytes, cache, transcript,
-            session_id if valid_session_id(session_id) else "",
+            inputs, inputs_bytes, cache, transcript, session_id,
             _claude_config_dirs(), budget_ms / 1000,
         )
     except Exception:  # the status line must always print a line

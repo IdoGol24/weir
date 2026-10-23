@@ -42,7 +42,7 @@ that fails:
 | `weir: unknown` | some of the session is unknown, and nothing was found in the rest: the counts would be a false zero |
 | `weir: checking P%` | the session is not read in full yet (see [Speed](#speed-and-the-cache)); P% of its bytes are; nothing found so far |
 | `weir: C in context, S sent, checking P%` | the same, with what was found so far |
-| `weir: no session` | stdin is not the status line JSON, or has no session id or transcript path |
+| `weir: no session` | stdin is not the status line JSON, or has no transcript path or no session id that is a plain name (it holds a `/`, or starts with a `.`, say) |
 | `weir: error, run /weir` | the inventory inputs cannot be used (a wrong key, say), or the cache cannot be written; `/weir` prints the inventory's error |
 
 `--inventory`, `--store` and `--key` are the three inputs of `weir audit`,
@@ -82,13 +82,9 @@ link or an entry that is not a regular file or directory.
 ### The session's files
 
 The session is the transcript Claude Code names, and every file in the
-session's own directory beside it, `<transcript directory>/<session id>/`
-(and the directory named after the transcript's file name, when the two
-differ): subagent transcripts (`subagents/*.jsonl`) and their sidecars,
-saved large tool outputs (`tool-results/*`), and anything else Claude Code
-keeps there. A session id that is not a plain name (it holds a `/`, or
-starts with a `.`) names no directory; the one named after the
-transcript's file name is still read.
+session's own directory beside it, `<transcript directory>/<session id>/`:
+subagent transcripts (`subagents/*.jsonl`) and their sidecars, saved large
+tool outputs (`tool-results/*`), and anything else Claude Code keeps there.
 `CLAUDE_CONFIG_DIR`, when set, is handed to the audit as `weir audit`
 hands it.
 

@@ -133,26 +133,22 @@ def session_files(transcript: str, session_id: str) -> SessionFiles:
     unreadable, never skipped."""
     files = [transcript]
     unreadable = not os.path.isfile(transcript)
-    parent = os.path.dirname(transcript)
-    stem = PurePath(transcript).stem
-    for name in dict.fromkeys((stem, session_id)):
-        top = os.path.join(parent, name)
-        if not name or not os.path.isdir(top) or os.path.islink(top):
-            unreadable = unreadable or os.path.islink(top)
-            continue
-        for root, dirs, names in os.walk(top):
-            dirs.sort()
-            for d in list(dirs):
-                if os.path.islink(os.path.join(root, d)):
-                    dirs.remove(d)
-                    unreadable = True
-            for n in sorted(names):
-                path = os.path.join(root, n)
-                mode = os.lstat(path).st_mode
-                if stat.S_ISREG(mode):
-                    files.append(path)
-                else:
-                    unreadable = True
+    top = os.path.join(os.path.dirname(transcript), session_id)
+    if os.path.islink(top):
+        return SessionFiles(files, True)
+    for root, dirs, names in os.walk(top):
+        dirs.sort()
+        for d in list(dirs):
+            if os.path.islink(os.path.join(root, d)):
+                dirs.remove(d)
+                unreadable = True
+        for n in sorted(names):
+            path = os.path.join(root, n)
+            mode = os.lstat(path).st_mode
+            if stat.S_ISREG(mode):
+                files.append(path)
+            else:
+                unreadable = True
     return SessionFiles(files, unreadable)
 
 

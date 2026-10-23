@@ -244,10 +244,8 @@ def report_lines(
     """The report for one session. Raises `AuditInputError` on a file the
     audit refuses (a FIFO in the session's directory, say)."""
     paths = [transcript]
-    parent, stem = os.path.dirname(transcript), PurePath(transcript).stem
-    for name in dict.fromkeys((stem, session_id)):
-        if name and os.path.isdir(os.path.join(parent, name)):
-            paths.append(os.path.join(parent, name))
+    if os.path.isdir(os.path.join(os.path.dirname(transcript), session_id)):
+        paths.append(os.path.join(os.path.dirname(transcript), session_id))
     report: Report = audit_files(
         inputs.credentials, inputs.key, inputs.by_fingerprint, paths, claude_config_dirs
     )

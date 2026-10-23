@@ -122,7 +122,10 @@ def test_a_wrong_key_is_an_error_word_on_the_line(tmp_path: Path) -> None:
     assert (run.exit_code, run.stdout) == (0, "weir: error, run /weir\n")
 
 
-@pytest.mark.parametrize("stdin", ["", "not json", "[]", '{"session_id": "x"}'])
+@pytest.mark.parametrize("stdin", [
+    "", "not json", "[]", '{"session_id": "x"}',
+    '{"session_id": "../x", "transcript_path": "/fake/x.jsonl"}',
+])
 def test_input_that_is_not_the_status_line_json_says_so(tmp_path: Path, stdin: str) -> None:
     claude = sx.build(tmp_path)
 
