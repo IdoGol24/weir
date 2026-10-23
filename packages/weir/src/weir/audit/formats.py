@@ -212,13 +212,15 @@ def recognise_signs(
     `recognise` gives, but for a file that is one OTLP export request as a
     whole (`whole_otlp`), which is `unknown` here."""
     where = PurePath(os.path.abspath(path))
-    if _is_session(where, seen, projects_dirs):
-        return Format.CLAUDE_CODE
     # Claude Code's other files count only inside a Claude Code projects
     # directory: a `tool-results` or `subagents` folder elsewhere is anyone's.
     claude = _in_claude_projects(where, projects_dirs)
+    # A saved tool output is text Claude Code stored, whatever its lines hold:
+    # an old session file the agent printed is not a session of its own.
     if claude and where.parent.name == "tool-results":
         return Format.CLAUDE_CODE_TOOL_RESULTS
+    if _is_session(where, seen, projects_dirs):
+        return Format.CLAUDE_CODE
     if _is_claude_code_memory(where, projects_dirs):
         return Format.CLAUDE_CODE_MEMORY
     if claude and where.parent.name == "subagents" and where.name.endswith(".meta.json"):

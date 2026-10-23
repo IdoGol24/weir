@@ -509,3 +509,29 @@ def test_an_empty_session_file_is_unknown_as_the_audit_says(tmp_path: Path, wher
     assert audit["unknown"]  # the audit lists the empty file as unknown
     assert run.stdout == sx.segment_for(sx.expected_counts(claude.setup, audit)) + "\n"
     assert "unknown" in run.stdout
+
+
+def test_a_saved_output_that_holds_an_old_session_is_stored_not_sent(tmp_path: Path) -> None:
+    """The agent printed an old session file: its records sit in a saved
+    tool output, which nothing in this session sent or read back."""
+    claude = sx.build(tmp_path)
+    v = claude.setup.values
+    session = fx.Session()
+    session.prompt("show me the old session")
+    session.tool_use("Bash", {"command": "cat old.jsonl"}, "toolu_01")
+    session.tool_result("toolu_01", "output saved to a file")
+    session.write(claude.transcript())
+    old = fx.Session(session_id="00000000-0000-4000-8000-000000000001")
+    old.prompt("an old prompt")
+    old.tool_use("Bash", {"command": f"aws --secret {v[fx.AWS_SECRET]} s3 ls"}, "toolu_old")
+    saved = claude.session_dir() / "tool-results" / "toolu_01.txt"
+    old.write(saved)
+
+    run = claude.statusline()
+
+    audit = claude.audit()
+    formats = {f["file"]: f["format"] for f in audit["files"]}  # type: ignore[union-attr]
+    assert formats[str(saved)] == "claude-code-tool-results"
+    expected = sx.expected_counts(claude.setup, audit)
+    assert expected == (0, 0, False)
+    assert run.stdout == sx.segment_for(expected) + "\n"
