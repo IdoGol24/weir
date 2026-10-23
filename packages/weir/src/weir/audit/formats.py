@@ -126,6 +126,12 @@ def _is_claude_code(obj: dict[str, Json]) -> bool:
     )
 
 
+def is_session_record(obj: Json) -> bool:
+    """A Claude Code message record: a file holding one is a `claude-code`
+    file whatever else it holds."""
+    return isinstance(obj, dict) and _is_claude_code(obj)
+
+
 def _in_claude_projects(where: PurePath, projects_dirs: Sequence[PurePath]) -> bool:
     """Inside a `.claude/projects` directory, or inside the `projects`
     directory of the Claude config directory `CLAUDE_CONFIG_DIR` names."""
@@ -134,16 +140,39 @@ def _in_claude_projects(where: PurePath, projects_dirs: Sequence[PurePath]) -> b
     return any(where.is_relative_to(projects) for projects in projects_dirs)
 
 
-def _is_session(where: PurePath, lines: list[Line], projects_dirs: Sequence[PurePath]) -> bool:
+@dataclass(frozen=True)
+class Signs:
+    """What a file's lines show of its format. The signs of a file's lines
+    are the signs of its parts joined (`|`), so they can be gathered a part
+    at a time, and gathering a part again changes nothing."""
+
+    message: bool = False  # a Claude Code message record
+    records: bool = False  # a line that is a JSON object
+    other: bool = False  # a record whose type is not a bookkeeping type
+    otlp: bool = False  # a line that is an OTLP export request
+
+    def __or__(self, other: Signs) -> Signs:
+        return Signs(
+            self.message or other.message, self.records or other.records,
+            self.other or other.other, self.otlp or other.otlp,
+        )
+
+
+def signs(lines: list[Line]) -> Signs:
+    records = [line.parsed for line in lines if line.parsed is not None]
+    return Signs(
+        message=any(_is_claude_code(r) for r in records), records=bool(records),
+        other=any(_str(r.get("type")) not in _BOOKKEEPING_TYPES for r in records),
+        otlp=any(is_otlp(r) for r in records),
+    )
+
+
+def _is_session(where: PurePath, seen: Signs, projects_dirs: Sequence[PurePath]) -> bool:
     """A record with a session id, or, inside a Claude Code projects
     directory, records whose types are all bookkeeping types."""
-    records = [line.parsed for line in lines if line.parsed is not None]
-    if any(_is_claude_code(record) for record in records):
+    if seen.message:
         return True
-    return (
-        bool(records) and all(_str(r.get("type")) in _BOOKKEEPING_TYPES for r in records)
-        and _in_claude_projects(where, projects_dirs)
-    )
+    return seen.records and not seen.other and _in_claude_projects(where, projects_dirs)
 
 
 _SIGNAL_LISTS = frozenset({"resourceSpans", "resourceLogs", "resourceMetrics"})
@@ -170,23 +199,45 @@ def recognise(
 ) -> Format:
     """`projects_dirs`: the `projects` directories of the Claude config
     directories given, as absolute paths."""
+    fmt = recognise_signs(path, signs(lines), projects_dirs)
+    if fmt is Format.UNKNOWN and whole_otlp(data, lines) is not None:
+        return Format.OTLP
+    return fmt
+
+
+def recognise_signs(
+    path: str, seen: Signs, projects_dirs: Sequence[PurePath] = ()
+) -> Format:
+    """The format the path and the signs of a file's lines give: what
+    `recognise` gives, but for a file that is one OTLP export request as a
+    whole (`whole_otlp`), which is `unknown` here."""
     where = PurePath(os.path.abspath(path))
-    if _is_session(where, lines, projects_dirs):
-        return Format.CLAUDE_CODE
     # Claude Code's other files count only inside a Claude Code projects
     # directory: a `tool-results` or `subagents` folder elsewhere is anyone's.
     claude = _in_claude_projects(where, projects_dirs)
+    # A saved tool output is text Claude Code stored, whatever its lines hold:
+    # an old session file the agent printed is not a session of its own.
     if claude and where.parent.name == "tool-results":
         return Format.CLAUDE_CODE_TOOL_RESULTS
+    if _is_session(where, seen, projects_dirs):
+        return Format.CLAUDE_CODE
     if _is_claude_code_memory(where, projects_dirs):
         return Format.CLAUDE_CODE_MEMORY
     if claude and where.parent.name == "subagents" and where.name.endswith(".meta.json"):
         return Format.CLAUDE_CODE_SUBAGENT_META
-    if any(is_otlp(line.parsed) for line in lines):
-        return Format.OTLP
-    if whole_otlp(data, lines) is not None:
+    if seen.otlp:
         return Format.OTLP
     return Format.UNKNOWN
+
+
+def may_be_whole(start: bytes, lines: list[Line]) -> bool:
+    """Whether a file that starts with the whole lines `start` (parsed as
+    `lines`) can be one JSON object as a whole, as `whole_otlp` needs: it
+    starts with `{` after JSON whitespace, and its first line is not a JSON
+    object of its own (the whole file would then be that line and
+    whitespace, a line `recognise` reads already)."""
+    first = start.lstrip(b" \t\r\n")[:1]
+    return first in (b"{", b"") and not (lines and lines[0].parsed is not None)
 
 
 def whole_otlp(data: bytes, lines: list[Line]) -> dict[str, Json] | None:

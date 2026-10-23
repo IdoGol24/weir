@@ -14,7 +14,8 @@ import enum
 
 import msgspec
 
-from weir.canary import Form, Signal
+from weir.canary import Form as CanaryForm
+from weir.canary import Signal
 
 AUDIT_SCHEMA = "weir-audit/1"
 
@@ -45,6 +46,21 @@ class Kind(enum.Enum):
     CONTEXT = "context"
     UNKNOWN = "unknown"
     STORED = "stored"
+
+
+class Form(enum.StrEnum):
+    """The form a hit was found in, in table order (docs/audit.md)."""
+
+    # The canary judge's encoded forms, then `name`: a tool call that names an
+    # environment credential (docs/audit.md, "References by name").
+    RAW = CanaryForm.RAW.value
+    JSON = CanaryForm.JSON.value
+    JSON2 = CanaryForm.JSON2.value
+    URL = CanaryForm.URL.value
+    BASE64 = CanaryForm.BASE64.value
+    BASE64URL = CanaryForm.BASE64URL.value
+    HEX = CanaryForm.HEX.value
+    NAME = "name"
 
 
 class Format(enum.Enum):

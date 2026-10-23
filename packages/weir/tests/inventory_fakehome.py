@@ -536,6 +536,7 @@ def build(root: Path) -> FakeHome:
 
     key = root / "test.key"
     _write(key, TEST_KEY_HEX + "\n")
+    key.chmod(0o600)  # a key file is its owner's alone, as weir inventory creates one
     return FakeHome(
         root=root, home=home, project=project, env_file=env_file, gitleaks=gitleaks,
         trufflehog=trufflehog, key=key,

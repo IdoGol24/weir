@@ -203,6 +203,42 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+# docs/statusline.md: the status line and the /weir report are display only,
+# local and offline. They read session files through the audit and start
+# one process only, the status line command already in the user's settings.
+# No network, no randomness, none of the trace pipeline, and none of the
+# inventory code that reads credential values.
+name = "status line is local: no network, randomness or pipeline"
+type = "forbidden"
+source_modules = ["weir.statusline"]
+forbidden_modules = [
+    "socket",
+    "ssl",
+    "http",
+    "urllib",
+    "ftplib",
+    "smtplib",
+    "xmlrpc",
+    "socketserver",
+    "asyncio",
+    "random",
+    "secrets",
+    "weir.cli",
+    "weir.adapters",
+    "weir.inventory.core",
+    "weir.inventory.fingerprint",
+    "weir.graph",
+    "weir.gauge",
+    "weir.label",
+    "weir.taint",
+    "weir.evaluate",
+    "weir.exposure",
+    "weir.report",
+    "weir.rules_commons",
+    "weir_tracegen",
+]
+
+[[tool.importlinter.contracts]]
 name = "tracegen is dev-side only: the engine never imports it"
 type = "forbidden"
 source_modules = ["weir"]

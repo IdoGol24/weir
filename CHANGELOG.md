@@ -7,7 +7,8 @@
   agent sessions (experimental).** Given the `weir-inventory/1` report, the
   fingerprint store and the key from one `weir inventory --store` run, it
   reads Claude Code session files (main transcripts, subagent transcripts
-  and their sidecars, and saved tool outputs), `CLAUDE.md` and auto-memory files, and OTLP/JSON
+  and their sidecars, and saved tool outputs, which are stored text whatever
+  their lines hold), `CLAUDE.md` and auto-memory files, and OTLP/JSON
   telemetry (GenAI attributes and Claude Code's own log events) offline,
   and reports per
   credential, by inventory name and never by value, whether it entered the
@@ -23,6 +24,58 @@
   directory it names counts like `~/.claude/projects`.
   Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
   schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
+- **weir-scan: `weir audit` finds a credential a tool call sends by name.**
+  The command a shell runs (the `command` argument of Claude Code's `Bash`
+  or `PowerShell` tool) that expands the name of an
+  environment variable credential as `$NAME`, `${NAME}` with any modifier,
+  or PowerShell's `$env:NAME` is a `tool_call` hit with the new form
+  `name`, since the tool's shell sends whatever the variable holds. An
+  environment variable is an assignment in the launch environment or a
+  shell startup file, not a credential shape found loose there. It counts
+  for every such variable, its value read or not, so one the store
+  holds no fingerprint of is `in_tool_call` when a tool call names it, and
+  `not_checkable` only when none does. A name anywhere else, such as a
+  prompt, another argument or a file the agent writes, is not a hit. The `weir-audit/1` schema's `form` gains `name`.
+- **weir-scan: `weir statusline`, a Claude Code status-line segment and a
+  `/weir` session report (experimental).** The segment reads the session
+  JSON Claude Code passes on stdin, audits that session's transcript,
+  subagent transcripts and saved tool outputs with the inventory's keyed
+  fingerprints, and prints counts only: `weir: 2 in context, 1 sent` (the
+  distinct values that entered the context, and what was sent in a tool
+  call: values sent by value or by name, and a variable of several values
+  sent by name once for its name),
+  `weir: unknown` when a file is in a format it
+  cannot read (an empty or compressed file included) and nothing was found
+  elsewhere, `part unknown` beside counts otherwise, and `scanning… P%`
+  while a long session is still being read. It
+  reads a session in steps and caches what each step found (credential
+  ids, offsets and keyed MACs, never a value), so it fits in a status line
+  run and picks up where the last run stopped, even when Claude Code
+  cancels runs again and again: each step's checkpoint is written
+  atomically, a step of a text file is at most 256 KiB however long its
+  lines, and a cancelled run loses at most that step. A refresh reads what
+  was appended plus one 1 MiB block of the part already read, checked
+  against a keyed MAC, so a rewrite in place is also found. `weir statusline report`
+  lists, per credential, its source, the turn and tool call that put it in
+  the context or sent it, where it now sits, and advice.
+  `weir statusline setup` shows the exact settings change, adds the
+  segment beside the status line command already there (which keeps
+  running, its output first, bounded to 10 seconds and stopped with
+  everything it started) and installs the `/weir` command, writing
+  nothing until you type exactly `yes`; `--dry-run` only shows it.
+  `weir statusline undo` restores the files byte for byte; when Claude
+  Code changed other settings since, it puts back only the status line
+  and keeps the rest, and it refuses when the status line itself changed.
+  It also removes the status line's checkpoints. Setup supports POSIX shells (Linux, macOS) only
+  for now and refuses on Windows. Display only, local and offline
+  ([docs/statusline.md](docs/statusline.md)).
+- **weir-scan: a fingerprint key file others can read is refused.**
+  `weir inventory`, `weir audit` and `weir statusline` refuse (exit 2) a
+  key file another user owns or that others can read or write, instead of
+  using it; `weir inventory` still creates a missing key with mode 0600.
+  Anyone who can read the key can test guesses against every fingerprint
+  made under it. What to do: `chmod 600` the key file if it was made by
+  hand.
 - **weir-scan: the inventory store carries a key check.**
   `weir-inventory-store/1` gains `key_check`, an HMAC of a fixed message
   under the fingerprint key, so a reader can tell the store's key from

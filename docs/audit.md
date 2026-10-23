@@ -14,7 +14,8 @@ of them reach a coding agent? It takes the keyed fingerprints that
 machine, reads saved agent session files or exported telemetry, and
 reports, per credential, whether its value **entered the agent's context**
 (the agent read it: a tool result, a prompt, an attachment) or was **sent
-out in a tool call** (the agent put it in a tool's arguments), with counts
+out in a tool call** (the agent put it in a tool's arguments, or named an
+environment credential there for the tool's shell to expand), with counts
 and locations. It never prints a value or any fragment of one.
 
 The audit works from fingerprints alone. It never reads a credential file
@@ -68,6 +69,9 @@ bytes is not scanned (`compressed`).
   before 0.7.0: run `weir inventory --store` again).
 - The key file is 64 hex characters (surrounding whitespace ignored), as
   `weir inventory` writes it. Anything else is exit 2.
+- The key file is its owner's alone, as `weir inventory` creates it (mode
+  0600): one another user owns, or that others can read or write, is
+  exit 2, never used or repaired.
 - A store record with a `fingerprint_v` other than 1 is exit 2.
 
 An error names the input, never content read from it.
@@ -78,7 +82,10 @@ A credential is **checkable** when the store holds a fingerprint of its
 value: the report's `value_state` is `literal`. Every other credential (a
 whole-file credential, a shell expansion, a scanner result the file does
 not hold, a value not fully read) is listed as **not checkable**, with its
-`value_state`, and is never reported as not found.
+`value_state`, and is never reported as not found. An environment
+variable is also found by its name, whatever its `value_state` (see
+[References by name](#references-by-name)): one a tool call names is
+`in_tool_call`, not checkable or not.
 
 ## Files and formats
 
@@ -90,8 +97,8 @@ report still prints the path as given:
 
 | format | recognised when | read as |
 | --- | --- | --- |
-| `claude-code` | a JSON Lines file whose parsed lines are JSON objects, at least one a Claude Code message record: `type` `user` or `assistant`, a string `sessionId` and a `message` object; or, with no such record, a JSON Lines file inside a Claude Code projects directory with at least one record, every record's `type` a bookkeeping type: `summary`, or a type the Claude Code table below makes `stored` at every location (`file-history-snapshot`, say). A Claude Code projects directory is a directory `projects` directly inside a directory named `.claude` (`~/.claude/projects/`), or, when the environment variable `CLAUDE_CONFIG_DIR` is set, the `projects` directory of the Claude config directory it names; any other directory named `projects` is not one. A `user` or `assistant` record without a string `sessionId`, or a record of any other type, makes such a file `unknown` | a Claude Code session file: the main transcript or a subagent's (`<session>/subagents/*.jsonl`), or a file of bookkeeping records beside them |
-| `claude-code-tool-results` | a file whose parent directory is named `tool-results`, inside a Claude Code projects directory (as defined for `claude-code` above) | a large tool output Claude Code saved beside a session (`<session>/tool-results/`): text |
+| `claude-code` | not a `claude-code-tool-results` file (below), and a JSON Lines file whose parsed lines are JSON objects, at least one a Claude Code message record: `type` `user` or `assistant`, a string `sessionId` and a `message` object; or, with no such record, a JSON Lines file inside a Claude Code projects directory with at least one record, every record's `type` a bookkeeping type: `summary`, or a type the Claude Code table below makes `stored` at every location (`file-history-snapshot`, say). A Claude Code projects directory is a directory `projects` directly inside a directory named `.claude` (`~/.claude/projects/`), or, when the environment variable `CLAUDE_CONFIG_DIR` is set, the `projects` directory of the Claude config directory it names; any other directory named `projects` is not one. A `user` or `assistant` record without a string `sessionId`, or a record of any other type, makes such a file `unknown` | a Claude Code session file: the main transcript or a subagent's (`<session>/subagents/*.jsonl`), or a file of bookkeeping records beside them |
+| `claude-code-tool-results` | a file whose parent directory is named `tool-results`, inside a Claude Code projects directory (as defined for `claude-code` above), whatever its lines hold: a saved output that holds an old session's records (the agent printed one) is this format, not `claude-code` | a large tool output Claude Code saved beside a session (`<session>/tool-results/`): text |
 | `claude-code-subagent-meta` | a file named `*.meta.json` in a directory named `subagents`, inside a Claude Code projects directory | the sidecar Claude Code keeps beside a subagent's transcript (`<session>/subagents/agent-*.meta.json`): one JSON object |
 | `claude-code-memory` | a file named `CLAUDE.md`, anywhere, or a `.md` file in a directory named `memory` inside a Claude Code projects directory (`projects/<project>/memory/*.md`, `MEMORY.md` included) | a file Claude Code loads into the agent's context: a `CLAUDE.md` or an auto-memory file. Text |
 | `otlp` | a JSON Lines file whose parsed lines are OTLP/JSON export requests (an object holding `resourceSpans`, `resourceLogs` or `resourceMetrics`), or, when no line is an export request, a whole file that is one such request (pretty-printed, say) | exported telemetry |
@@ -134,6 +141,7 @@ fingerprinted, or **decoded candidates** directly:
 | `base64` | the candidates of each run of 8 or more characters of `A-Za-z0-9+/` (and up to two `=` after it), decoded from its first, second, third and fourth character on (a last group of 2 or 3 characters padded, one of 1 dropped), read as UTF-8 |
 | `base64url` | the same for each run of 8 or more characters of `A-Za-z0-9_-` that holds a `-` or a `_` |
 | `hex` | the candidates of each run of 16 or more hex digits, decoded from its first and from its second digit on, up to the last whole pair, read as UTF-8 |
+| `name` | not the value: a reference to an environment credential by its variable name, in a tool call (see [References by name](#references-by-name)) |
 
 The JSON string literal rule and the url rule decode a candidate found in
 the encoded string, so a value holding a separator (a quote, say) is still
@@ -183,6 +191,36 @@ value (`same_value_as`) all match.
 
 One string gives at most one **hit** per credential: its location, and the
 first form in the table above that holds it.
+
+### References by name
+
+A tool call can send a credential without holding its value: a shell
+command that reads `$ACME_API_TOKEN` sends whatever the variable holds in
+the agent's environment. So the string a shell runs, the `command`
+argument of a tool call to Claude Code's `Bash` or `PowerShell` tool (the
+`Bash` tool runs background shells too), is also searched for the names
+of the **environment variables**: the
+credentials whose inventory `source` is `environment` and whose
+`detectors` hold `launch_env` or `startup_file`, the assignments in the
+launch environment and in the shell startup files that export into it. A
+credential shape found loose in a startup file (in a comment or a
+here-document) is named after its shape, not a variable, and is not one. It
+holds a credential's name when it holds `$NAME`,
+`${NAME` (`${NAME}`, `${NAME:-default}` and the other modifiers) or
+PowerShell's `$env:NAME`, with `NAME` exactly the credential's name (a
+shell variable name: a letter or `_`, then letters, digits or `_`), not
+followed by a letter, digit or `_`, and the `$` not just after a `\` or
+another `$`. Such a string is a hit of kind `tool_call` with form `name`
+for every environment variable of that name. A name in any other place
+(a prompt, a tool result, another argument, a file the agent writes with
+the `Write` tool) is not a hit: no shell expands it there.
+
+The audit reads the reference, not the shell: it does not parse quoting
+(`'$NAME'` in single quotes counts, since nested shells such as
+`bash -c '... $NAME'` make a quote-aware rule unsafe), and it does not see
+a shell another tool runs (an MCP tool, or a script the agent wrote and a
+`Bash` command then runs by its file name). A reference by name says the
+tool call could send the credential; a hit by value says it held it.
 
 ### What a hit means
 
@@ -285,7 +323,7 @@ holds:
 
 | state | when |
 | --- | --- |
-| `not_checkable` | the store holds no fingerprint of it |
+| `not_checkable` | the store holds no fingerprint of it, and no tool call names it |
 | `in_tool_call` | at least one `tool_call` hit |
 | `in_context` | at least one `context` hit |
 | `unknown` | at least one `unknown` hit |
@@ -450,7 +488,7 @@ A hit:
 | `tool` | string or null | the tool's name |
 | `argument` | string or null | the location within the tool call's arguments |
 | `location` | string or null | the location within the record, or within a JSON line of a text file; null for any other text line |
-| `form` | string | the first form whose decoded text held the value |
+| `form` | string | the first form whose decoded text held the value, or `name` for a reference by name |
 
 ## What the audit does not claim
 
@@ -463,6 +501,10 @@ credentials and the matching rules above. The audit does not find:
   assignment, quoted run, PEM or word rule takes whole;
 - a value hashed, encrypted, compressed, or encoded in a way not listed
   (URL-encoded base64, UTF-16, HTML entities);
+- a credential a tool call reaches by name in any way but the references
+  listed ([References by name](#references-by-name)): a program that
+  reads its environment (`os.environ`, `process.env`), a variable copied to
+  another name first, a file credential named by its path;
 - a credential whose value changed since the inventory ran (its
   fingerprint is of the old value);
 - anything in the agent's context that is not in the files given: a

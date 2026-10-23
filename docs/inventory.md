@@ -34,7 +34,7 @@ weir inventory --home DIR [--project DIR] [--env-file FILE | --process-env]
 | `--process-env` | Use this process's own environment as the launch environment. Without either option only shell startup files are read, and the report says so. |
 | `--gitleaks` | Import a gitleaks JSON report (`gitleaks detect --report-format json`). Repeatable. Relative `File` paths resolve against the project. |
 | `--trufflehog` | Import a trufflehog JSON report (`trufflehog filesystem|git --json`, one result per line). Repeatable. |
-| `--key` | Fingerprint key file, created (mode 0600) when missing. Default `HOME/.weir/fingerprint.key`. |
+| `--key` | Fingerprint key file, created (mode 0600) when missing. Default `HOME/.weir/fingerprint.key`. A key file another user owns, or that others can read or write, is refused (exit 2), never used or repaired: anyone who can read the key can test guesses against every fingerprint made under it. |
 | `--unknown-list` | Where the unknown environment variable names go. Default `HOME/.weir/unknown-env.txt`. Always written, one `NAME<TAB>location` per line, names only. |
 | `--store` | Write the fingerprint store here (keyed fingerprints plus offsets, mode 0600). Nothing is stored without it. |
 | `--json` | Print the `weir-inventory/1` report instead of the names-only text. |
