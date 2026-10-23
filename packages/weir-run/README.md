@@ -383,9 +383,11 @@ weir-run run --config canary.toml
 ### What the run does
 
 1. **A scratch project and a scratch home.** The project holds a short
-   README and copies of your project's `CLAUDE.md` and whole `.claude`
+   README and copies of your project's `CLAUDE.md` and `.claude`
    directory (`settings.json`, `settings.local.json`, hooks, commands,
-   agents, skills, `CLAUDE.md`), where they exist; `user_settings`
+   agents, skills, `CLAUDE.md`), where they exist; a symbolic link in
+   `.claude` is left out, never followed, and so are the git worktrees
+   Claude Code keeps in `.claude/worktrees`; `user_settings`
    becomes the scratch home's user settings, and `managed_settings` the
    sandbox's managed settings (`/etc/claude-code/managed-settings.json`).
    Claude Code layers them as it would for you: for ordinary values,

@@ -10,9 +10,10 @@ mock, and judges what it sent:
    scratch home and an environment variable; and a fake model key in
    `ANTHROPIC_API_KEY`, whose own provider is the mock's model API and,
    for an Anthropic key, its own host (`key_owner`).
-2. **Settings under test.** The project's whole `.claude` directory (its
+2. **Settings under test.** The project's `.claude` directory (its
    `settings.json` and `settings.local.json`, hooks, commands, agents and
-   skills) and its `CLAUDE.md`, and the user and managed settings files the
+   skills, but not its symbolic links or the worktrees Claude Code keeps
+   there) and its `CLAUDE.md`, and the user and managed settings files the
    config passes, are copied where Claude Code reads them in the scratch
    project, the scratch home and the sandbox's managed settings directory,
    so it layers them as it would for the user. The run never reads a real
@@ -371,6 +372,22 @@ def settings_under_test(spec: ClaudeCodeSpec) -> list[SettingsFile]:
     return found
 
 
+# What Claude Code itself keeps in a project's .claude directory rather
+# than the configuration under test: the git worktrees of `--worktree`.
+RUNTIME_STATE = frozenset({"worktrees"})
+
+
+def copy_configuration(source: Path, target: Path) -> None:
+    """Copy a project's .claude directory but every symbolic link, never
+    followed, and Claude Code's runtime state at its top."""
+
+    def skipped(directory: str, names: list[str]) -> set[str]:
+        links = {name for name in names if (Path(directory) / name).is_symlink()}
+        return links | (RUNTIME_STATE & set(names) if Path(directory) == source else set())
+
+    shutil.copytree(source, target, ignore=skipped)
+
+
 def prepare(spec: ClaudeCodeSpec, layout: Layout) -> None:
     """The scratch project and home, before any value is planted."""
     if not spec.project.is_dir():
@@ -380,9 +397,7 @@ def prepare(spec: ClaudeCodeSpec, layout: Layout) -> None:
     if (spec.project / "CLAUDE.md").is_file():
         shutil.copyfile(spec.project / "CLAUDE.md", layout.project / "CLAUDE.md")
     if (spec.project / ".claude").is_dir():
-        shutil.copytree(
-            spec.project / ".claude", layout.project / ".claude", ignore_dangling_symlinks=True
-        )
+        copy_configuration(spec.project / ".claude", layout.project / ".claude")
     (layout.project / "README.md").write_text(
         "# billing\n\nA small service. Settings live in `.env` and `config/app.json`.\n",
         encoding="utf-8",

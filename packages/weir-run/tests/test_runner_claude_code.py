@@ -26,7 +26,7 @@ judge was written. Each expectation is one rule of the check's verdict:
 8. permission rules from every settings file merge, and a deny in any of
    them wins: a local allow rule cannot override a shared deny, and the
    secret stays kept out;
-9. the project's whole `.claude` directory is under test: a PreToolUse
+9. the project's `.claude` directory is under test: a PreToolUse
    hook script in `.claude/hooks` that blocks reading the `.env` keeps it
    out;
 10. a hook whose script is missing did not start: the run is incomplete,

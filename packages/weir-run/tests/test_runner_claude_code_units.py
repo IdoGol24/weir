@@ -1,5 +1,6 @@
 """The parts of the Claude Code check that need no Claude Code: the
-settings overrides, the config, the scripted steps, the name stub's
+settings overrides, the config, the copy of the project's `.claude`
+directory, the scripted steps, the name stub's
 answers and the TLS stub, driven by a small Python flow.
 
 The TLS stub tests need the isolated network. Where it is unavailable they
@@ -21,7 +22,7 @@ from weir_run import claude_code, config, isolation
 from weir_run.check import CheckRun
 from weir_run.mock.intercept import answer, question
 from weir_run.mock.model import ModelApi
-from weir_run.spec import FlowSpec, PlacementSpec, RunSpec, ScriptStep, SpecError
+from weir_run.spec import ClaudeCodeSpec, FlowSpec, PlacementSpec, RunSpec, ScriptStep, SpecError
 
 # -- the settings under test ---------------------------------------------------
 
@@ -119,6 +120,43 @@ def _turn(api: ModelApi, messages: list[dict[str, Any]], tools: list[str]) -> di
     }
     body, _ = api.messages(request)
     return json.loads(body)
+
+
+def test_the_project_claude_directory_is_copied_without_worktrees_or_symlinks(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "app"
+    source = project / ".claude"
+    configuration = {
+        "settings.json": '{"permissions": {"deny": ["Read(./.env)"]}}',
+        "hooks/block-secrets.sh": "#!/bin/sh\nexit 2\n",
+        "commands/review.md": "Review the change.\n",
+        "agents/reviewer.md": "---\nname: reviewer\n---\n",
+        "skills/deploy/SKILL.md": "---\nname: deploy\n---\n",
+        "CLAUDE.md": "Keep secrets out.\n",
+    }
+    for name, text in configuration.items():
+        (source / name).parent.mkdir(parents=True, exist_ok=True)
+        (source / name).write_text(text, encoding="utf-8")
+    worktree = source / "worktrees" / "feature"
+    worktree.mkdir(parents=True)
+    (worktree / ".env").write_text("API_TOKEN=fake-worktree-token\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("fake-outside-secret\n", encoding="utf-8")
+    (source / "linked").symlink_to(outside, target_is_directory=True)
+    (source / "commands" / "linked.md").symlink_to(outside / "secret.txt")
+
+    layout = claude_code.Layout(tmp_path / "run")
+    claude_code.prepare(ClaudeCodeSpec(key_owner=None, project=project), layout)
+
+    copied = layout.project / ".claude"
+    found = {p.relative_to(copied).as_posix() for p in copied.rglob("*") if not p.is_dir()}
+    assert found == set(configuration)
+    for name, text in configuration.items():
+        assert (copied / name).read_text(encoding="utf-8") == text
+    assert not (copied / "worktrees").exists()
+    assert not any(p.is_symlink() for p in copied.rglob("*"))
 
 
 def _answered(reply: dict[str, Any]) -> list[dict[str, Any]]:

@@ -71,8 +71,9 @@
   network. It plants fake secrets in the project's `.env`, a project
   config file, a credentials file in the scratch home and an environment
   variable, and a fake model key with `ANTHROPIC_BASE_URL` at the mock;
-  copies in the project's whole `.claude` directory (settings, hooks,
-  commands, agents, skills) and `CLAUDE.md`, and applies
+  copies in the project's `.claude` directory (settings, hooks,
+  commands, agents, skills; not its symbolic links or its `worktrees`)
+  and `CLAUDE.md`, and applies
   `user_settings` as the user's own settings and `managed_settings` as
   managed settings, layered as Claude Code layers them, the verdict
   listing each file applied and saying `user-level and managed settings
