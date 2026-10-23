@@ -26,7 +26,7 @@ import statusline_fixtures as sx
 from weir.audit import Chunk, Form, audit_chunks, audit_files, load_inputs
 from weir.audit.matching import Matcher
 from weir.canary import Form as CanaryForm
-from weir.statusline import compose
+from weir.statusline import compose, segment
 from weir.statusline import setup as statusline_setup
 from weir.statusline.compose import run_beside
 from weir.statusline.segment import tally
@@ -87,7 +87,13 @@ def test_a_file_rewritten_in_place_is_read_again_from_the_start(tmp_path: Path) 
     assert run.stdout == "weir: 0 in context, 0 sent\n"
 
 
-def test_a_line_still_being_written_is_unknown_until_it_is_whole(tmp_path: Path) -> None:
+def test_a_line_still_being_written_is_not_unknown_until_it_stops_changing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Claude Code writes a record in more than one write now and then: a
+    last line without its line end in a file that changed in the last few
+    seconds is a record being written, not counted yet. One that stays
+    unfinished (a session that stopped mid-line) is unknown."""
     claude = sx.build(tmp_path)
     v = claude.setup.values
     session = fx.Session()
@@ -96,14 +102,26 @@ def test_a_line_still_being_written_is_unknown_until_it_is_whole(tmp_path: Path)
     session.tool_result("toolu_01", f"TOKEN={v[fx.ACME]}\n")
     path = session.write(claude.transcript())
     whole = path.read_bytes()
-    path.write_bytes(whole[: len(whole) - 40])
+    cut = whole[: len(whole) - 40]
+    path.write_bytes(cut)
+    lines_only = tmp_path / "lines-only.jsonl"
+    lines_only.write_bytes(cut[: cut.rfind(b"\n") + 1])
 
-    partial = claude.statusline()
+    fresh = claude.statusline()
+    # The file left as it is, and older than the window: the line stopped.
+    monkeypatch.setattr(segment, "FRESH_TAIL_S", 0.0)
+    stale = claude.statusline()
+    monkeypatch.undo()
+    stale_audit = claude.audit()
     path.write_bytes(whole)
     complete = claude.statusline()
 
+    whole_lines = sx.expected_counts(claude.setup, claude.setup.audit([lines_only]).report)
+    assert fresh.stdout == sx.segment_for(whole_lines) + "\n"
+    assert "unknown" not in fresh.stdout
+    assert stale.stdout == sx.segment_for(sx.expected_counts(claude.setup, stale_audit)) + "\n"
+    assert stale.stdout == "weir: unknown\n"
     expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit()))
-    assert partial.stdout == "weir: unknown\n"
     assert complete.stdout == expected + "\n"
     assert complete.stdout == "weir: 1 in context, 0 sent\n"
 

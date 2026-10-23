@@ -71,6 +71,10 @@ class Inputs:
     credentials: list[Credential]
     # fingerprint -> the ids of every credential with that value
     by_fingerprint: dict[bytes, tuple[str, ...]]
+    # The longest value the store gives a length for (its byte offsets), 0
+    # when it gives none: a reader that cuts long text lines into windows
+    # overlaps them by more than any encoding of it.
+    longest_value: int = 0
 
 
 def fingerprint(key: bytes, data: bytes) -> bytes:
@@ -173,4 +177,8 @@ def load_inputs(report_path: Path, store_path: Path, key_path: Path) -> Inputs:
     return Inputs(
         key=key, credentials=credentials,
         by_fingerprint={fp: tuple(sorted(ids)) for fp, ids in by_fingerprint.items()},
+        longest_value=max(
+            (end - start for record in store.records for start, end in record.offsets),
+            default=0,
+        ),
     )

@@ -38,6 +38,9 @@ import canary_fixtures as cfx
 import pytest
 import statusline_fixtures as sx
 
+from weir.audit import load_inputs
+from weir.statusline import segment
+
 SIZE = 50 * 1000 * 1000
 _IO = Path("/proc/self/io")
 
@@ -193,12 +196,15 @@ def test_a_refresh_reads_only_what_was_appended_to_a_50_mb_session(
     expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
     assert again.stdout == expected
     assert expected == "weir: 2 in context, 1 sent\n"
-    # The full refresh read the whole file; the next one the appended bytes
-    # and the few small files every run reads (the inventory inputs, the
-    # cache, and the two 4 KiB windows that show the read part unchanged).
+    # The full refresh read the whole file; the next one the appended bytes,
+    # the few small files every run reads (the inventory inputs, the cache,
+    # and the two 4 KiB windows that show the read part unchanged), and the
+    # one block of the read part each refresh checks (BLOCK_BYTES).
     inputs = sum(p.stat().st_size for p in (claude.setup.report, claude.setup.store))
     cache = sum(p.stat().st_size for p in claude.state.rglob("*") if p.is_file())
-    bound = len(added) + 2 * 4096 + 2 * (inputs + cache) + 64 * 1024
+    bound = (
+        len(added) + 2 * 4096 + segment.BLOCK_BYTES + 2 * (inputs + cache) + 64 * 1024
+    )
     assert full_read >= size
     assert again_read <= bound
     if full_kernel is not None and again_kernel is not None:
@@ -538,3 +544,178 @@ def test_a_large_saved_tool_output_cancelled_again_and_again_still_completes(
 
     finished = _cancelled_until_finished(claude)
     assert _uninterrupted(claude, tmp_path, finished) == "weir: 1 in context, 0 sent\n"
+
+
+# --- a rewrite inside the part already read ------------------------------------------
+
+
+def _five_mb_with_a_placeholder(claude: sx.Claude) -> tuple[Path, bytes, bytes]:
+    """A ~5 MB transcript whose middle tool result holds a placeholder the
+    length of a fake value: writing the value over it later is a rewrite in
+    place, inside the part a refresh already read."""
+    value = claude.setup.values[fx.ACME]
+    placeholder = "x" * len(value)
+    filler = "".join(f"line {i} of a fake log, nothing secret here\n" for i in range(400))
+    session = fx.Session()
+    session.prompt("read the logs")
+    for n in range(240):
+        session.tool_use("Read", {"file_path": f"/fake/log{n}.txt"}, f"toolu_{n:03d}")
+        extra = f"{fx.ACME}={placeholder}\n" if n == 120 else ""
+        session.tool_result(f"toolu_{n:03d}", filler + extra)
+    path = session.write(claude.transcript())
+    assert path.read_bytes().count(placeholder.encode()) == 1
+    return path, placeholder.encode(), value.encode()
+
+
+def test_a_same_size_rewrite_in_the_read_part_is_read_again_at_once(tmp_path: Path) -> None:
+    claude = sx.build(tmp_path)
+    path, placeholder, value = _five_mb_with_a_placeholder(claude)
+    big = ["--budget-ms", "600000"]
+    assert claude.statusline(extra=big).stdout == "weir: 0 in context, 0 sent\n"
+
+    data = path.read_bytes()
+    with path.open("r+b") as handle:  # same file, same size, new bytes in the middle
+        handle.seek(data.index(placeholder))
+        handle.write(value)
+    run = claude.statusline(extra=big)
+
+    expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
+    assert expected == "weir: 1 in context, 0 sent\n"
+    assert run.stdout == expected
+
+
+def test_a_rewrite_in_the_read_part_with_an_append_is_found_within_its_blocks(
+    tmp_path: Path,
+) -> None:
+    """The size changes with the append, so only the per-block check can see
+    the rewrite: one block per refresh, so within as many refreshes as the
+    read part has blocks."""
+    claude = sx.build(tmp_path)
+    path, placeholder, value = _five_mb_with_a_placeholder(claude)
+    big = ["--budget-ms", "600000"]
+    claude.statusline(extra=big)
+    data = path.read_bytes()
+    with path.open("r+b") as handle:
+        handle.seek(data.index(placeholder))
+        handle.write(value)
+    blocks = len(data) // segment.BLOCK_BYTES
+    assert blocks >= 4
+
+    expected = ""
+    outputs: list[str] = []
+    for n in range(blocks + 1):
+        more = fx.Session()
+        more.prompt(f"next {n}")
+        with path.open("ab") as out:
+            out.write("".join(line + "\n" for line in more.lines).encode())
+        outputs.append(claude.statusline(extra=big).stdout)
+        expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
+        if outputs[-1] == expected:
+            break
+
+    assert expected == "weir: 1 in context, 0 sent\n"
+    assert outputs[-1] == expected, outputs
+    assert len(outputs) <= blocks + 1
+
+
+# --- a line longer than a step, and a file too large to read whole ---------------------
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGTERM and SIGKILL as Claude Code sends them")
+def test_a_saved_tool_output_on_one_line_cancelled_again_and_again_still_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 20 MB saved tool output with no line end at all, a fake credential
+    at its end: a step holds a window of the line, never all of it, so runs
+    that are each cancelled still read it to its end."""
+    claude = sx.build(tmp_path)
+    v = claude.setup.values
+    session = fx.Session()
+    session.prompt("read the fake dump")
+    session.tool_use("Bash", {"command": "cat .env"}, "toolu_env")
+    session.tool_result("toolu_env", f"{fx.ACME}={v[fx.ACME]}\n")
+    session.write(claude.transcript())
+    path = claude.session_dir() / "tool-results" / "toolu_big.txt"
+    path.parent.mkdir(parents=True)
+    words = b"fake dump text with nothing secret in it " * 1000
+    with path.open("wb") as out:
+        for _ in range(TOOL_OUTPUT_SIZE // len(words) + 1):
+            out.write(words)
+        out.write(f" {fx.GH}={v[fx.GH]}".encode())
+    assert b"\n" not in path.read_bytes()
+
+    claude.statusline(extra=["--budget-ms", "0"])  # the transcript's step
+    inputs = sum(p.stat().st_size for p in (claude.setup.report, claude.setup.store))
+    checkpoint = sum(p.stat().st_size for p in claude.state.rglob("*") if p.is_file())
+    stepped, stepped_read, _, _ = _measured(
+        lambda: claude.statusline(extra=["--budget-ms", "0"]), monkeypatch
+    )
+    assert re.fullmatch(r"weir: 1 in context, 0 sent, scanning… \d+%\n", stepped.stdout)
+    assert stepped_read <= segment.STEP_MAX_BYTES + 2 * 64 * 1024 + 2 * (inputs + checkpoint)
+    shutil.rmtree(claude.state)
+
+    finished = _cancelled_until_finished(claude)
+    assert _uninterrupted(claude, tmp_path, finished) == "weir: 1 in context, 0 sent\n"
+
+
+def test_a_value_a_window_cuts_is_whole_in_the_next_window(tmp_path: Path) -> None:
+    """A one-line CLAUDE.md (read into the context) of about 1 MB with a
+    fake value across the end of the first window: the windows overlap, so
+    it is found as `weir audit` finds it."""
+    claude = sx.build(tmp_path)
+    value = claude.setup.values[fx.ACME]
+    inputs = load_inputs(claude.setup.report, claude.setup.store, claude.setup.key)
+    assert 6 * inputs.longest_value + 1024 <= segment.STEP_MAX_BYTES // 2
+    session = fx.Session()
+    session.prompt("hello")
+    session.write(claude.transcript())
+    memory = claude.session_dir() / "CLAUDE.md"
+    memory.parent.mkdir(parents=True)
+    before = segment.STEP_MAX_BYTES - len(value) // 2 - len(fx.ACME) - 1
+    text = "w" * (before - 1) + f" {fx.ACME}={value} " + "w" * (1024 * 1024)
+    memory.write_text(text)
+    assert b"\n" not in memory.read_bytes()
+    assert text.index(value) < segment.STEP_MAX_BYTES < text.index(value) + len(value)
+
+    for _ in range(20):
+        run = claude.statusline(extra=["--budget-ms", "0"])
+        if "scanning" not in run.stdout:
+            break
+
+    expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
+    assert expected == "weir: 1 in context, 0 sent\n"
+    assert run.stdout == expected
+
+
+def test_a_file_too_large_to_read_whole_is_read_in_steps_as_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 2 MB pretty-printed JSON document in the session's directory could
+    be one record as a whole, which only a whole read tells: too large for
+    one step, it is read in steps as unknown text, never a false zero."""
+    claude = sx.build(tmp_path)
+    session = fx.Session()
+    session.prompt("hello")
+    session.write(claude.transcript())
+    doc = claude.session_dir() / "notes.json"
+    doc.parent.mkdir(parents=True)
+    doc.write_text(json.dumps({"items": [f"fake item {n}" for n in range(150_000)]}, indent=2))
+    assert doc.stat().st_size > segment.WHOLE_MAX_BYTES
+
+    claude.statusline(extra=["--budget-ms", "0"])  # the transcript's step
+    inputs = sum(p.stat().st_size for p in (claude.setup.report, claude.setup.store))
+    checkpoint = sum(p.stat().st_size for p in claude.state.rglob("*") if p.is_file())
+    stepped, stepped_read, _, _ = _measured(
+        lambda: claude.statusline(extra=["--budget-ms", "0"]), monkeypatch
+    )
+    assert "scanning" in stepped.stdout
+    assert stepped_read <= segment.STEP_MAX_BYTES + 4 * 64 * 1024 + 2 * (inputs + checkpoint)
+    for _ in range(100):
+        run = claude.statusline(extra=["--budget-ms", "0"])
+        if "scanning" not in run.stdout:
+            break
+
+    audit = claude.audit()
+    assert audit["result"] == "unknown"
+    assert run.stdout == sx.segment_for(sx.expected_counts(claude.setup, audit)) + "\n"
+    assert run.stdout == "weir: unknown\n"

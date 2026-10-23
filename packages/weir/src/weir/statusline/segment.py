@@ -22,7 +22,7 @@ import hmac
 import os
 import stat
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import BinaryIO
@@ -41,7 +41,7 @@ from weir.audit.formats import (
 from weir.canary.capture import compressed
 from weir.statusline.files import write_private
 
-CACHE_SCHEMA = "weir-statusline-cache/3"
+CACHE_SCHEMA = "weir-statusline-cache/4"
 # A temporary cache file this old is one a run killed mid-write left behind
 # (SIGKILL ends a run without cleanup); a live run's is far younger.
 _STALE_TEMP_S = 60.0
@@ -51,10 +51,28 @@ SCANNING = "scanning\u2026"
 _MAGIC_BYTES = 4
 # A step reads at least one whole line and stops at the first line end past this.
 CHUNK_BYTES = 64 * 1024
+# A step of a text file never holds more than this: a longer line is read in
+# windows of it that overlap (Reader._overlap), with a checkpoint inside it.
+STEP_MAX_BYTES = 4 * CHUNK_BYTES
+# A file that needs to be read whole (a whole-file format) is read whole
+# only up to this size; a larger one is read in steps as unknown text.
+WHOLE_MAX_BYTES = 1024 * 1024
+# The read part of a file is kept as keyed MACs of blocks this size, and
+# one block is checked on each refresh, so a rewrite inside the part already
+# read is found within as many refreshes as the file has blocks.
+BLOCK_BYTES = 1024 * 1024
+# A Claude Code session file's last line without its line end is one still
+# being written while the file changed this recently: not counted as unknown
+# yet. Older, it is (a session that stopped mid-line).
+FRESH_TAIL_S = 5.0
 # The bytes at the start of a file, and the bytes before the offset, whose
 # MACs show a file only grew: the read part is checked at both ends, never
 # read whole again.
 _PREFIX_BYTES = 4096
+# Text formats: a line longer than a step can be read in overlapping windows.
+_TEXT = frozenset({
+    Format.CLAUDE_CODE_TOOL_RESULTS, Format.CLAUDE_CODE_MEMORY, Format.UNKNOWN,
+})
 # Formats whose lines are read each on their own: a chunk of whole lines
 # gives the hits those lines give in the whole file.
 _LINEWISE = frozenset({
@@ -185,6 +203,9 @@ class _Entry(msgspec.Struct):
     seen: Signs
     # Read as a whole in one step (a whole-file format), never read on.
     whole: bool
+    # Read as unknown text in steps, its format no longer recognised: a
+    # whole-file format too large to read in one step.
+    text: bool
     offset: int
     # MACs of the file's first bytes up to the offset (at most
     # _PREFIX_BYTES), and of the _PREFIX_BYTES before the offset.
@@ -193,6 +214,12 @@ class _Entry(msgspec.Struct):
     lines: Tally
     # What the bytes after the last line end held, at this size and time.
     tail: Tally | None
+    # The tail was a session file's line still being written, not counted.
+    fresh_tail: bool = False
+    # Keyed MACs of the read part's whole BLOCK_BYTES blocks, and the block
+    # the next refresh checks.
+    blocks: list[str] = msgspec.field(default_factory=list[str])
+    next_block: int = 0
 
     @property
     def done(self) -> bool:
@@ -205,6 +232,36 @@ class _Entry(msgspec.Struct):
         return self.same_file(st) and (self.size, self.mtime_ns) == (
             st.st_size, st.st_mtime_ns
         )
+
+
+class _BlockMacs:
+    """Keeps the MAC of each BLOCK_BYTES block of a file's read part as the
+    steps of one run complete it, from the bytes the steps hold. Only the
+    start of the one block a run resumes inside is read again."""
+
+    def __init__(self, mac: Callable[[bytes], str], handle: BinaryIO, entry: _Entry) -> None:
+        self._mac = mac
+        self._handle = handle
+        self._entry = entry
+        # The read part's bytes from the first block with no MAC yet
+        self._buf: bytearray | None = None
+
+    def grew(self, consumed: bytes, read_to: int) -> None:
+        """The read part grew by `consumed`; `read_to` is where `handle`
+        stands, and stands again after."""
+        entry = self._entry
+        if self._buf is not None:
+            self._buf += consumed
+        if len(entry.blocks) >= entry.offset // BLOCK_BYTES:
+            return
+        if self._buf is None:
+            start = len(entry.blocks) * BLOCK_BYTES
+            self._handle.seek(start)
+            self._buf = bytearray(self._handle.read(entry.offset - start))
+            self._handle.seek(read_to)
+        while len(entry.blocks) < entry.offset // BLOCK_BYTES:
+            entry.blocks.append(self._mac(bytes(self._buf[:BLOCK_BYTES])))
+            del self._buf[:BLOCK_BYTES]
 
 
 class _Cache(msgspec.Struct, frozen=True):
@@ -227,6 +284,11 @@ class Reader:
         self._deadline = deadline
         self._stepped = False
         self._path = cache / f"{self._mac('session', session_key.encode())[:32]}.json"
+        # Long text lines are read in windows that overlap by more than any
+        # encoding of the longest value (JSON escaping twice, URL encoding),
+        # and by at least 32 KiB when the store gives no length.
+        self._overlap = max(32 * 1024, 6 * inputs.longest_value + 1024)
+        self._step = max(STEP_MAX_BYTES, 2 * self._overlap)
         self._inputs_mac = ""
         self._entries: dict[str, _Entry] = {}
 
@@ -293,16 +355,31 @@ class Reader:
         `key` before its first step, so every checkpoint holds its progress."""
         cached = self._entries.get(key)
         st = os.stat(path)
-        if cached is not None and cached.done and cached.unchanged(st):
-            return cached, st.st_size, st.st_size
-        if self._over():
+        size = st.st_size
+        if (
+            cached is not None and cached.same_file(st) and size == cached.size
+            and st.st_mtime_ns != cached.mtime_ns
+        ):
+            # Rewritten in place at the same size: an append changes the
+            # size, so nothing of the read part can be trusted.
+            cached = None
+        settled = (
+            cached is not None and cached.done and cached.unchanged(st)
+            and not self._tail_ripe(cached, st)
+        )
+        if cached is not None and settled and (not cached.blocks or self._over()):
+            return cached, size, size
+        if not settled and self._over():
             # Not reached this run: count it unread, keep what an earlier run read.
             ahead = cached is not None and cached.same_file(st)
-            return (cached if ahead else None), (cached.offset if cached and ahead else 0), (
-                st.st_size
-            )
+            return (cached if ahead else None), (cached.offset if cached and ahead else 0), size
         with open(path, "rb") as handle:
-            if cached is not None and not cached.whole and cached.same_file(st):
+            if (
+                cached is not None and not cached.whole and cached.same_file(st)
+                and self._block_holds(handle, cached)
+            ):
+                if settled:
+                    return cached, size, size
                 # When the read part is unchanged at both ends, read on from
                 # the offset, never the read part.
                 head = handle.read(min(cached.offset, _PREFIX_BYTES))
@@ -311,9 +388,10 @@ class Reader:
                 if self._read_part_unchanged(cached, head, window):
                     return self._steps(path, st, cached, handle, head, window)
             entry = self._entries[key] = _Entry(
-                dev=st.st_dev, ino=st.st_ino, size=st.st_size, mtime_ns=st.st_mtime_ns,
+                dev=st.st_dev, ino=st.st_ino, size=size, mtime_ns=st.st_mtime_ns,
                 format=recognise_signs(path, Signs(), self._projects), seen=Signs(),
-                whole=False, offset=0, head_mac="", prefix_mac="", lines=Tally(), tail=None,
+                whole=False, text=False, offset=0, head_mac="", prefix_mac="", lines=Tally(),
+                tail=None,
             )
             self._restart(entry)
             handle.seek(0)
@@ -321,12 +399,32 @@ class Reader:
                 # Not scanned, as `weir audit` does not scan it: unknown,
                 # never a clean zero. Read again when it changes.
                 entry.whole = True
-                entry.offset = st.st_size
+                entry.offset = size
                 entry.lines = Tally(unknown=True)
                 entry.tail = Tally()
                 self.save()
-                return entry, st.st_size, st.st_size
+                return entry, size, size
             return self._steps(path, st, entry, handle, b"", b"")
+
+    def _tail_ripe(self, entry: _Entry, st: os.stat_result) -> bool:
+        """A line still being written when it was read, that has stopped
+        changing long enough to count as it is."""
+        return entry.fresh_tail and time.time() - st.st_mtime_ns / 1e9 >= FRESH_TAIL_S
+
+    def _block_holds(self, handle: BinaryIO, entry: _Entry) -> bool:
+        """Check the next block of the read part against its MAC (one block
+        per refresh, in turn); True when it holds or there is none."""
+        if not entry.blocks:
+            return True
+        n = entry.next_block % len(entry.blocks)
+        entry.next_block = n + 1
+        handle.seek(n * BLOCK_BYTES)
+        holds = hmac.compare_digest(self._block_mac(handle.read(BLOCK_BYTES)), entry.blocks[n])
+        handle.seek(0)
+        return holds
+
+    def _block_mac(self, data: bytes) -> str:
+        return self._mac("block", data)[:32]
 
     def _restart(self, entry: _Entry) -> None:
         """Back to the start of the file, the format and its signs kept."""
@@ -335,6 +433,9 @@ class Reader:
         entry.prefix_mac = self._mac("prefix", b"")
         entry.lines = Tally()
         entry.tail = None
+        entry.fresh_tail = False
+        entry.blocks = []
+        entry.next_block = 0
 
     def _read_part_unchanged(self, cached: _Entry, head: bytes, before_offset: bytes) -> bool:
         return (
@@ -355,7 +456,10 @@ class Reader:
         CHUNK_BYTES, from `handle`. `head` and `window` are the file's first
         bytes up to the offset (at most _PREFIX_BYTES) and the _PREFIX_BYTES
         before it. Only the bytes of the step being taken are held, and only
-        up to the size `st` gave.
+        up to the size `st` gave. In a text format a step holds at most
+        `self._step` bytes: a longer line is read in windows that overlap by
+        `self._overlap`, so a value cut by one window's end is whole in the
+        next, and the offset is kept inside the line.
 
         Until a message record settles it, the format is the one the path
         and the lines read so far give: a line that changes it starts the
@@ -363,16 +467,21 @@ class Reader:
         format, or a file that may be one JSON document, is read whole."""
         size = st.st_size
         entry.tail = None
+        entry.fresh_tail = False
         self._stamp(entry, st)
         pending = bytearray()  # bytes from the offset on, read and not yet audited
         read_to = entry.offset
         handle.seek(read_to)
+        blocks = _BlockMacs(self._block_mac, handle, entry)
         while True:
             if self._over():
                 self.save()
                 return entry, entry.offset, size
+            text = entry.format in _TEXT
             start = CHUNK_BYTES - 1
             while (cut := pending.find(b"\n", start)) < 0 and read_to < size:
+                if text and len(pending) >= self._step:
+                    break
                 more = handle.read(min(CHUNK_BYTES, size - read_to))
                 if not more:
                     break
@@ -381,15 +490,23 @@ class Reader:
                 read_to += len(more)
             if cut < 0:
                 cut = pending.rfind(b"\n")  # the last whole line left
-                if cut < 0:
-                    break
-            chunk = bytes(pending[: cut + 1])
-            if not entry.seen.message:
-                lines = json_lines(chunk)
+            if cut >= 0:
+                chunk = bytes(pending[: cut + 1])
+                used = len(chunk)
+            elif text and len(pending) >= self._step:
+                # A line longer than a step: a window of it, and the offset
+                # moves on by less than the window, inside the line.
+                chunk = bytes(pending[: self._step])
+                used = self._step - self._overlap
+            else:
+                break
+            if not entry.seen.message and not entry.text:
+                lines = json_lines(chunk) if cut >= 0 else []
                 entry.seen |= signs(lines)
                 fmt = self._format(path, entry.seen)
                 if fmt is None or (
-                    fmt is Format.UNKNOWN and entry.offset == 0 and may_be_whole(chunk, lines)
+                    fmt is Format.UNKNOWN and entry.offset == 0 and cut >= 0
+                    and may_be_whole(chunk, lines)
                 ):
                     return self._whole(path, st, entry, handle)
                 if fmt is not entry.format:
@@ -399,23 +516,34 @@ class Reader:
                         pending.clear()
                         read_to, head, window = 0, b"", b""
                         handle.seek(0)
+                        blocks = _BlockMacs(self._block_mac, handle, entry)
                         continue
-            del pending[: cut + 1]
+            del pending[:used]
             entry.lines.add(self._audit(path, chunk, entry.format))
+            consumed = chunk[:used]
             if entry.offset < _PREFIX_BYTES:
-                head = (head + chunk)[:_PREFIX_BYTES]
+                head = (head + consumed)[:_PREFIX_BYTES]
                 entry.head_mac = self._mac("head", head)
-            entry.offset += len(chunk)
-            window = (window + chunk)[-_PREFIX_BYTES:]
+            entry.offset += used
+            window = (window + consumed)[-_PREFIX_BYTES:]
             entry.prefix_mac = self._mac("prefix", window)
+            blocks.grew(consumed, read_to)
             self._stepped = True
             self.save()
-        if not entry.seen.message and self._format(
+        if not entry.seen.message and not entry.text and self._format(
             path, entry.seen | signs(json_lines(bytes(pending)))
         ) is not entry.format:
             # The bytes after the last line end change the format: read whole.
             return self._whole(path, st, entry, handle)
-        entry.tail = self._audit(path, bytes(pending), entry.format) if pending else Tally()
+        if pending and entry.format is Format.CLAUDE_CODE and (
+            time.time() - st.st_mtime_ns / 1e9 < FRESH_TAIL_S
+        ):
+            # A record Claude Code is still writing: counted once it is
+            # whole, or once it has stopped changing (_tail_ripe).
+            entry.fresh_tail = True
+            entry.tail = Tally()
+        else:
+            entry.tail = self._audit(path, bytes(pending), entry.format) if pending else Tally()
         if entry.format is Format.UNKNOWN:
             # A file in no format the audit reads is unknown however little
             # it holds: an empty transcript is not a clean one.
@@ -427,7 +555,14 @@ class Reader:
         self, path: str, st: os.stat_result, entry: _Entry, handle: BinaryIO
     ) -> tuple[_Entry, int, int]:
         """Read the file whole and audit it as `weir audit` would: one step,
-        all or nothing."""
+        all or nothing. A file too large for one step is read in steps as
+        unknown text instead: what it holds is not counted, and it makes the
+        session unknown, never clean."""
+        if st.st_size > WHOLE_MAX_BYTES:
+            entry.format = Format.UNKNOWN
+            entry.text = True
+            self._restart(entry)
+            return self._steps(path, st, entry, handle, b"", b"")
         handle.seek(0)
         data = handle.read()
         lines = json_lines(data)

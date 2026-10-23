@@ -102,22 +102,32 @@ Claude Code cancels a status line run that is still going when the next
 one starts, and the audit reads about a megabyte of text in a few seconds,
 so the segment reads a session in steps and keeps what each step found:
 
-- A file is read in chunks of whole lines (64 KiB, or one line when a line
-  is longer). Each chunk is audited as the format of the whole file, with
+- A file is read in steps of whole lines (64 KiB, or one line when a line
+  is longer). Each step is audited as the format of the whole file, with
   `weir.audit.audit_chunks`. A file's lines are records each on its own, so
-  the chunks of a file give the hits the whole file gives. A format read
-  as a whole (an OTLP file, a subagent sidecar) is one step.
+  the steps of a file give the hits the whole file gives.
+- In a text format (a saved tool output, a `CLAUDE.md` or memory file, an
+  unknown file) a step holds at most 256 KiB: a longer line, or a file
+  with no line end at all, is read in windows of that size that overlap
+  by at least 32 KiB, and by more than six times the longest value the
+  inventory store gives a length for, so a value one window's end cuts is
+  whole in the next. The offset kept is inside the line. A line of a
+  JSON Lines format (a Claude Code session file) is one record and is
+  read whole in one step, however long.
 - The format is the one `weir audit` recognises, taken from the file's path
   and the lines read so far, never by reading the whole file first: a
-  saved tool output (`tool-results/*`) is one until a line shows it is a
-  Claude Code session file, and a session file stays one once a line is a
-  message record. A line that changes the format (in the part read, in the
-  bytes after the last line end, or appended later) has the file read
-  again from the start in the new format. A line that makes it a
-  whole-file format, or a file the path and lines leave unknown whose
-  first line is not a JSON object of its own but which starts with `{`
-  (it may be one OTLP export request, pretty-printed), is read whole in
-  one step.
+  saved tool output (`tool-results/*`) is one whatever its lines hold, and
+  a session file stays one once a line is a message record. A line that
+  changes the format (in the part read, in the bytes after the last line
+  end, or appended later) has the file read again from the start in the
+  new format. A line that makes it a whole-file format, or a file the path
+  and lines leave unknown whose first line is not a JSON object of its own
+  but which starts with `{` (it may be one OTLP export request,
+  pretty-printed), is read whole in one step when it is at most 1 MiB. A
+  larger one is read in steps as unknown text: what it holds is not
+  counted, and the session is part unknown, never a false zero.
+- A file that starts with the gzip magic bytes is not read: `weir audit`
+  does not scan it, and the session is part unknown.
 - After each step the cache is written: it is the checkpoint the next run
   resumes from (per file, the byte offset reached, the keyed MACs that
   show the part read is unchanged, and the credential ids found so far).
@@ -129,24 +139,34 @@ so the segment reads a session in steps and keeps what each step found:
   steps once `--budget-ms` (default 500) has passed, and always takes at
   least one, so every run moves the reading on, cancelled or not. A
   session not read to the end of every file shows `scanning… P%`.
-- A step holds only its own bytes: a run reads on from the offset in
-  chunks of whole lines, never the rest of the file at once. Only a file
-  read whole (above) is read in full in one step.
+- A step holds only its own bytes: a run reads on from the offset, never
+  the rest of the file at once. Only a file read whole (above) is read in
+  full in one step.
 - A file is read again only from where the last run stopped, as long as it
   is the same file (device and inode), it only grew, and the part already
   read is unchanged at both ends: its first 4 KiB, and the 4 KiB before
   that point. A refresh of a file read in steps then reads those two
-  windows and the bytes appended since, never the part already read; a
-  file read whole is read whole again. Anything else (a file that shrank,
-  was replaced, or changed at either end), and the file is read from the
-  start. A file unchanged since a run
-  that read it in full (same size and modification time) is not read at
-  all. A change inside the read part that leaves both ends, the size and
-  the inode as they were is not seen: Claude Code appends to a session
-  file, and reading the whole part again is what this avoids.
+  windows, the bytes appended since, and one block (below), never the rest
+  of the part already read; a file read whole is read whole again.
+  Anything else (a file that shrank, was replaced, or changed at either
+  end), and the file is read from the start. A file whose size is
+  unchanged but whose modification time changed was rewritten in place
+  (an append changes the size), and is read from the start at once.
+- The part already read is also kept as a keyed MAC of each whole 1 MiB
+  block, and each refresh checks one block, in turn, against its MAC: a
+  block that changed has the file read from the start. So a rewrite
+  inside the read part that keeps both ends (and comes with an append, so
+  the size changes too) is found within as many refreshes as the file has
+  blocks, at the cost of reading one block per refresh. Finding it at once
+  would mean reading the whole read part on every refresh, which is what
+  this design avoids.
 - The bytes after a file's last line end (a line still being written) are
   audited as a whole line would be, and again once the file changes; they
-  are never taken as read lines.
+  are never taken as read lines. In a Claude Code session file they are a
+  record Claude Code is still writing while the file changed in the last
+  5 seconds: not counted, and not unknown, until the line is whole. When
+  they stay as they are for longer (a session that stopped mid-line), they
+  are audited, and the session is part unknown.
 
 A long session, or a large tool output, can take several runs to read,
 and Claude Code runs the status line only on events (a new assistant
@@ -158,8 +178,9 @@ The cache is one file per session in `--cache`, written owner-only
 (0600, directory 0700). It holds credential ids, byte offsets, sizes,
 times, device and inode numbers, each file's format and yes/no flags of
 what its lines showed of it, and HMAC-SHA256 values under the
-inventory's fingerprint key (of a file's path, of a file's first 4 KiB and
-of the 4 KiB before an offset, of the inventory inputs). It holds no
+inventory's fingerprint key (of a file's path, of a file's first 4 KiB,
+of the 4 KiB before an offset, of each whole 1 MiB block read, of the
+inventory inputs). It holds no
 value, no fragment of one, no file name and no unkeyed hash. A new inventory (other report or store
 bytes) starts every cache over. Deleting the directory is always safe.
 
@@ -348,8 +369,17 @@ never used and never repaired.
 - Everything [`weir audit` does not claim](audit.md#what-the-audit-does-not-claim).
 - The segment counts what the session's files hold now. A session Claude
   Code compacted or rewrote is read as its files are.
-- It reads the session's files only: not `CLAUDE.md` or memory files
-  (audit them with `weir audit`), and not telemetry.
+- It reads the session's files only: the transcript and the session's
+  own directory (a `CLAUDE.md` there included), not the project's
+  `CLAUDE.md` or memory files (audit them with `weir audit`), and not
+  telemetry.
+- A rewrite inside the part of a file already read is found at once when
+  the file's size is unchanged, and otherwise within as many refreshes as
+  the file has 1 MiB blocks ([Speed and the cache](#speed-and-the-cache)).
+- A reference by name counts however the shell would quote it
+  (`'$NAME'` counts): see [References by name](audit.md#references-by-name).
+- A single line of a Claude Code session file is one record and is read in
+  one step, however long it is (a pasted file kept inline, say).
 - A count is not a guard: nothing here stops a credential from reaching
   the agent. Rules that keep the agent from reading a file, and an
   environment without the credential, do.
