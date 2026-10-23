@@ -12,11 +12,12 @@ mock, and judges what it sent:
    for an Anthropic key, its own host (`key_owner`).
 2. **Settings under test.** The project's `.claude` directory (its
    `settings.json` and `settings.local.json`, hooks, commands, agents and
-   skills, but not its symbolic links or the worktrees Claude Code keeps
-   there) and its `CLAUDE.md`, and the user and managed settings files the
-   config passes, are copied where Claude Code reads them in the scratch
-   project, the scratch home and the sandbox's managed settings directory,
-   so it layers them as it would for the user. The run never reads a real
+   skills, its symbolic links followed only into the project, but not the
+   worktrees Claude Code keeps there) and its `CLAUDE.md`, and the user
+   and managed settings files the config passes, are copied where Claude
+   Code reads them in the scratch project, the scratch home and the
+   sandbox's managed settings directory, so it layers them as it would for
+   the user. The run never reads a real
    home or system settings location: user-level and managed settings the
    config does not pass are not included, and the verdict says so. A
    setting that would move the model API, the key or the telemetry away
@@ -377,13 +378,29 @@ def settings_under_test(spec: ClaudeCodeSpec) -> list[SettingsFile]:
 RUNTIME_STATE = frozenset({"worktrees"})
 
 
-def copy_configuration(source: Path, target: Path) -> None:
-    """Copy a project's .claude directory but every symbolic link, never
-    followed, and Claude Code's runtime state at its top."""
+def copy_configuration(project: Path, target: Path) -> None:
+    """Copy a project's .claude directory but Claude Code's runtime state at
+    its top. A symbolic link is followed, its target copied in its place,
+    only when that target is inside the project; a link out of it, a
+    dangling link or one back into a directory being copied is left out."""
+    source = project / ".claude"
+    inside = project.resolve()
 
     def skipped(directory: str, names: list[str]) -> set[str]:
-        links = {name for name in names if (Path(directory) / name).is_symlink()}
-        return links | (RUNTIME_STATE & set(names) if Path(directory) == source else set())
+        here = Path(directory)
+        copying = [p.resolve() for p in (here, *here.parents) if p.is_relative_to(source)]
+        left_out = {name for name in names if here == source and name in RUNTIME_STATE}
+        for name in names:
+            if not (here / name).is_symlink():
+                continue
+            real = (here / name).resolve()
+            if (
+                not real.exists()
+                or not real.is_relative_to(inside)
+                or any(p.is_relative_to(real) for p in copying)
+            ):
+                left_out.add(name)
+        return left_out
 
     shutil.copytree(source, target, ignore=skipped)
 
@@ -397,7 +414,7 @@ def prepare(spec: ClaudeCodeSpec, layout: Layout) -> None:
     if (spec.project / "CLAUDE.md").is_file():
         shutil.copyfile(spec.project / "CLAUDE.md", layout.project / "CLAUDE.md")
     if (spec.project / ".claude").is_dir():
-        copy_configuration(spec.project / ".claude", layout.project / ".claude")
+        copy_configuration(spec.project, layout.project / ".claude")
     (layout.project / "README.md").write_text(
         "# billing\n\nA small service. Settings live in `.env` and `config/app.json`.\n",
         encoding="utf-8",

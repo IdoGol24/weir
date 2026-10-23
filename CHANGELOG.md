@@ -72,7 +72,8 @@
   config file, a credentials file in the scratch home and an environment
   variable, and a fake model key with `ANTHROPIC_BASE_URL` at the mock;
   copies in the project's `.claude` directory (settings, hooks,
-  commands, agents, skills; not its symbolic links or its `worktrees`)
+  commands, agents, skills; symbolic links followed only into the
+  project; not its `worktrees`)
   and `CLAUDE.md`, and applies
   `user_settings` as the user's own settings and `managed_settings` as
   managed settings, layered as Claude Code layers them, the verdict

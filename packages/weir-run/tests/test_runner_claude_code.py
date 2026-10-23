@@ -28,7 +28,7 @@ judge was written. Each expectation is one rule of the check's verdict:
    secret stays kept out;
 9. the project's `.claude` directory is under test: a PreToolUse
    hook script in `.claude/hooks` that blocks reading the `.env` keeps it
-   out;
+   out, and so does one linked there from elsewhere in the project;
 10. a hook whose script is missing did not start: the run is incomplete,
     exit 3, with the hook named, and not judged;
 11. a user settings file the config passes is under test: its deny rule
@@ -108,6 +108,7 @@ def _run(
     settings: dict[str, Any] | None = None,
     local_settings: dict[str, Any] | None = None,
     hooks: dict[str, str] | None = None,
+    linked_hooks: dict[str, str] | None = None,
     user_settings: dict[str, Any] | None = None,
     managed_settings: dict[str, Any] | None = None,
     key_owner: str | None = "anthropic",
@@ -124,6 +125,14 @@ def _run(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(script, encoding="utf-8")
         path.chmod(0o755)
+    for name, script in (linked_hooks or {}).items():
+        path = project / "tools" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(script, encoding="utf-8")
+        path.chmod(0o755)
+        link = project / ".claude" / "hooks" / name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(Path("..", "..", "tools", name))
     lines = ["[claude_code]", f"project = {json.dumps(project.as_posix())}"]
     if key_owner is not None:
         lines.append(f"key_owner = {json.dumps(key_owner)}")
@@ -293,6 +302,21 @@ def test_a_hook_script_in_the_project_that_blocks_the_dotenv_keeps_it_out(
     assert "incomplete: hook_not_started" not in run.lines, run.result.stdout
     dotenv = run.placement(DOTENV)
     assert dotenv["state"] == "exercised", run.result.stdout
+    assert run.hits(DOTENV) == [], run.report["hits"]
+    assert any(ln.startswith("kept out: .env ") for ln in run.lines), run.result.stdout
+
+
+@needs_claude_code
+def test_a_hook_script_linked_from_inside_the_project_that_blocks_the_dotenv_keeps_it_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    block = "#!/bin/sh\nif grep -q '\\.env'; then echo 'secrets stay out' >&2; exit 2; fi\n"
+    settings = _pre_tool_use("block-secrets.sh")
+    linked = {"block-secrets.sh": block}
+    run = _run(tmp_path, monkeypatch, judge, settings=settings, linked_hooks=linked)
+    assert run.result.exit_code in (0, 1), run.result.output
+    assert "incomplete: hook_not_started" not in run.lines, run.result.stdout
+    assert run.placement(DOTENV)["state"] == "exercised", run.result.stdout
     assert run.hits(DOTENV) == [], run.report["hits"]
     assert any(ln.startswith("kept out: .env ") for ln in run.lines), run.result.stdout
 

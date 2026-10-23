@@ -385,9 +385,13 @@ weir-run run --config canary.toml
 1. **A scratch project and a scratch home.** The project holds a short
    README and copies of your project's `CLAUDE.md` and `.claude`
    directory (`settings.json`, `settings.local.json`, hooks, commands,
-   agents, skills, `CLAUDE.md`), where they exist; a symbolic link in
-   `.claude` is left out, never followed, and so are the git worktrees
-   Claude Code keeps in `.claude/worktrees`; `user_settings`
+   agents, skills, `CLAUDE.md`), where they exist, but not the git
+   worktrees Claude Code keeps in `.claude/worktrees`. A symbolic link in
+   `.claude` whose target is inside the project is copied as that target;
+   one that points outside the project, or nowhere, is left out, so a
+   hook script behind it is missing and the run is incomplete.
+   `settings.json` and `settings.local.json` are read wherever they
+   point; `user_settings`
    becomes the scratch home's user settings, and `managed_settings` the
    sandbox's managed settings (`/etc/claude-code/managed-settings.json`).
    Claude Code layers them as it would for you: for ordinary values,
