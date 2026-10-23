@@ -69,7 +69,11 @@ judge was written. Each expectation is one rule of the check's verdict:
 26. a step a hook blocked is named as blocked by a hook;
 27. a missing script is caught when its interpreter is named by its path;
 28. a settings file Claude Code skips as invalid never sets whether the
-    run expects telemetry.
+    run expects telemetry;
+29. a managed settings file with an invalid value is not skipped: Claude
+    Code drops that value and applies the rest, so the file is under test,
+    its telemetry switch is expected to export, and its
+    allowManagedHooksOnly keeps the project hooks from running.
 
 Every value is a fake the runner generates; the tests never see one. The
 tests that run Claude Code skip where it, bubblewrap or an isolated
@@ -798,3 +802,24 @@ def test_a_skipped_settings_file_never_sets_whether_telemetry_is_expected(
     assert any(ln.startswith(skipped) for ln in run.lines), run.result.stdout
     assert "incomplete: empty_capture" not in run.lines, run.result.stdout
     assert TELEMETRY_OFF in run.lines, run.result.stdout
+
+
+@needs_claude_code
+def test_a_managed_settings_file_with_an_invalid_value_is_applied_without_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    managed = {"cleanupPeriodDays": 0, "allowManagedHooksOnly": True, **TELEMETRY_ON}
+    run = _run(tmp_path, monkeypatch, judge, settings=_guarded(GUARD), managed_settings=managed)
+    path = (tmp_path / "managed_settings.json").resolve()
+    assert f"claude-code: settings under test: managed settings {path}" in run.lines, (
+        run.result.stdout
+    )
+    assert not any(ln.startswith("claude-code: Claude Code skipped ") for ln in run.lines)
+    assert "incomplete: empty_capture" not in run.lines, run.result.stdout
+    assert any(
+        ln.startswith("claude-code: hooks: allowManagedHooksOnly in managed settings ")
+        for ln in run.lines
+    ), run.result.stdout
+    # Claude Code ran no project hook, so its missing script did not matter.
+    assert "incomplete: hook_not_started" not in run.lines, run.result.stdout
+    assert any(h["sink"] == "model" for h in run.hits(DOTENV)), run.report["hits"]
