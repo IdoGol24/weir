@@ -44,21 +44,28 @@
   distinct values that entered the context, and what was sent in a tool
   call: values sent by value, and variables sent by name, once per name),
   `weir: unknown` when a file is in a format it
-  cannot read and nothing was found elsewhere, `part unknown` beside counts
-  otherwise, and `scanning… P%` while a long session is still being read. It
+  cannot read (an empty or compressed file included) and nothing was found
+  elsewhere, `part unknown` beside counts otherwise, and `scanning… P%`
+  while a long session is still being read. It
   reads a session in steps and caches what each step found (credential
   ids, offsets and keyed MACs, never a value), so it fits in a status line
   run and picks up where the last run stopped, even when Claude Code
   cancels runs again and again: each step's checkpoint is written
-  atomically and a cancelled run loses at most that step. `weir statusline report`
+  atomically, a step of a text file is at most 256 KiB however long its
+  lines, and a cancelled run loses at most that step. A refresh reads what
+  was appended plus one 1 MiB block of the part already read, checked
+  against a keyed MAC, so a rewrite in place is also found. `weir statusline report`
   lists, per credential, its source, the turn and tool call that put it in
   the context or sent it, where it now sits, and advice.
   `weir statusline setup` shows the exact settings change, adds the
   segment beside the status line command already there (which keeps
-  running, its output first) and installs the `/weir` command, writing
-  nothing until you type `yes`; `--dry-run` only shows it.
-  `weir statusline undo` restores the files byte for byte, and refuses when
-  one changed after setup. Setup supports POSIX shells (Linux, macOS) only
+  running, its output first, bounded to 10 seconds and stopped with
+  everything it started) and installs the `/weir` command, writing
+  nothing until you type exactly `yes`; `--dry-run` only shows it.
+  `weir statusline undo` restores the files byte for byte; when Claude
+  Code changed other settings since, it puts back only the status line
+  and keeps the rest, and it refuses when the status line itself changed.
+  It also removes the status line's checkpoints. Setup supports POSIX shells (Linux, macOS) only
   for now and refuses on Windows. Display only, local and offline
   ([docs/statusline.md](docs/statusline.md)).
 - **weir-scan: a fingerprint key file others can read is refused.**
