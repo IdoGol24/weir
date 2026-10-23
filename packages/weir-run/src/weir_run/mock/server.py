@@ -42,6 +42,7 @@ from weir_run.ledger import Ledger
 from weir_run.mock import otlp
 from weir_run.mock.model import ModelApi
 from weir_run.mock.oauth import CREDENTIAL_FORM_FIELDS, OAuth, parse_form
+from weir_run.mock.prompt import PermissionPrompt
 from weir_run.shapes import ByteSource
 from weir_run.spec import CredentialField, EndpointSpec, MockSpec
 
@@ -111,6 +112,7 @@ class Mock:
         self.capture = capture
         self.model = ModelApi(spec.model_reply, spec.tool_calls, spec.script)
         self.endpoints = {e.id: e for e in spec.endpoints}
+        self.prompts = {e.id: PermissionPrompt() for e in spec.endpoints if e.permission_prompt}
         # A credential the OAuth endpoints issue belongs to them and to the
         # program's own APIs (docs/canary.md, "A placement's own provider").
         providers = ("oauth", *self.endpoints)
@@ -513,6 +515,10 @@ class _Handler(BaseHTTPRequestHandler):
         return 404, b'{"error":"not_mocked"}', "application/json", {}
 
     def _endpoint(self, endpoint: EndpointSpec, body: bytes) -> Reply:
+        prompt = self.owner.prompts.get(endpoint.id)
+        if prompt is not None:
+            status, reply, kind = prompt.handle(self.command, body)
+            return status, reply, kind, {}
         if endpoint.capture and body:
             self.owner.capture.swept_file(f"ep-{endpoint.id}", body)
         return endpoint.status, endpoint.reply.encode("utf-8"), endpoint.content_type, {}

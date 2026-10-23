@@ -106,6 +106,9 @@ class EndpointSpec:
     reply: str = "{}"
     content_type: str = "application/json"
     capture: bool = False
+    # Served as a permission prompt the program asks instead of a person
+    # (`weir_run.mock.prompt`): status, reply and content_type are unused.
+    permission_prompt: bool = False
 
 
 @dataclass(frozen=True)

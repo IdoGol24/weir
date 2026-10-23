@@ -63,6 +63,7 @@ from weir_run.check import CheckRun
 from weir_run.spec import (
     ANTHROPIC_HOST,
     ClaudeCodeSpec,
+    EndpointSpec,
     FlowSpec,
     MockSpec,
     PlacementSpec,
@@ -97,6 +98,11 @@ _INLINE = frozenset({"-c", "-e", "-m", "--eval"})
 _ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=.*")
 _PROJECT_DIR = re.compile(r"\$(?:\{CLAUDE_PROJECT_DIR\}|CLAUDE_PROJECT_DIR\b)")
 _HOME_DIR = re.compile(r"\$(?:\{HOME\}|HOME\b)")
+# The permission prompt Claude Code asks instead of a person, served by
+# the mock (`weir_run.mock.prompt`) as an MCP server.
+PROMPT_ENDPOINT = "permission-prompt"
+PROMPT_SERVER = "weir_check"
+PROMPT_TOOL = f"mcp__{PROMPT_SERVER}__prompt"
 _STEP_ID = re.compile(r"toolu_mock_step(\d+)_\d+")
 _MESSAGE = re.compile(r"body\.messages\[(\d+)\](?:\.content\[(\d+)\])?")
 
@@ -511,7 +517,9 @@ def _etc(layout: Layout) -> list[str]:
     return [*command, "--remount-ro", "/etc"]
 
 
-def sandbox(bwrap: str, executable: Path, layout: Layout, env: Mapping[str, str]) -> list[str]:
+def sandbox(
+    bwrap: str, executable: Path, layout: Layout, env: Mapping[str, str], mock_url: str
+) -> list[str]:
     """The bubblewrap command around Claude Code: the system directories
     read-only, the scratch directories, the executable, and nothing of the
     real home or of the host's managed settings. Names resolve through the
@@ -531,7 +539,10 @@ def sandbox(bwrap: str, executable: Path, layout: Layout, env: Mapping[str, str]
     command.append("--clearenv")
     for name, value in env.items():
         command += ["--setenv", name, value]
+    prompt = {"type": "http", "url": f"{mock_url}/ep/{PROMPT_ENDPOINT}/"}
+    mcp = json.dumps({"mcpServers": {PROMPT_SERVER: prompt}})
     command += [str(executable), "-p", PROMPT, "--output-format", "json"]
+    command += ["--mcp-config", mcp, "--permission-prompt-tool", PROMPT_TOOL]
     return command
 
 
@@ -604,6 +615,17 @@ def read_conversation(requests: Path) -> Conversation:
                 out.steps[str(block[key])] = index
                 (out.asked if kind == "tool_use" else out.answered).add(index)
     return out
+
+
+def prompted_steps(run: CheckRun, conversation: Conversation) -> set[int]:
+    """The steps Claude Code asked the permission prompt about: those it
+    would have asked the user about, not denied by a rule or a hook."""
+    prompt = run.mock.prompts[PROMPT_ENDPOINT]
+    return {
+        conversation.steps[a.tool_use_id]
+        for a in prompt.asked
+        if a.tool_use_id in conversation.steps
+    }
 
 
 def denied_steps(stdout: Path, conversation: Conversation) -> set[int]:
@@ -838,6 +860,7 @@ def verdict(
     records: Mapping[int, dict[str, Any]],
     conversation: Conversation,
     denied: set[int],
+    prompted: set[int],
     stored: Mapping[str, list[str]],
     run: CheckRun,
     result: str,
@@ -880,8 +903,16 @@ def verdict(
         for pid in sorted(reached.get(where, {}), key=order.index):
             lines.append(f"reached {where}: {_label(pid)} {_joined(reached[where][pid])}")
     for secret in kept:
-        lines.append(f"kept out: {secret.label} ({_outcomes(secret.id, conversation, denied)})")
+        outcomes = _outcomes(secret.id, conversation, denied, prompted)
+        lines.append(f"kept out: {secret.label} ({outcomes})")
+    asking = behind_a_prompt(prompted)
     for secret in SECRETS:
+        if secret.id in asking and not any(secret.id in r for r in reached.values()):
+            outcomes = _outcomes(secret.id, conversation, denied, prompted)
+            lines.append(f"behind a prompt: {secret.label} ({outcomes}; the run answered no)")
+    for secret in SECRETS:
+        if secret.id in asking:
+            continue
         if states.get(secret.id, {}).get("state") == "not_exercised":
             lines.append(f"not exercised: {secret.label} ({_not_asked(secret.id, conversation)})")
     key_state = states.get(MODEL_KEY, {}).get("state")
@@ -955,12 +986,20 @@ def _joined(channels: Sequence[str]) -> str:
     return ", ".join(out)
 
 
-def _outcomes(pid: str, conversation: Conversation, denied: set[int]) -> str:
+def behind_a_prompt(prompted: set[int]) -> set[str]:
+    """The secrets a step Claude Code would have asked the user about
+    reaches for: one yes would send them, so they are not kept out."""
+    return {target for index in prompted for target in ACTIONS[index].targets}
+
+
+def _outcomes(pid: str, conversation: Conversation, denied: set[int], prompted: set[int]) -> str:
     parts: list[str] = []
     for index, action in enumerate(ACTIONS):
         if pid not in action.targets:
             continue
-        if index in denied:
+        if index in prompted:
+            parts.append(f"{action.shown} would ask you")
+        elif index in denied:
             parts.append(f"{action.shown} denied")
         elif index in conversation.answered:
             parts.append(f"{action.shown} ran")
@@ -1024,7 +1063,12 @@ def run_claude_code(
     layout = Layout(Path(tempfile.mkdtemp(prefix="canary-claude-")))
     try:
         prepare(spec, layout)
-        mock = MockSpec(model_reply=REPLY, tool_calls="none", script=script(layout))
+        mock = MockSpec(
+            model_reply=REPLY,
+            tool_calls="none",
+            script=script(layout),
+            endpoints=(EndpointSpec(PROMPT_ENDPOINT, permission_prompt=True),),
+        )
         run_spec = RunSpec(placements=placements(spec), flows=(), mock=mock)
         run = CheckRun(
             run_spec,
@@ -1040,7 +1084,7 @@ def run_claude_code(
             env = environment(layout, run)
             flow = FlowSpec(
                 id=FLOW_ID,
-                command=tuple(sandbox(bwrap, executable, layout, env)),
+                command=tuple(sandbox(bwrap, executable, layout, env, run.mock_url)),
                 cwd=layout.root,
                 timeout_seconds=spec.timeout_seconds,
                 telemetry=telemetry_expected(settings),
@@ -1049,9 +1093,14 @@ def run_claude_code(
                 flow, env={"PATH": os.environ.get("PATH", os.defpath), "LANG": "C.UTF-8"}
             )
             conversation = read_conversation(run.capture.requests)
+            prompted = prompted_steps(run, conversation)
+            # A step the prompt answered was decided by the run, not by the
+            # settings under test: it exercises nothing.
+            asking = behind_a_prompt(prompted)
             for index in sorted(conversation.answered):
                 for target in ACTIONS[index].targets:
-                    run.ledger.exercised(target, "tool_call")
+                    if target not in asking:
+                        run.ledger.exercised(target, "tool_call")
             denied = denied_steps(outcome.stdout, conversation)
             stored = stored_locally(layout, run)
             reported = {command for _, command, _ in missing}
@@ -1070,7 +1119,16 @@ def run_claude_code(
             records = dict(_requests(run.capture.requests))
             result = _result(outcome.stdout, run)
             lines = verdict(
-                spec, settings, report, records, conversation, denied, stored, run, result
+                spec,
+                settings,
+                report,
+                records,
+                conversation,
+                denied,
+                prompted,
+                stored,
+                run,
+                result,
             )
             out.write(run.redacted("\n".join(lines).encode() + b"\n"))
             out.write(run.redacted(verdict_text.stdout))
