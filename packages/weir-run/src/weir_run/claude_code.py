@@ -1003,7 +1003,10 @@ WRAPPERS: dict[str, frozenset[str]] = {
     "nohup": frozenset(),
     "time": frozenset({"-f", "--format", "-o", "--output"}),
     "nice": frozenset({"-n", "--adjustment"}),
+    "timeout": frozenset({"-s", "--signal", "-k", "--kill-after"}),
 }
+# Arguments a wrapper takes before the command it runs: timeout's duration.
+WRAPPER_POSITIONALS = {"timeout": 1}
 
 
 def _family(program: str) -> Interpreter | None:
@@ -1013,43 +1016,50 @@ def _family(program: str) -> Interpreter | None:
     return None
 
 
-def _script(words: Sequence[str]) -> str | None:
-    """The script one simple command of a hook starts, if it names one:
-    the program itself when it is a path, or an interpreter's script, read
-    with that interpreter's own options."""
+def _script(words: Sequence[str]) -> list[str]:
+    """The scripts one simple command of a hook starts: a program named by
+    a path, and the script an interpreter starts, read with that
+    interpreter's own options. A program named by a path is judged by its
+    name too, so a wrapper or an interpreter named by its path is read as
+    when it is named alone."""
     words = [*words]
+    found: list[str] = []
     while True:
         while words and _ASSIGNMENT.fullmatch(words[0]):
             words.pop(0)
-        if not words or words[0] not in WRAPPERS:
+        name = Path(words[0]).name if words else ""
+        if name not in WRAPPERS:
             break
-        valued = WRAPPERS[words.pop(0)]
+        if "/" in words[0]:
+            found.append(words[0])
+        words.pop(0)
         while words and words[0].startswith("-"):
             option = words.pop(0)
-            if option in valued and words:
+            if option in WRAPPERS[name] and words:
                 words.pop(0)
+        del words[: WRAPPER_POSITIONALS.get(name, 0)]
     if not words:
-        return None
+        return found
     program, *arguments = words
     if "/" in program:
-        return program
-    interpreter = _family(program)
+        found.append(program)
+    interpreter = _family(Path(program).name)
     if interpreter is None:
-        return None
+        return found
     i = 0
     while i < len(arguments):
         argument = arguments[i]
         if argument in interpreter.inline or argument in interpreter.inline_subcommands:
-            return None
+            return found
         if argument in interpreter.script:
-            return arguments[i + 1] if i + 1 < len(arguments) else None
+            return found + arguments[i + 1 : i + 2]
         if argument in interpreter.valued:
             i += 2
         elif argument in interpreter.subcommands or argument.startswith(("-", "+")):
             i += 1
         else:
-            return argument
-    return None
+            return [*found, argument]
+    return found
 
 
 def hook_scripts(command: str) -> list[str]:
@@ -1070,9 +1080,7 @@ def hook_scripts(command: str) -> list[str]:
             if "<" in token or ">" in token:
                 redirected = True
                 continue
-            script = _script(words)
-            if script is not None:
-                scripts.append(script)
+            scripts += _script(words)
             words = []
         else:
             words.append(token)
