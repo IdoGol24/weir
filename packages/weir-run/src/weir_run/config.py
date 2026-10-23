@@ -35,7 +35,6 @@ _CLAUDE_CODE = {
     "key_owner",
     "project",
     "user_settings",
-    "trust_project",
     "executable",
     "timeout_seconds",
 }
@@ -183,7 +182,6 @@ def _claude_code(t: dict[str, object], base: Path) -> ClaudeCodeSpec:
         key_owner=key_owner,
         project=(base / _str(t, "project", where, ".")).resolve(),
         user_settings=None if settings is None else (base / settings).resolve(),
-        trust_project=_bool(t, "trust_project", where, True),
         executable=_str(t, "executable", where, "claude"),
         timeout_seconds=_timeout(t, where),
     )

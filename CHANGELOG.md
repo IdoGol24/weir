@@ -71,8 +71,8 @@
   network. It plants fake secrets in the project's `.env`, a project
   config file, a credentials file in the scratch home and an environment
   variable, and a fake model key with `ANTHROPIC_BASE_URL` at the mock;
-  copies in the project's `.claude/settings.json`,
-  `.claude/settings.local.json` and `CLAUDE.md`, and applies
+  copies in the project's whole `.claude` directory (settings, hooks,
+  commands, agents, skills) and `CLAUDE.md`, and applies
   `user_settings` as the user's own settings, layered as Claude Code
   layers them, the verdict listing each file applied; and lets the mock's
   model ask for ordinary coding actions (read the files, run `cat` and
@@ -89,7 +89,9 @@
   (`api.anthropic.com` is its own host) or `"gateway"` (any other host is
   a leak); without it the run starts nothing and exits 3
   (`incomplete: key_owner_not_declared`). The project is marked trusted
-  for the run unless `trust_project = false`, and the verdict says which.
+  for the run. A hook of the settings under test that does not start (its
+  script missing or not executable) leaves the run incomplete
+  (`incomplete: hook_not_started`, the hook named), never judged.
 - **weir-run: a name and TLS stub in the isolated network.** For the Claude Code
   check, every name lookup is answered with the loopback address and
   HTTPS to any host is decrypted under a certificate authority made for

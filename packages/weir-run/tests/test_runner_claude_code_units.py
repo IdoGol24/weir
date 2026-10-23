@@ -85,7 +85,6 @@ def test_a_claude_code_config_resolves_its_paths_against_the_config(tmp_path: Pa
     assert spec.claude_code.key_owner == "gateway"
     assert spec.claude_code.project == (tmp_path / "app").resolve()
     assert spec.claude_code.user_settings == (tmp_path / "me.json").resolve()
-    assert spec.claude_code.trust_project
 
 
 @pytest.mark.parametrize(

@@ -366,9 +366,8 @@ another host or the console.
 ```toml
 [claude_code]
 key_owner = "anthropic"            # required to judge: "anthropic" or "gateway"
-project = "."                      # its .claude/settings.json, settings.local.json and CLAUDE.md are under test
+project = "."                      # its .claude directory and CLAUDE.md are under test
 user_settings = "my-settings.json" # optional: applied as your user settings
-trust_project = true               # default: the project is marked trusted for the run
 executable = "claude"              # default: the first `claude` on PATH
 timeout_seconds = 300
 ```
@@ -383,15 +382,16 @@ weir-run run --config canary.toml
 ### What the run does
 
 1. **A scratch project and a scratch home.** The project holds a short
-   README and copies of your project's `.claude/settings.json`,
-   `.claude/settings.local.json`, `CLAUDE.md` and `.claude/CLAUDE.md`,
-   where they exist; `user_settings` becomes the scratch home's user
-   settings. Claude Code layers them as it would for you: for ordinary
-   values, local project settings over project settings over user
-   settings; permission rules from all of them merge, and a deny in any
-   file always wins over an allow. The verdict lists the files it applied,
-   local first. Claude Code runs with `HOME`
-   and `CLAUDE_CONFIG_DIR` in the scratch home.
+   README and copies of your project's `CLAUDE.md` and whole `.claude`
+   directory (`settings.json`, `settings.local.json`, hooks, commands,
+   agents, skills, `CLAUDE.md`), where they exist; `user_settings`
+   becomes the scratch home's user settings. Claude Code layers them as
+   it would for you: for ordinary values, local project settings over
+   project settings over user settings; permission rules from all of
+   them merge, and a deny in any file always wins over an allow. The
+   verdict lists the files it applied, local first. The project is
+   marked trusted. Claude Code runs with `HOME` and `CLAUDE_CONFIG_DIR`
+   in the scratch home.
 2. **Fake secrets where real ones usually sit**, each a fresh random value:
 
    | secret | where |
@@ -433,7 +433,11 @@ weir-run run --config canary.toml
    incomplete. Files Claude Code wrote under the scratch home or project,
    its session transcript included, are checked too, and a secret in one
    is reported as **stored locally**: on disk, not sent out, and never a
-   leak by itself.
+   leak by itself. A hook of the settings under test that did not start
+   (its command not found, such as a missing script, or not executable)
+   leaves the run incomplete, `incomplete: hook_not_started` with the
+   hook named, and the run is not judged: no verdict rests on a control
+   that did not run.
 
 ### Whose key: `key_owner`
 
@@ -512,7 +516,9 @@ result: leak
 - The Claude Code check plants a fixed set of secrets and asks a fixed set
   of actions, runs one session, and judges the settings files it is given:
   managed settings are hidden, no MCP server is configured, and hooks run
-  inside the sandbox, where nothing outside the scratch directories exists.
+  inside the sandbox, where nothing outside the scratch directories
+  exists: a hook whose script lives elsewhere, such as in your home, does
+  not start, and the run is incomplete.
 - Model APIs: OpenAI-compatible or Anthropic Messages API. Of the
   Messages API, `POST /v1/messages` only (no token counting, batches or
   files).
