@@ -38,6 +38,7 @@ from weir.audit.formats import (
     Line,
     Place,
     Site,
+    attachments,
     claude_code_sites,
     is_otlp,
     json_lines,
@@ -51,9 +52,10 @@ from weir.audit.formats import (
     whole_json,
     whole_otlp,
 )
-from weir.audit.inputs import AuditInputError, Credential, load_inputs
+from weir.audit.inputs import AuditInputError, Credential, Inputs, load_inputs
 from weir.audit.matching import Matcher
 from weir.canary import CaptureError, Form, collect_capture, needles
+from weir.canary.capture import CaptureFile, Role
 from weir.canary.text import WITHHELD, Display
 from weir.canary.walk import Segment
 from weir.inventory.classify import looks_secret_shaped
@@ -86,6 +88,8 @@ class _File:
     records: int = 0
     unrecognised: int = 0
     unparsed: list[int] = field(default_factory=list[int])
+    # Lines with a document whose text is in streams no value can be matched in
+    encoded: list[int] = field(default_factory=list[int])
     strings: int = 0
 
 
@@ -110,7 +114,10 @@ class _Auditor:
             file.records += 1
             if not recognised(line.parsed):
                 file.unrecognised += 1
-            for site in claude_code_sites(line.parsed, tools):
+            attached = attachments(line.parsed)
+            if attached.encoded:
+                file.encoded.append(line.number)
+            for site in claude_code_sites(line.parsed, tools, attached):
                 self.search(file, line.number, site)
             note_tools(line.parsed, tools)
 
@@ -265,6 +272,35 @@ def audit_files(
         )
     except CaptureError as exc:
         raise AuditInputError(str(exc).replace("capture ", "file ", 1)) from None
+    return _report(credentials, by_fingerprint, matcher, capture, missing, claude_config_dirs)
+
+
+def audit_chunks(
+    inputs: Inputs, chunks: Sequence[tuple[str, bytes]], claude_config_dirs: Sequence[str] = (),
+    as_format: Format | None = None,
+) -> Report:
+    """Audit bytes already read, each (path, data) as one file, in
+    `as_format` when given, else in the format its bytes are recognised as.
+    `weir statusline` reads a growing session file in chunks of whole lines,
+    which are records each on its own: audited in the format its start was
+    recognised as, the chunks give the whole file's hits."""
+    capture = [CaptureFile(path, Role.SWEPT, data) for path, data in chunks]
+    matcher = Matcher(inputs.key, set(inputs.by_fingerprint))
+    return _report(
+        inputs.credentials, inputs.by_fingerprint, matcher, capture, [], claude_config_dirs,
+        as_format,
+    )
+
+
+def _report(
+    credentials: Sequence[Credential],
+    by_fingerprint: dict[bytes, tuple[str, ...]],
+    matcher: Matcher,
+    capture: Sequence[CaptureFile],
+    missing: Sequence[str],
+    claude_config_dirs: Sequence[str],
+    as_format: Format | None = None,
+) -> Report:
     projects_dirs = [PurePath(os.path.abspath(d), "projects") for d in claude_config_dirs]
     auditor = _Auditor(matcher, by_fingerprint)
     files: list[_File] = []
@@ -280,7 +316,8 @@ def audit_files(
             continue
         data = item.data
         lines = json_lines(data)
-        file = _File(item.path, recognise(item.path, data, lines, projects_dirs), len(data))
+        fmt = as_format or recognise(item.path, data, lines, projects_dirs)
+        file = _File(item.path, fmt, len(data))
         files.append(file)
         if file.format is Format.CLAUDE_CODE:
             auditor.claude_code(file, lines)
@@ -334,6 +371,8 @@ def audit_files(
             reasons.append((UnknownReason.UNRECOGNISED_FORMAT, shown.path(file.path), 0))
         for number in file.unparsed:
             reasons.append((UnknownReason.UNPARSED_LINE, shown.path(file.path), number))
+        for number in file.encoded:
+            reasons.append((UnknownReason.NOT_SCANNED, shown.path(file.path), number))
     for path in not_scanned:
         reasons.append((UnknownReason.NOT_SCANNED, shown.path(path), 0))
     for hit in hits:

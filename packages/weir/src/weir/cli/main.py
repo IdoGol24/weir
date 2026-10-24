@@ -1,5 +1,5 @@
 """Minimal CLI surface (L18): `weir gauge`, `weir scan`, `weir inventory`,
-`weir audit` and `weir canary judge`.
+`weir audit`, `weir statusline` and `weir canary judge`.
 
 Thin argument parsing over the pure pipeline functions - no logic of its
 own. `weir test`/`validate`/`verify`/`feedback`/`rules list`/`events import`
@@ -19,14 +19,16 @@ import importlib.resources
 import json as _json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 import click
 import msgspec
 
 from weir.adapters.otel import REMEDIATION, OtlpRejectError, decode_input, map_wire
 from weir.adapters.otel.exposure import scan_surface
-from weir.audit import AuditInputError, audit_paths
+from weir.audit import AuditInputError, audit_paths, load_inputs
 from weir.audit import encode_report as encode_audit_report
 from weir.audit import report_lines as audit_report_lines
 from weir.canary import (
@@ -65,6 +67,11 @@ from weir.report import exposure_lines, finding_lines, render_html_report
 from weir.rules_commons import load_rules
 from weir.schema.exposure import ExposureSurface
 from weir.schema.trace import CanonicalTrace, decode_canonical_trace
+from weir.statusline import setup as statusline_setup
+from weir.statusline import valid_session_id
+from weir.statusline.compose import run_beside
+from weir.statusline.report import report_lines as session_report_lines
+from weir.statusline.segment import read_session
 from weir.taint import build_tainted_graph
 
 _BOM = b"\xef\xbb\xbf"
@@ -438,28 +445,33 @@ def inventory_command(
     raise SystemExit(1 if strict and report.counts.env_unknown else 0)
 
 
+def _inventory_options[F: Callable[..., object]](required: bool) -> Callable[[F], F]:
+    """--inventory, --store and --key: one `weir inventory --store` run's files."""
+
+    def apply(command: F) -> F:
+        for name, flag, help_text in reversed((
+            ("report_path", "--inventory", "The weir-inventory/1 report (weir inventory --json)."),
+            ("store_path", "--store", "The fingerprint store from the same weir inventory run."),
+            ("key_path", "--key", "The fingerprint key that run used. Never created."),
+        )):
+            command = click.option(
+                flag, name, type=click.Path(dir_okay=False, path_type=Path), required=required,
+                help=help_text,
+            )(command)
+        return command
+
+    return apply
+
+
+def _claude_config_dirs() -> tuple[str, ...]:
+    """The one variable the audit honours, read here and handed in, so
+    weir.audit itself stays a function of its arguments."""
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    return (config_dir,) if config_dir else ()
+
+
 @main.command("audit")
-@click.option(
-    "--inventory",
-    "report_path",
-    type=click.Path(dir_okay=False, path_type=Path),
-    required=True,
-    help="The weir-inventory/1 report (weir inventory --json).",
-)
-@click.option(
-    "--store",
-    "store_path",
-    type=click.Path(dir_okay=False, path_type=Path),
-    required=True,
-    help="The fingerprint store from the same weir inventory run (--store).",
-)
-@click.option(
-    "--key",
-    "key_path",
-    type=click.Path(dir_okay=False, path_type=Path),
-    required=True,
-    help="The fingerprint key that run used. Never created: a new key matches nothing.",
-)
+@_inventory_options(required=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit the weir-audit/1 JSON report.")
 @click.argument("paths", metavar="PATH...", nargs=-1, required=True)
 def audit_command(
@@ -473,12 +485,7 @@ def audit_command(
 
     Exit 0 clean, 1 exposed, 2 unusable input, 3 unknown."""
     try:
-        # The command line reads the one variable the audit honours and hands
-        # it in, so weir.audit itself stays a function of its arguments.
-        config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
-        report = audit_paths(
-            report_path, store_path, key_path, paths, (config_dir,) if config_dir else ()
-        )
+        report = audit_paths(report_path, store_path, key_path, paths, _claude_config_dirs())
     except AuditInputError as exc:
         click.echo(f"error: {exc}", err=True)
         raise SystemExit(2) from exc
@@ -488,6 +495,175 @@ def audit_command(
         for line in audit_report_lines(report):
             click.echo(line)
     raise SystemExit(report.exit_code)
+
+
+# --- weir statusline -------------------------------------------------------------
+
+
+def _fail(exc: AuditInputError | statusline_setup.SetupError) -> NoReturn:
+    click.echo(f"error: {exc}", err=True)
+    raise SystemExit(exc.code if isinstance(exc, statusline_setup.SetupError) else 2) from exc
+
+
+def _paths(claude_dir: Path | None, cache: Path | None, **inputs: Path) -> statusline_setup.Paths:
+    """--claude-dir, else CLAUDE_CONFIG_DIR, else HOME/.claude; --cache,
+    else HOME/.weir/statusline."""
+    dirs = _claude_config_dirs()
+    return statusline_setup.Paths(
+        claude_dir=claude_dir or (Path(dirs[0]) if dirs else Path.home() / ".claude"),
+        cache=cache or Path.home() / ".weir" / "statusline", **inputs,
+    )
+
+
+_CLAUDE_DIR = click.option(
+    "--claude-dir", type=click.Path(file_okay=False, path_type=Path), default=None,
+    help="The Claude config directory [default: CLAUDE_CONFIG_DIR, else HOME/.claude].",
+)
+_CACHE = click.option(
+    "--cache", type=click.Path(file_okay=False, path_type=Path), default=None,
+    help="The checkpoints directory (required for the segment; setup uses "
+    "HOME/.weir/statusline when left out).",
+)
+_DRY_RUN = click.option("--dry-run", is_flag=True, help="Show the change and write nothing.")
+
+
+@main.group("statusline", invoke_without_command=True)
+@_inventory_options(required=False)
+@_CACHE
+@click.option("--inner", default=None, help="The status line command already in the settings.")
+@click.option(
+    "--budget-ms", type=click.IntRange(min=0), default=500, show_default=True,
+    help="Reading time per run; a longer session is read over several runs.",
+)
+@click.pass_context
+def statusline_group(
+    ctx: click.Context, report_path: Path | None, store_path: Path | None,
+    key_path: Path | None, cache: Path | None, inner: str | None, budget_ms: int,
+) -> None:
+    """(experimental) A Claude Code status-line segment: counts the
+    inventoried credentials that entered this session's context and those
+    sent in a tool call, from the session JSON on stdin. "unknown" when a
+    file cannot be read. Never prints a value. Always exits 0."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if report_path is None or store_path is None or key_path is None or cache is None:
+        raise click.UsageError("weir statusline needs --inventory, --store, --key and --cache")
+    stdin = click.get_binary_stream("stdin").read()
+
+    def segment() -> str:
+        try:
+            session = _json.loads(stdin)
+            session_id, transcript = session.get("session_id"), session.get("transcript_path")
+        except (ValueError, AttributeError):
+            return "weir: no session"
+        if not (isinstance(session_id, str) and valid_session_id(session_id)
+                and isinstance(transcript, str) and transcript):
+            return "weir: no session"
+        try:
+            inputs = load_inputs(report_path, store_path, key_path)
+            return read_session(
+                inputs, cache, transcript, session_id, _claude_config_dirs(), budget_ms / 1000
+            )
+        except Exception:  # a failing status line shows nothing: a word instead
+            return "weir: error, run /weir"
+
+    click.echo(run_beside(inner, stdin, segment))
+
+
+@statusline_group.command("report")
+@_inventory_options(required=True)
+@click.option("--session", "session_id", required=True, help="The Claude Code session id.")
+@_CLAUDE_DIR
+def statusline_report_command(
+    report_path: Path, store_path: Path, key_path: Path, session_id: str,
+    claude_dir: Path | None,
+) -> None:
+    """(experimental) The /weir report: per credential that reached the
+    session, its source, the turn and tool call, where it now sits, and
+    advice. Never prints a value."""
+    if not valid_session_id(session_id):
+        click.echo("error: --session: not a session id", err=True)
+        raise SystemExit(2)
+    projects = _paths(claude_dir, None).claude_dir / "projects"
+    found = sorted(projects.glob(f"*/{session_id}.jsonl"))
+    if len(found) != 1:
+        many = "more than one transcript" if found else "no transcript"
+        click.echo(f"error: {many} for session {session_id} under {projects}", err=True)
+        raise SystemExit(2)
+    try:
+        inputs = load_inputs(report_path, store_path, key_path)
+        lines = session_report_lines(inputs, str(found[0]), session_id, _claude_config_dirs())
+    except AuditInputError as exc:
+        _fail(exc)
+    for line in lines:
+        click.echo(line)
+
+
+def _apply_if_yes(apply: Callable[[], None], done: str) -> None:
+    click.echo("Type yes to apply: ", nl=False)
+    if not statusline_setup.confirmed(click.get_text_stream("stdin").readline()):
+        click.echo("\nnot applied: nothing written")
+        return
+    try:
+        apply()
+    except statusline_setup.SetupError as exc:
+        _fail(exc)
+    click.echo(f"\n{done}")
+
+
+@statusline_group.command("setup")
+@_inventory_options(required=True)
+@_CACHE
+@_CLAUDE_DIR
+@_DRY_RUN
+def statusline_setup_command(
+    report_path: Path, store_path: Path, key_path: Path, cache: Path | None,
+    claude_dir: Path | None, dry_run: bool,
+) -> None:
+    """(experimental) Add the weir segment beside the status line in
+    Claude Code's user settings and install the /weir command. Shows the
+    exact change, then writes only after you type yes."""
+    paths = _paths(claude_dir, cache, report=report_path, store=store_path, key=key_path)
+    try:
+        plan = statusline_setup.plan_setup(paths)
+    except statusline_setup.SetupError as exc:
+        _fail(exc)
+    click.echo("weir statusline setup will make this change:")
+    for line in statusline_setup.describe(paths, plan, undo=False):
+        click.echo(line)
+    undo = statusline_setup.undo_command(claude_dir)
+    click.echo(f"undo: {undo} puts the status line back")
+    if dry_run:
+        click.echo("dry run: nothing written")
+        return
+    _apply_if_yes(
+        lambda: statusline_setup.apply(paths, plan, undo=False), f"applied; to undo: {undo}"
+    )
+
+
+@statusline_group.command("undo")
+@_CLAUDE_DIR
+@_DRY_RUN
+def statusline_undo_command(claude_dir: Path | None, dry_run: bool) -> None:
+    """(experimental) Put back the status line `weir statusline setup`
+    replaced, keeping every other setting, and remove /weir. Refuses when
+    it changed since, or when settings.json was removed and there was one
+    before setup; with none before, there is nothing to restore."""
+    paths = _paths(claude_dir, None)
+    try:
+        plan = statusline_setup.plan_undo(paths)
+    except statusline_setup.SetupError as exc:
+        _fail(exc)
+    if plan is None:
+        click.echo("nothing to undo: weir statusline setup has not been applied")
+        return
+    click.echo("weir statusline undo will:")
+    for line in statusline_setup.describe(paths, plan, undo=True):
+        click.echo(line)
+    if dry_run:
+        click.echo("dry run: nothing written")
+        return
+    _apply_if_yes(lambda: statusline_setup.apply(paths, plan, undo=True), "restored")
 
 
 @main.group("canary")

@@ -164,10 +164,17 @@ def json_texts(text: str) -> list[tuple[str, bool]]:
     candidate whole: the string unescaped, and each JSON string literal whose
     content holds a backslash."""
     out = [(json_unescape(text), False)]
-    for literal in _JSON_LITERAL.finditer(text):
+    at = text.find('"')
+    while at >= 0:
+        literal = _JSON_LITERAL.match(text, at)
+        if literal is None:
+            # No unescaped quote after this one: every later quote fails the
+            # same way, so the scan stops here rather than trying each one.
+            break
         content = literal.group(1)
         if "\\" in content:
             out.append((json_unescape(content), True))
+        at = text.find('"', literal.end())
     return out
 
 
