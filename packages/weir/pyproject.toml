@@ -1,6 +1,6 @@
 [project]
 name = "weir-scan"
-version = "0.6.0"
+version = "0.7.0"
 description = "Leak tests for AI agents: deterministically find planted credentials in your agent's telemetry, model requests and outbound calls."
 license = "Apache-2.0"
 readme = "README.md"
