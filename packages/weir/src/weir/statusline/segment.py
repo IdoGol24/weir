@@ -25,7 +25,7 @@ import signal
 import stat
 import sys
 import time
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -107,19 +107,54 @@ def counted(t: Tally, inputs: Inputs) -> tuple[int, int]:
     return len({groups[c] for c in t.context}), len({groups[c] for c in t.sent})
 
 
+# The ANSI SGR code each part of the segment is drawn in (docs/statusline.md,
+# "Colours"); every coloured part is reset after itself, so the status line
+# beside it keeps its own colours.
+GREEN, AMBER, RED, DIM = 32, 33, 31, 2
+RESET = "\x1b[0m"
+POINTER = "→ /weir"
+# The words for an inventory that holds no credential weir can check.
+NOTHING_TO_CHECK = "nothing to check"
+
+
+def colour_wanted(environ: Mapping[str, str]) -> bool:
+    """Colour unless NO_COLOR is set and not empty (no-color.org)."""
+    return not environ.get("NO_COLOR")
+
+
+def _paint(text: str, sgr: int, colour: bool) -> str:
+    return f"\x1b[{sgr}m{text}{RESET}" if colour else text
+
+
+def note(words: str, *, colour: bool, pointer: bool = False) -> str:
+    """A line with no counts: its words dim."""
+    return "weir " + _paint(f"{words} {POINTER}" if pointer else words, DIM, colour)
+
+
 def segment_text(
     context: int, sent: int, *, unknown: bool, partial: bool = False,
-    scanning: int | None = None,
+    scanning: int | None = None, colour: bool = False, pointer: bool = True,
 ) -> str:
+    """The segment's line; without `pointer`, the /weir report's first line."""
     if partial:
-        return "weir: partly checked, run /weir"
-    counts = f"{context} in context, {sent} sent"
+        return note("partly checked", colour=colour, pointer=pointer)
+    counts = (
+        f"{_paint('⚠', AMBER, colour)} "
+        f"{_paint(f'{context} in context', AMBER if context else DIM, colour)} · "
+        f"{_paint(f'{sent} sent', RED if sent else DIM, colour)}"
+    )
     if scanning is not None:
-        prefix = f"{counts}, " if context or sent else ""
-        return f"weir: {prefix}{SCANNING} {scanning}%"
-    if unknown and not (context or sent):
-        return "weir: unknown"
-    return f"weir: {counts}, part unknown" if unknown else f"weir: {counts}"
+        progress = _paint(f"{SCANNING} {scanning}%", DIM, colour)
+        return f"weir {counts} · {progress}" if context or sent else f"weir {progress}"
+    if not (context or sent):
+        # Nothing exposed only when every file was read and nothing is unknown.
+        return note("unknown", colour=colour) if unknown else (
+            "weir " + _paint("✓ nothing exposed", GREEN, colour)
+        )
+    line = f"weir {counts}"
+    if unknown:
+        line += " · " + _paint("part unknown", DIM, colour)
+    return f"{line} {POINTER}" if pointer else line
 
 
 @dataclass
@@ -437,9 +472,11 @@ def _image_bytes(line: bytes) -> int:
 
 def read_session(
     inputs: Inputs, cache: Path, transcript: str, session_id: str,
-    claude_config_dirs: Sequence[str], budget_s: float,
+    claude_config_dirs: Sequence[str], budget_s: float, *, colour: bool = False,
 ) -> str:
     """The segment for one session."""
+    if not inputs.by_fingerprint:
+        return note(NOTHING_TO_CHECK, colour=colour)  # nothing to count: never a clean
     deadline = time.monotonic() + budget_s
     reader = Reader(inputs, cache, transcript + "\0" + session_id, claude_config_dirs, deadline)
     reader.load()
@@ -448,5 +485,6 @@ def read_session(
     context, sent = counted(found, inputs)
     scanning = done * 100 // total if done < total else None
     return segment_text(
-        context, sent, unknown=found.unknown, partial=found.partial, scanning=scanning
+        context, sent, unknown=found.unknown, partial=found.partial, scanning=scanning,
+        colour=colour,
     )

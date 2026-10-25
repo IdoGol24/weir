@@ -99,12 +99,13 @@ def _many_blocks_session(claude: sx.Claude) -> Path:
 
 
 def _start(claude: sx.Claude, cache: Path, *extra: str) -> subprocess.Popen[bytes]:
-    """The real `python -m weir statusline` process, as Claude Code runs it."""
+    """The real `python -m weir statusline` process, as Claude Code runs it,
+    its words only (test_statusline_look.py checks the colours)."""
     command = [sys.executable, "-m", "weir", "statusline", *claude.inputs(),
                "--cache", str(cache), *extra]
     proc = subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        env=claude.env(),
+        env={**claude.env(), **sx.NO_COLOR},
     )
     assert proc.stdin is not None
     proc.stdin.write(sx.status_json(claude.transcript(), fx.SESSION_ID).encode())
@@ -200,13 +201,14 @@ def test_a_first_scan_cancelled_again_and_again_still_completes(
     uninterrupted = _until_read(claude, tmp_path / "fresh", fresh, *budget)
     report = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
 
-    expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
+    counts = sx.expected_counts(claude.setup, claude.audit())
+    expected = sx.segment_for(counts) + "\n"
     shown = {expected, sx.PARTLY_CHECKED + "\n"} if partly else {expected}
     assert kills >= 3, "the scan should have been cancelled again and again"
-    assert expected == "weir: 2 in context, 1 sent\n"
+    assert expected == "weir ⚠ 2 in context · 1 sent → /weir\n"
     assert uninterrupted in shown
     assert finished in shown
-    assert report.lines[0] + "\n" == expected
+    assert report.lines[0] == sx.segment_for(counts, pointer=False)
     for path in (p for p in claude.state.rglob("*") if p.is_file()):
         cfx.assert_value_free(path.name + "\n" + path.read_bytes().decode("utf-8", "replace"),
                               claude.setup.values.values())
@@ -252,8 +254,9 @@ def test_a_long_record_whose_search_is_cancelled_is_tried_three_times(
     shown = _until_read(claude, claude.state, _start(claude, claude.state))
     report = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
 
-    expected = sx.segment_for(sx.expected_counts(claude.setup, claude.audit())) + "\n"
-    assert report.lines[0] + "\n" == expected
+    counts = sx.expected_counts(claude.setup, claude.audit())
+    expected = sx.segment_for(counts) + "\n"
+    assert report.lines[0] == sx.segment_for(counts, pointer=False)
     assert shown == (sx.PARTLY_CHECKED + "\n" if kills == 3 else expected)
 
 
@@ -304,7 +307,7 @@ def test_the_fingerprint_key_is_a_file_only_its_owner_can_read(tmp_path: Path) -
     session = fx.Session()
     session.prompt("hello")
     session.write(claude.transcript())
-    assert claude.statusline().stdout == "weir: 0 in context, 0 sent\n"
+    assert claude.statusline().stdout == "weir ✓ nothing exposed\n"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="owner and mode bits are POSIX")
@@ -326,7 +329,7 @@ def test_a_key_file_others_can_read_is_refused(tmp_path: Path, mode: int) -> Non
          "--key", str(key)]
     )
 
-    assert line.stdout == "weir: error, run /weir\n"
+    assert line.stdout == "weir error → /weir\n"
     for run in (report, audit):
         assert run.exit_code == 2
     assert inventory.exit_code == 2

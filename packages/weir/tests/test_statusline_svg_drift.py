@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import canary_fixtures as cfx
 import pytest
 import statusline_demo as demo
+import statusline_fixtures as sx
 
 from weir.statusline.segment import SCANNING
 
@@ -36,6 +37,10 @@ def _root() -> ET.Element:
 
 def _classes(el: ET.Element) -> list[str]:
     return el.get("class", "").split()
+
+
+def _words(el: ET.Element) -> str:
+    return "".join(el.itertext())
 
 
 def _texts(root: ET.Element, cls: str) -> list[ET.Element]:
@@ -139,11 +144,15 @@ def test_the_status_line_scans_then_settles_on_the_counts(live: demo.Outputs) ->
     assert all(SCANNING in f for f in out.frames[:-1])
     assert SCANNING not in out.frames[-1]
     # The status line and the report's first line are two runs over the
-    # same session; they agree.
-    assert out.frames[-1] == out.report[0]
+    # same session; they agree, the report without the pointer to itself.
+    assert sx.plain(out.frames[-1]) == f"{out.report[0]} {sx.POINTER}"
+    # The real output is coloured, and the image shows its colours.
+    assert all("\x1b[" in f for f in out.frames)
 
     segments = _texts(_root(), r"s\d+")
-    assert [el.text for el in segments] == out.frames
+    assert len(segments) == len(out.frames)
+    for el, frame in zip(segments, out.frames, strict=True):
+        sx.assert_painted(el, frame)
 
 
 def test_the_report_is_shown_whole_and_in_order(live: demo.Outputs) -> None:
@@ -176,11 +185,12 @@ def test_the_finished_frame_survives_reduced_motion(live: demo.Outputs) -> None:
     # typed-but-not-yet-submitted command are hidden.
     opacity = [style.computed(el, reduced=True).get("opacity") for el in texts]
     assert set(opacity) == {"0", "1"}
-    still = [el.text for el, o in zip(texts, opacity, strict=True) if o == "1"]
-    hidden = [el.text for el, o in zip(texts, opacity, strict=True) if o == "0"]
-    transcript = [el.text for el in _texts(root, r"r\d+")]
-    assert still == [live.frames[-1], ">", *transcript]
-    assert hidden == [*live.frames[:-1], demo.COMMAND]
+    still = [_words(el) for el, o in zip(texts, opacity, strict=True) if o == "1"]
+    hidden = [_words(el) for el, o in zip(texts, opacity, strict=True) if o == "0"]
+    transcript = [_words(el) for el in _texts(root, r"r\d+")]
+    frames = [sx.plain(f) for f in live.frames]
+    assert still == [frames[-1], ">", *transcript]
+    assert hidden == [*frames[:-1], demo.COMMAND]
 
     # And the animation reaches that same frame: every element shows
     # before it fades, and the finished frame is on screen all at once.

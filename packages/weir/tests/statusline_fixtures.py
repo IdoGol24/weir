@@ -15,12 +15,15 @@ of docs/statusline.md, never from the status line's own output.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +40,10 @@ PROJECT = "-fake-home-work-proj"
 posix_shell = pytest.mark.skipif(
     os.name != "posix", reason="weir statusline setup supports POSIX shells only"
 )
+
+
+# The segment's words without its colours (docs/statusline.md, "The segment").
+NO_COLOR = {"NO_COLOR": "1"}
 
 
 @dataclass(frozen=True)
@@ -80,9 +87,13 @@ class Claude:
         """The environment the commands run with: the fake home only."""
         return {"HOME": str(self.setup.home), "CLAUDE_CONFIG_DIR": str(self.config)}
 
-    def invoke(self, args: Sequence[str], stdin: str | None = None) -> Run:
+    def invoke(
+        self, args: Sequence[str], stdin: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> Run:
         result = CliRunner().invoke(
-            main, list(args), input=stdin, env=self.env(), catch_exceptions=False
+            main, list(args), input=stdin, env={**self.env(), **(env or {})},
+            catch_exceptions=False,
         )
         return Run(result.exit_code, result.stdout, result.stderr)
 
@@ -90,10 +101,37 @@ class Claude:
         self, session_id: str = fx.SESSION_ID, *, transcript: Path | None = None,
         extra: Sequence[str] = (),
     ) -> Run:
-        """`weir statusline` as Claude Code runs it: the session JSON on stdin."""
+        """`weir statusline` as Claude Code runs it: the session JSON on stdin.
+        Its words only, NO_COLOR set: test_statusline_look.py checks the colours."""
         payload = status_json(transcript or self.transcript(session_id), session_id)
         args = ["statusline", *self.inputs(), "--cache", str(self.state), *extra]
-        return self.invoke(args, stdin=payload)
+        return self.invoke(args, stdin=payload, env=NO_COLOR)
+
+    def process(
+        self, args: Sequence[str], stdin: str = "", env: Mapping[str, str] | None = None
+    ) -> Run:
+        """weir in a process of its own, its output a pipe, as Claude Code
+        reads a status line command: the fake home, and NO_COLOR only when
+        `env` sets it."""
+        full = {k: v for k, v in os.environ.items() if k != "NO_COLOR"}
+        full.update({**self.env(), **(env or {})})
+        proc = subprocess.run(
+            [sys.executable, "-m", "weir", *args], input=stdin.encode(), capture_output=True,
+            env=full, timeout=120, check=False,
+        )
+        return Run(
+            proc.returncode,
+            proc.stdout.decode().replace("\r\n", "\n"),
+            proc.stderr.decode().replace("\r\n", "\n"),
+        )
+
+    def statusline_process(
+        self, *, env: Mapping[str, str] | None = None, extra: Sequence[str] = ()
+    ) -> Run:
+        """`weir statusline` in a process of its own, the session JSON on stdin."""
+        payload = status_json(self.transcript(), fx.SESSION_ID)
+        args = ["statusline", *self.inputs(), "--cache", str(self.state), *extra]
+        return self.process(args, payload, env)
 
     def audit(self, session_id: str = fx.SESSION_ID) -> dict[str, object]:
         """`weir audit --json` over the session's files: the transcript and,
@@ -132,6 +170,34 @@ def build(root: Path, *, bashrc: str | None = None, extra_env: str = "") -> Clau
     config = setup.home / ".claude"
     (config / "projects" / PROJECT).mkdir(parents=True)
     return Claude(setup=setup, config=config, state=setup.home / ".weir" / "statusline")
+
+
+def without_credentials(claude: Claude, *, bashrc: str | None = None) -> None:
+    """Point `claude` at a real `weir inventory` of an empty fake home and
+    an empty launch environment: an inventory that holds no credential, or
+    only what `bashrc`, the fake home's shell startup file, names."""
+    root = claude.setup.root / "empty"
+    project = root / "home" / "work" / "proj"
+    project.mkdir(parents=True)
+    if bashrc is not None:
+        (root / "home" / ".bashrc").write_text(bashrc)
+    env = root / "launch.env"
+    env.write_text("")
+    out = root / "inventory"
+    out.mkdir()
+    report, store, key = out / "inventory.json", out / "store.json", out / "fingerprint.key"
+    result = CliRunner().invoke(
+        main,
+        [
+            "inventory", "--home", str(root / "home"), "--project", str(project),
+            "--env-file", str(env), "--key", str(key), "--store", str(store), "--json",
+        ],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.stderr
+    report.write_text(result.stdout)
+    ids = {c["name"]: c["id"] for c in json.loads(result.stdout)["credentials"]}
+    claude.setup = dataclasses.replace(claude.setup, report=report, store=store, key=key, ids=ids)
 
 
 def status_json(transcript: Path, session_id: str) -> str:
@@ -178,17 +244,77 @@ def expected_counts(setup: fx.Setup, report: Mapping[str, object]) -> tuple[int,
     return len(context), len(sent), bool(report["unknown"])
 
 
-# docs/statusline.md, "The segment": a record too long to search within a run
-PARTLY_CHECKED = "weir: partly checked, run /weir"
+# docs/statusline.md, "Colours": the SGR code each part is drawn in.
+GREEN, AMBER, RED, DIM = 32, 33, 31, 2
+POINTER = "→ /weir"
+# A record too long to search within a run
+PARTLY_CHECKED = f"weir partly checked {POINTER}"
+_SGR = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def segment_for(counts: tuple[int, int, bool]) -> str:
-    """The segment docs/statusline.md prints for finished counts."""
+def paint(text: str, sgr: int, colour: bool) -> str:
+    """`text` drawn in `sgr` and reset after, or plain."""
+    return f"\x1b[{sgr}m{text}\x1b[0m" if colour else text
+
+
+def plain(line: str) -> str:
+    """`line` without its SGR codes."""
+    return _SGR.sub("", line)
+
+
+_PAINTED = re.compile(r"\x1b\[0m|\x1b\[(\d+)m([^\x1b]*)\x1b\[0m|([^\x1b]+)")
+
+
+def spans(line: str) -> list[tuple[str, int | None]]:
+    """`line` as its parts: each one's text and SGR code (None: no colour).
+    A line that is not text, painted parts and resets is refused."""
+    found = [
+        (m[2], int(m[1])) if m[1] else (m[3], None)
+        for m in _PAINTED.finditer(line) if m[1] or m[3]
+    ]
+    assert "".join(text for text, _ in found) == plain(line), f"not plain or painted: {line!r}"
+    return found
+
+
+def assert_painted(el: ET.Element, line: str) -> None:
+    """The SVG <text> `el` shows `line`, a real segment's output: one
+    <tspan> per part, in the fill its SGR code is drawn in."""
+    from _harness.statusline_svg import SGR_FILLS, TEXT_FILL  # the images' tests only
+
+    tspan = "{http://www.w3.org/2000/svg}tspan"
+    assert "".join(el.itertext()) == plain(line)
+    assert [(t.text, t.get("fill")) for t in el.iter(tspan)] == [
+        (text, TEXT_FILL if code is None else SGR_FILLS[code]) for text, code in spans(line)
+    ]
+
+
+def counts_for(context: int, sent: int, *, colour: bool = False) -> str:
+    """The counts docs/statusline.md shows: amber, red, a zero dim."""
+    return (
+        f"{paint('⚠', AMBER, colour)} "
+        f"{paint(f'{context} in context', AMBER if context else DIM, colour)} · "
+        f"{paint(f'{sent} sent', RED if sent else DIM, colour)}"
+    )
+
+
+def segment_for(
+    counts: tuple[int, int, bool], *, colour: bool = False, pointer: bool = True
+) -> str:
+    """The segment docs/statusline.md prints for finished counts; the
+    /weir report's first line without the pointer."""
     context, sent, incomplete = counts
-    if incomplete and not (context or sent):
-        return "weir: unknown"
-    line = f"weir: {context} in context, {sent} sent"
-    return line + ", part unknown" if incomplete else line
+    if not (context or sent):
+        if incomplete:
+            return f"weir {paint('unknown', DIM, colour)}"
+        return f"weir {paint('✓ nothing exposed', GREEN, colour)}"
+    line = f"weir {counts_for(context, sent, colour=colour)}"
+    if incomplete:
+        line += f" · {paint('part unknown', DIM, colour)}"
+    return f"{line} {POINTER}" if pointer else line
+
+
+# A refresh before the files are read to their end, its SGR codes taken out.
+SCANNING_LINE = re.compile(r"weir (⚠ \d+ in context · \d+ sent · )?scanning… \d+%")
 
 
 # --- running a settings command the way Claude Code does ---------------------

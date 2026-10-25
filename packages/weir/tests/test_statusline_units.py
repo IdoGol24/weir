@@ -67,11 +67,11 @@ def test_a_line_still_being_written_counts_as_unread_until_it_stops_changing(
     path.write_bytes(whole)
     complete = claude.statusline()
 
-    assert fresh.stdout.startswith("weir: ") and "scanning…" in fresh.stdout
+    assert fresh.stdout.startswith("weir ") and "scanning…" in fresh.stdout
     assert stopped.stdout == sx.segment_for(sx.expected_counts(claude.setup, stopped_audit)) + "\n"
     assert "unknown" in stopped.stdout
     assert complete.stdout == _expected(claude)
-    assert complete.stdout == "weir: 2 in context, 1 sent\n"
+    assert complete.stdout == "weir ⚠ 2 in context · 1 sent → /weir\n"
 
 
 @pytest.mark.parametrize("how", ["shrunk", "start changed", "replaced"])
@@ -80,7 +80,7 @@ def test_a_file_rewritten_under_the_reader_is_read_again_from_the_start(
 ) -> None:
     claude = sx.build(tmp_path)
     path = _session(claude).write(claude.transcript())
-    assert claude.statusline().stdout == "weir: 2 in context, 1 sent\n"
+    assert claude.statusline().stdout == "weir ⚠ 2 in context · 1 sent → /weir\n"
     other = fx.Session()
     other.prompt("a new start" if how != "shrunk" else "short")
     other.tool_use("Bash", {"command": "ls"}, "toolu_9")
@@ -118,7 +118,7 @@ def test_what_the_audit_cannot_read_is_unknown_never_zero(tmp_path: Path, what: 
         target.parent.mkdir(parents=True)
         target.write_bytes(packed if what != "unknown file" else b"opaque\n")
 
-    assert claude.statusline().stdout == "weir: unknown\n"
+    assert claude.statusline().stdout == "weir unknown\n"
 
 
 @pytest.mark.parametrize(
@@ -178,7 +178,7 @@ def test_records_before_the_first_prompt_leave_the_format_open(
 
     assert before.stdout == sx.segment_for(sx.expected_counts(claude.setup, before_audit)) + "\n"
     assert run.stdout == _expected(claude)
-    assert run.stdout == "weir: 2 in context, 1 sent\n"
+    assert run.stdout == "weir ⚠ 2 in context · 1 sent → /weir\n"
 
 
 def test_a_last_line_that_stopped_mid_line_can_decide_the_format(
@@ -197,7 +197,7 @@ def test_a_last_line_that_stopped_mid_line_can_decide_the_format(
     run = claude.statusline()
 
     assert run.stdout == _expected(claude)
-    assert run.stdout == "weir: 1 in context, 0 sent\n"
+    assert run.stdout == "weir ⚠ 1 in context · 0 sent → /weir\n"
 
 
 @pytest.mark.parametrize("how", ["removed", "unreadable", "unreadable subagents directory"])
@@ -235,7 +235,7 @@ def test_a_session_file_gone_or_unreadable_while_listed_is_unknown_not_an_error(
     subagents.chmod(0o700)
 
     if how == "unreadable subagents directory":
-        assert run.stdout == "weir: unknown\n"
+        assert run.stdout == "weir unknown\n"
     else:
         context, sent, _ = sx.expected_counts(claude.setup, claude.audit())
         assert run.stdout == sx.segment_for((context, sent, True)) + "\n"
@@ -260,7 +260,7 @@ def test_a_saved_output_that_holds_an_old_session_is_stored_not_sent(tmp_path: P
     formats = {f["format"] for f in audit["files"]}  # type: ignore[union-attr]
     assert "claude-code-tool-results" in formats
     assert sx.expected_counts(claude.setup, audit) == (0, 0, False)
-    assert run.stdout == "weir: 0 in context, 0 sent\n"
+    assert run.stdout == "weir ✓ nothing exposed\n"
 
 
 @pytest.mark.parametrize("stdin", ["not json", "[]", '{"session_id": "x"}'])
@@ -268,9 +268,9 @@ def test_input_that_is_not_the_status_line_json_says_so(tmp_path: Path, stdin: s
     claude = sx.build(tmp_path)
     args = ["statusline", *claude.inputs(), "--cache", str(claude.state)]
 
-    run = claude.invoke(args, stdin=stdin)
+    run = claude.invoke(args, stdin=stdin, env=sx.NO_COLOR)
 
-    assert (run.exit_code, run.stdout) == (0, "weir: no session\n")
+    assert (run.exit_code, run.stdout) == (0, "weir no session\n")
 
 
 def test_a_wrong_key_is_an_error_word_on_the_line(tmp_path: Path) -> None:
@@ -278,17 +278,19 @@ def test_a_wrong_key_is_an_error_word_on_the_line(tmp_path: Path) -> None:
     _session(claude).write(claude.transcript())
     cfx.write(claude.setup.key, "cd" * 32 + "\n")
 
-    assert claude.statusline().stdout == "weir: error, run /weir\n"
+    assert claude.statusline().stdout == "weir error → /weir\n"
 
 
 def test_a_checkpoint_from_another_inventory_is_not_used(tmp_path: Path) -> None:
     claude = sx.build(tmp_path)
     _session(claude).write(claude.transcript())
     first = claude.statusline()
+    # Another inventory: the credentials the session holds are gone from it.
+    gone = {claude.setup.ids[fx.ACME], claude.setup.ids[fx.AWS_SECRET]}
     report = json.loads(claude.setup.report.read_text())
-    report["credentials"] = [c for c in report["credentials"] if c["value_state"] != "literal"]
+    report["credentials"] = [c for c in report["credentials"] if c["id"] not in gone]
     store = json.loads(claude.setup.store.read_text())
-    store["records"] = []
+    store["records"] = [r for r in store["records"] if r["credential_id"] not in gone]
     cfx.write(claude.setup.report, json.dumps(report))
     cfx.write(claude.setup.store, json.dumps(store))
 
@@ -449,7 +451,8 @@ def test_a_long_record_not_searched_within_the_time_bound_leaves_the_session_par
     report = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
 
     assert path.stat().st_size > 2 * segment.LONG_RECORD_BYTES
-    assert report.lines[0] + "\n" == _expected(claude)
+    counts = sx.expected_counts(claude.setup, claude.audit())
+    assert report.lines[0] == sx.segment_for(counts, pointer=False)
     assert "1 sent" in report.lines[0]
     first = next(n for n, line in enumerate(shown) if "partly" in line)
     assert shown[first:] == [sx.PARTLY_CHECKED + "\n"] * (len(shown) - first)
@@ -614,7 +617,7 @@ def test_the_existing_command_is_shown_beside_the_segment(
 ) -> None:
     monkeypatch.setattr(compose, "INNER_TIMEOUT_S", 1.0)
 
-    line = compose.run_beside(inner, b"{}", lambda: "weir: x")
+    line = compose.run_beside(inner, b"{}", lambda: "weir: x", colour=False)
 
     assert line.replace("\r\n", "\n") == shown
 
@@ -657,7 +660,7 @@ def test_the_existing_commands_children_are_stopped_at_the_time_bound(
     monkeypatch.setattr(compose, "INNER_TIMEOUT_S", 1.0)
     pid_file = tmp_path / "child.pid"
 
-    line = compose.run_beside(_spawns_a_child(pid_file), b"{}", lambda: "weir: x")
+    line = compose.run_beside(_spawns_a_child(pid_file), b"{}", lambda: "weir: x", colour=False)
 
     assert line == "weir: x"
     assert not _child_left(pid_file)
@@ -972,7 +975,8 @@ def test_one_value_found_in_two_places_is_one_block_with_startup_file_advice(
     advice = next(x for x in blocks[heading] if x.startswith("advice: "))
     assert "launch env" in source and "~/.bashrc" in source
     assert "take it out of ~/.bashrc" in advice
-    assert claude.statusline().stdout == _expected(claude) == "weir: 1 in context, 0 sent\n"
+    shown = claude.statusline().stdout
+    assert shown == _expected(claude) == "weir ⚠ 1 in context · 0 sent → /weir\n"
 
 
 def test_only_what_the_person_typed_starts_a_turn(tmp_path: Path) -> None:

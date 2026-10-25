@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="430" height="94" viewBox="0 0 430 94" role="img" aria-label="Status lines, the weir segment beside an existing one: ctx 42% | weir ✓ nothing exposed; and ctx 61% | weir ⚠ 2 in context · 1 sent → /weir">
+<rect width="430" height="94" rx="8" fill="#0d1117"/>
+<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14">
+<rect x="10" y="10" width="410" height="32" rx="4" fill="#161b22"/>
+<text x="22" y="31" xml:space="preserve"><tspan fill="#e6edf3">ctx 42%</tspan><tspan fill="#e6edf3"> | weir </tspan><tspan fill="#3fb950">✓ nothing exposed</tspan></text>
+<rect x="10" y="52" width="410" height="32" rx="4" fill="#161b22"/>
+<text x="22" y="73" xml:space="preserve"><tspan fill="#e6edf3">ctx 61%</tspan><tspan fill="#e6edf3"> | weir </tspan><tspan fill="#d29922">⚠</tspan><tspan fill="#e6edf3"> </tspan><tspan fill="#d29922">2 in context</tspan><tspan fill="#e6edf3"> · </tspan><tspan fill="#ff7b72">1 sent</tspan><tspan fill="#e6edf3"> → /weir</tspan></text>
+</g></svg>

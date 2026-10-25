@@ -145,7 +145,7 @@ def test_a_long_session_is_read_over_several_runs_and_never_shows_a_false_count(
     assert outputs[-1] == expected
     assert len(outputs) > 2, "the session should take several runs at a zero budget"
     for partial in outputs[:-1]:
-        assert re.fullmatch(r"weir: (\d+ in context, \d+ sent, )?scanning\u2026 \d+%\n", partial)
+        assert sx.SCANNING_LINE.fullmatch(partial.removesuffix("\n")), partial
 
 
 # --- 2. unknown, never a false zero --------------------------------------------
@@ -166,7 +166,7 @@ def test_an_unrecognised_file_in_the_session_is_unknown_not_zero(tmp_path: Path)
 
     report = claude.audit()
     assert report["result"] == "unknown"
-    assert run.stdout == "weir: unknown\n"
+    assert run.stdout == "weir unknown\n"
     assert run.stdout == sx.segment_for(sx.expected_counts(claude.setup, report)) + "\n"
 
 
@@ -177,7 +177,7 @@ def test_an_unrecognised_transcript_is_unknown_not_zero(tmp_path: Path) -> None:
     run = claude.statusline()
 
     assert claude.audit()["result"] == "unknown"
-    assert run.stdout == "weir: unknown\n"
+    assert run.stdout == "weir unknown\n"
 
 
 def test_a_missing_transcript_is_unknown_not_zero(tmp_path: Path) -> None:
@@ -186,7 +186,7 @@ def test_a_missing_transcript_is_unknown_not_zero(tmp_path: Path) -> None:
     run = claude.statusline()
 
     assert run.exit_code == 0
-    assert run.stdout == "weir: unknown\n"
+    assert run.stdout == "weir unknown\n"
 
 
 def test_found_credentials_beside_an_unknown_file_are_marked_part_unknown(
@@ -203,7 +203,7 @@ def test_found_credentials_beside_an_unknown_file_are_marked_part_unknown(
     expected = sx.expected_counts(claude.setup, claude.audit())
     assert expected == (*_planned(claude, plan), True)
     assert run.stdout == sx.segment_for(expected) + "\n"
-    assert run.stdout.endswith(", part unknown\n")
+    assert run.stdout.endswith(" · part unknown → /weir\n")
 
 
 # --- 3. no value, anywhere ---------------------------------------------------
@@ -227,7 +227,7 @@ def test_neither_the_segment_nor_its_cache_holds_a_value(tmp_path: Path) -> None
 
     for run in runs:
         assert run.exit_code == 0
-        assert run.stdout.startswith("weir: ")
+        assert run.stdout.startswith("weir ")
         cfx.assert_value_free(run.stdout + "\n" + run.stderr, v.values())
     cached = sorted(p for p in claude.state.rglob("*") if p.is_file())
     assert cached, "the status line should keep a cache"
@@ -316,7 +316,8 @@ def test_setup_with_yes_adds_the_segment_beside_the_existing_command(tmp_path: P
     expected = sx.expected_counts(claude.setup, claude.audit())
     assert expected[:2] == _planned(claude, plan)
     assert shown.exit_code == 0, shown.stderr
-    assert shown.stdout == "existing status | " + sx.segment_for(expected) + "\n"
+    segment = sx.segment_for(expected, colour=True)
+    assert shown.stdout == "existing status\x1b[0m | " + segment + "\n"
 
 
 @sx.posix_shell
@@ -330,7 +331,7 @@ def test_setup_with_no_status_line_adds_the_segment_alone(tmp_path: Path) -> Non
     command = json.loads(claude.settings.read_text())["statusLine"]["command"]
     shown = sx.run_shell(command, sx.status_json(claude.transcript(), fx.SESSION_ID), claude.env())
     expected = sx.expected_counts(claude.setup, claude.audit())
-    assert shown.stdout == sx.segment_for(expected) + "\n"
+    assert shown.stdout == sx.segment_for(expected, colour=True) + "\n"
 
 
 # --- 5. undo -------------------------------------------------------------------
@@ -509,7 +510,7 @@ def test_the_weir_report_lists_source_turn_tool_call_location_and_advice(
     assert run.exit_code == 0, run.stderr
     cfx.assert_value_free(run.stdout + run.stderr, claude.setup.values.values())
     expected = sx.expected_counts(claude.setup, claude.audit())
-    assert run.lines[0] == sx.segment_for(expected)
+    assert run.lines[0] == sx.segment_for(expected, pointer=False)
     blocks = _blocks(run.stdout)
 
     heading, source = labels[fx.ACME]

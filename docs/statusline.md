@@ -26,13 +26,39 @@ line and always exits 0:
 
 | line | when |
 | --- | --- |
-| `weir: C in context, S sent` | the session's files are read to their end |
-| `weir: C in context, S sent, part unknown` | some of it is unknown (below), and C or S is not 0 |
-| `weir: unknown` | some of it is unknown and nothing was found: the counts would be a false zero |
-| `weir: scanning… P%` | not read to its end yet; `C in context, S sent, ` in front once something is found |
-| `weir: partly checked, run /weir` | a long record was not searched whole in three tries, each within its own time bound (below); `weir audit` or `/weir` gives the full counts |
-| `weir: no session` | stdin is not the status line JSON |
-| `weir: error, run /weir` | the inventory inputs cannot be used (a wrong key, say) |
+| `weir ✓ nothing exposed` | the session's files are read to their end, nothing is unknown, and no value entered the context or was sent |
+| `weir ⚠ C in context · S sent → /weir` | the session's files are read to their end, and C or S is not 0 |
+| `weir ⚠ C in context · S sent · part unknown → /weir` | some of it is unknown (below), and C or S is not 0 |
+| `weir unknown` | some of it is unknown and nothing was found: the counts would be a false zero |
+| `weir scanning… P%` | not read to its end yet; `⚠ C in context · S sent · ` in front once something is found |
+| `weir partly checked → /weir` | a long record was not searched whole in three tries, each within its own time bound (below); `weir audit` or `/weir` gives the full counts |
+| `weir nothing to check` | the inventory holds no credential weir can check: there is nothing to count, so never `✓ nothing exposed` |
+| `weir no session` | stdin is not the status line JSON |
+| `weir error → /weir` | the inventory inputs cannot be used (a wrong key, say) |
+
+Only a session read to its end with nothing unknown and nothing found,
+against an inventory that holds a credential weir can check, says
+`✓ nothing exposed`; one still scanning, partly checked or unknown never
+does. The line names no credential and holds no value, so a shared
+screen gives nothing away.
+
+### Colours
+
+The line is drawn with ANSI SGR codes, which Claude Code's status line
+renders:
+
+| part | colour |
+| --- | --- |
+| `✓ nothing exposed` | green (32) |
+| `⚠`, and `C in context` when C is not 0 | amber (33, yellow in most terminal themes) |
+| `S sent` when S is not 0 | red (31) |
+| a count of 0, `part unknown`, `scanning… P%`, `unknown`, `partly checked → /weir`, `nothing to check`, `no session`, `error → /weir` | dim (2) |
+| `weir`, `·`, and `→ /weir` after the counts | the terminal's own |
+
+Every coloured part ends with a reset (0), so the status line beside it
+(below) keeps its own colours. When `NO_COLOR` is set and not empty
+([no-color.org](https://no-color.org)), the line has the same words and
+symbols and no escape code.
 
 ### What is counted
 
@@ -91,7 +117,7 @@ the checkpoint names its offset and counts the try. A try that is
 cancelled or runs out of time leaves the record to the next run; after
 three such tries in a row the run moves past it without searching it
 again. The session is then **partly checked**: the line shows
-`weir: partly checked, run /weir`, never a number and never a zero, for
+`weir partly checked → /weir`, never a number and never a zero, for
 as long as the session is read. `weir audit` of the session's files, or
 the `/weir` report, which audits them whole, gives the full counts.
 
@@ -124,7 +150,9 @@ killed whole at the 10 second bound and when the run is cancelled
 (SIGTERM, SIGINT or SIGHUP). A child that leaves that group (`setsid`, or
 a daemon that detaches itself) is not stopped, and neither is a
 background job still running after the command itself has exited, nor
-anything when the run is killed with SIGKILL.
+anything when the run is killed with SIGKILL. With colour on, a reset
+(`ESC[0m`) follows the command's output, so a colour it leaves on never
+tints the segment; with `NO_COLOR` its output is printed as it is.
 
 ## The /weir report
 
@@ -133,8 +161,9 @@ weir statusline report --inventory REPORT --store STORE --key KEY --session ID [
 ```
 
 It audits the session's files in full (saved tool outputs included) and
-prints the segment line, the transcript read, and one block per value that
-reached the session, most severe first:
+prints the segment's words, plain and without `→ /weir` (`weir ⚠ 2 in
+context · 1 sent`, say), the transcript read, and one block per value
+that reached the session, most severe first:
 
 ```text
 ACME_API_TOKEN (launch env)
