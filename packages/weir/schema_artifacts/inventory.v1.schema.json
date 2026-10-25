@@ -231,7 +231,14 @@
           ]
         },
         "project": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "trufflehog_reports": {
           "items": {

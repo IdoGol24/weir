@@ -104,10 +104,12 @@ def posix(path: Path) -> str:
     return path.as_posix()
 
 
-def display_path(path: Path, *, home: Path, project: Path) -> str:
+def display_path(path: Path, *, home: Path, project: Path | None) -> str:
     """`./x` under the project, `~/x` under the home, else absolute. The
     project wins when it sits inside the home, which is the usual case."""
     for base, prefix in ((project, "./"), (home, "~/")):
+        if base is None:
+            continue
         try:
             rel = path.relative_to(base)
         except ValueError:

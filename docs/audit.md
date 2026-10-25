@@ -46,6 +46,17 @@ weir audit --inventory REPORT --store STORE --key KEY [--json] PATH...
 There is no default for any input, so a run never reads a real home by
 accident.
 
+For example, over your own Claude Code sessions:
+
+```sh
+weir inventory --home ~ --json --store store.json > inventory.json
+weir audit --inventory inventory.json --store store.json --key ~/.weir/fingerprint.key ~/.claude/projects/
+```
+
+If you set `CLAUDE_CONFIG_DIR` to move Claude Code's config directory, pass
+`"$CLAUDE_CONFIG_DIR/projects"` instead; with the variable set, the audit
+reads that projects folder the way it reads `~/.claude/projects`.
+
 A directory entry that is a symbolic link is not followed and is reported
 as not scanned (`symlink`). A given path that does not exist is not scanned
 (`missing`), never an error, so a sessions directory that is not there

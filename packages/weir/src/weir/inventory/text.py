@@ -73,7 +73,9 @@ def _notes(c: Credential) -> str:
     return f"  ({', '.join(notes)})" if notes else ""
 
 
-def _map_line(map_file: str | None, status: MapStatus | None) -> str:
+def _map_line(project: str | None, map_file: str | None, status: MapStatus | None) -> str:
+    if project is None:
+        return "none (no project)"  # a map lives in a project
     if map_file is None:
         return "none (.weir/reach.yml not found)"
     if status is MapStatus.PROPOSED:
@@ -99,9 +101,9 @@ def inventory_lines(report: Inventory, *, unknown_list_path: str | None) -> list
     lines = [
         f"weir inventory (names only; standard location list v{inputs.location_list_version})",
         f"  home        {inputs.home}",
-        f"  project     {inputs.project}",
+        f"  project     {inputs.project or 'none (project files not scanned)'}",
         f"  launch env  {env}",
-        f"  map         {_map_line(inputs.map_file, inputs.map_status)}",
+        f"  map         {_map_line(inputs.project, inputs.map_file, inputs.map_status)}",
         "",
         f"{plural(counts.credentials, 'credential')}"
         f" ({plural(counts.distinct_values, 'distinct value')} read)",

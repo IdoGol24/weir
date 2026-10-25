@@ -150,6 +150,16 @@ branch, so the tree judged is that merge commit.
   input default, and exits before the check step. So no process holds the
   token while the flows run. Every flow also starts from an empty
   environment.
+- Check out with `persist-credentials: false`, so the token is not left in
+  `.git/config` either, where the flows could read it while they run.
+- The job needs:
+
+  ```yaml
+  permissions:
+    contents: read
+    pull-requests: write
+  ```
+
 - It makes no request but the comment's, to the GitHub API the job runs
   against, the PyPI install and, with `python-version`, the download
   actions/setup-python makes.

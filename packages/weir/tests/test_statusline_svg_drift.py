@@ -1,4 +1,4 @@
-"""The README's status line image is real CLI output, and cannot go stale.
+"""The status line recording in docs/statusline.md is real CLI output, and cannot go stale.
 
 docs/assets/statusline.svg is generated from live `weir statusline` runs
 over a fake session and the live report `/weir` runs (statusline_demo.py),

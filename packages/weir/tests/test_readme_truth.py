@@ -2,20 +2,23 @@
 
 Each marker holds the CLI args (everything after ``weir ``); the fenced block right
 after it must equal that command's real stdout, byte for byte. This is not a copy of
-the README prose - it re-invokes the CLI and diffs against what actually comes out,
-so a stale README block fails here instead of lying to readers.
+the docs' prose - it re-invokes the CLI and diffs against what actually comes out,
+so a stale block fails here instead of lying to readers. The README carries no
+output block today; the sample's report is in docs/canary.md, which must keep one.
 """
 
 import re
 import shlex
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from weir.cli.main import main
 
 _ROOT = Path(__file__).parents[3]
-_README = _ROOT / "README.md"
+_DOCS = ("README.md", "docs/canary.md")
+_MUST_VERIFY = "docs/canary.md"
 
 _PAIR_RE = re.compile(
     r"<!--\s*verify:\s*(?P<marker>.+?)\s*-->\s*\n+```(?:[^\n]*)\n(?P<body>.*?)```",
@@ -23,17 +26,19 @@ _PAIR_RE = re.compile(
 )
 
 
-def _find_pairs() -> list[tuple[str, str]]:
-    text = _README.read_text(encoding="utf-8")
+def _find_pairs(doc: str) -> list[tuple[str, str]]:
+    text = (_ROOT / doc).read_text(encoding="utf-8")
     return [(m.group("marker"), m.group("body")) for m in _PAIR_RE.finditer(text)]
 
 
-def test_every_verified_block_matches_real_cli_output() -> None:
-    pairs = _find_pairs()
-    assert len(pairs) >= 1, (
-        "expected >= 1 '<!-- verify: ... -->' block in README.md, found "
-        f"{len(pairs)} - the marker convention may have silently died"
-    )
+@pytest.mark.parametrize("doc", _DOCS)
+def test_every_verified_block_matches_real_cli_output(doc: str) -> None:
+    pairs = _find_pairs(doc)
+    if doc == _MUST_VERIFY:
+        assert len(pairs) >= 1, (
+            f"expected >= 1 '<!-- verify: ... -->' block in {doc}, found "
+            f"{len(pairs)} - the marker convention may have silently died"
+        )
 
     runner = CliRunner()
     for marker, fence_body in pairs:
@@ -49,7 +54,7 @@ def test_every_verified_block_matches_real_cli_output() -> None:
         expected = fence_body.rstrip("\n")
         actual = result.output.rstrip("\n")
         assert actual == expected, (
-            f"README.md block for '<!-- verify: {marker} -->' is stale.\n"
+            f"{doc} block for '<!-- verify: {marker} -->' is stale.\n"
             f"--- expected (README fence) ---\n{expected}\n"
             f"--- actual (live CLI output) ---\n{actual}"
         )

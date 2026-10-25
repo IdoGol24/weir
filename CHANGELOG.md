@@ -46,6 +46,40 @@
   sits and advice. `setup` shows the change, applies it on an exact `yes`
   beside the existing status line, and `undo` puts it back
   ([docs/statusline.md](docs/statusline.md)).
+- **weir-scan: `weir statusline setup` needs no flags.** `--inventory`,
+  `--store` and `--key` default to `~/.weir/inventory.json`,
+  `~/.weir/store.json` and `~/.weir/fingerprint.key`; each flag still
+  overrides its default, and with `--inventory` given setup behaves as
+  before, but refuses (exit 2) when the `--inventory` file is missing,
+  or when `--store` or `--key` is left to a default file that is missing. With no inventory at the default path,
+  setup takes one of the standard credential locations in the home, the
+  shell startup files and the launch environment, with the shell it runs
+  in taken as the environment Claude Code starts with, and shows it by
+  name, source and location only (never a value) before the `yes`. It
+  walks no project directory, whatever directory it runs in, and the
+  preview says so. Nothing is
+  written before the exact `yes`, `--dry-run` writes nothing, and on `yes`
+  it writes the key (only when there is none: a key file others can read
+  is refused, never repaired), the store, the unknown variable names and
+  the report, all owner-only, then the settings. An inventory already at
+  the default path is used as it is and named in the preview. With the
+  default store and key, the preview prints the command that refreshes
+  the inventory, run from the shell Claude Code starts from:
+  `weir inventory --home ~ --no-project --process-env --json --store
+  ~/.weir/store.json > ~/.weir/inventory.json` (replace `--no-project` by
+  `--project DIR` to include a project's files). The status line picks up
+  the new report on its next refresh, so no second setup is needed.
+  `undo` leaves `~/.weir` in place.
+- **weir-scan: `weir statusline setup` and `undo` refuse plainly when they
+  cannot write.** A read-only Claude config directory or `commands/`, or
+  a full disk, gave a Python traceback; it is now exit 2 with a message
+  naming the file and how to finish (run setup again, or `weir statusline
+  undo`). `settings.json` is never left half written.
+- **weir-scan: `weir inventory --no-project`.** It walks no project
+  directory and reads no map; the report's `inputs.project` is null, as in
+  `weir statusline setup`'s first inventory. It is refused (exit 2) with
+  `--project`, `--gitleaks` or `--trufflehog`. Without it, `weir inventory`
+  behaves as before.
 - **weir-scan: a fingerprint key file others can read is refused.** This
   applies to `weir inventory`, `weir audit` and `weir statusline` alike: a
   key file another user owns, or that others can read or write, is exit 2.
