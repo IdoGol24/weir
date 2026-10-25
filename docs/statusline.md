@@ -14,6 +14,13 @@ from the keyed fingerprints of a [`weir inventory --store`](inventory.md)
 run, and never prints, caches or writes a credential value or any run of 6
 characters of one.
 
+![Terminal recording: the status line under a fake Claude Code session counts up while it scans and settles on "weir ⚠ 2 in context · 1 sent → /weir", then /weir is typed and reports each of the two fake credentials: where it came from, the turn and tool call that moved it, where it now sits, and the advice to rotate it.](assets/statusline.svg)
+
+For example, `weir ⚠ 2 in context · 1 sent → /weir`, or `weir ✓ nothing
+exposed` when none did. It reads the session's transcript and its subagent
+transcripts; a file it cannot read makes it say `unknown`, never a false
+zero.
+
 ## The segment
 
 ```sh
@@ -193,22 +200,75 @@ Setup installs the report as the `/weir` command
 ## Setup and undo
 
 ```sh
-weir statusline setup --inventory REPORT --store STORE --key KEY [--cache DIR] [--claude-dir DIR] [--dry-run]
+weir statusline setup [--inventory REPORT] [--store STORE] [--key KEY] [--cache DIR] [--claude-dir DIR] [--dry-run]
 weir statusline undo [--claude-dir DIR] [--dry-run]
 ```
 
-`--cache` defaults to `~/.weir/statusline`, `--claude-dir` to
-`CLAUDE_CONFIG_DIR`, else `~/.claude`. Setup supports POSIX shells (Linux,
-macOS) only for now and refuses on Windows (exit 2).
+`--inventory` defaults to `~/.weir/inventory.json`, `--store` to
+`~/.weir/store.json`, `--key` to `~/.weir/fingerprint.key` (the key
+[`weir inventory`](inventory.md) makes by default), `--cache` to
+`~/.weir/statusline`, and `--claude-dir` to `CLAUDE_CONFIG_DIR`, else
+`~/.claude`. Each flag overrides its default. Setup supports POSIX shells
+(Linux, macOS) only for now and refuses on Windows (exit 2) before it reads
+anything.
+
+So two commands are enough:
+
+```sh
+uv tool install weir-scan     # or: pipx install weir-scan
+weir statusline setup         # shows the change, applies it only when you type yes
+```
+
+**The inventory.** With `--inventory` given, setup uses the three files as
+they are, reads no key and computes no HMAC; it refuses (exit 2) when the
+`--inventory` file is missing, or when `--store` or `--key` is left to
+its default and that default file is missing. With no `--inventory`:
+
+- When there is a report at `~/.weir/inventory.json`, setup uses it as it
+  is, never takes it again, and the preview names it with its credential
+  count. It refuses (exit 2) when the store or the key that report needs is
+  missing.
+- When there is none, it is a first setup: setup takes the inventory now,
+  of the standard credential locations in the home, the shell startup files
+  and the launch environment only. It walks no project directory, whatever
+  directory it runs in, so no project file is read. The environment of the
+  shell running setup is taken as the environment Claude Code starts with,
+  so run setup from the shell you start Claude Code from. The preview lists
+  the inventory as `weir inventory` lists it, by name, source and location
+  only, never a value or a fragment of one, with its counts and the count
+  of unknown variables, and the files `yes` writes. It says that project
+  files were not scanned. The key is read when there is one (one others
+  can read is refused, below) and otherwise made in memory: nothing is
+  written yet.
+
+In both cases, with `--store` and `--key` left to their defaults, the
+preview prints the command that refreshes the inventory, the
+[`weir inventory`](inventory.md) equivalent of setup's own first
+inventory. Run it from the shell you start Claude Code from:
+
+```sh
+weir inventory --home ~ --no-project --process-env --json --store ~/.weir/store.json > ~/.weir/inventory.json
+```
+
+Replace `--no-project` by `--project DIR` to include a project's files.
+The status line picks up the new report on its next refresh, so no second
+setup is needed.
 
 **Setup** shows the exact change: the segment `statusLine` will run in
 `settings.json`, and the new `commands/weir.md`. The new `statusLine`
 keeps every key of the old one and runs the segment with the old command
 as `--inner`; that command is kept but never shown, as it may hold a
-credential, and every other setting is kept. Setup and undo read no key
-and compute no HMAC. It writes only on the exact line `yes`, and refuses when
+credential, and every other setting is kept. Undo, and setup with
+`--inventory` or an existing inventory, read no key and compute no HMAC.
+It writes only on the exact line `yes`, `--dry-run` writes nothing at all,
+and it refuses when
 the settings are not a JSON object, the status line already runs weir, a
-different `commands/weir.md` exists, or it is already set up. It keeps the
+different `commands/weir.md` exists, or it is already set up. On a first
+setup it writes the inventory's files first, each owner-only (0600; a new
+`~/.weir` is created 0700, and an existing one keeps its own mode): the
+key (only when there was none, and never over one made since the preview), the store, the unknown variable names
+(`~/.weir/unknown-env.txt`) and the report last, so a report at the
+default path always has its store. It keeps the
 settings file's bytes beside it as `settings.json.weir-backup`
 (owner-only), or, when there is no settings file, leaves an empty
 `settings.json.weir-created`, then writes the command file, then the
@@ -231,9 +291,15 @@ nothing; its message names the backup, which holds the settings from
 before setup, and `commands/weir.md`, to delete once the status line is
 put back by hand. With no settings file before setup, a removed
 `settings.json` leaves nothing to restore: undo removes `commands/weir.md`
-and the marker. An interrupted setup or undo leaves both usable: running
-undo again finishes it. The checkpoints in setup's
-`--cache` stay; deleting them is safe.
+and the marker. A file setup or undo cannot write (a read-only
+directory, a full disk) stops it with exit 2 and a message naming that
+file and how to finish; `settings.json` is then as it was, or as written
+whole. An interrupted setup or undo leaves both usable: running
+undo again finishes it, and a first setup stopped before the report was
+written takes the inventory again when it is run again (an existing key is
+used). Undo leaves `~/.weir` in place: the inventory, store, key and the
+checkpoints in setup's `--cache` stay. Deleting the checkpoints is safe;
+the key, store and report are what `weir audit` and a later setup use.
 
 **The key.** `weir statusline`, `weir statusline report`, `weir inventory`
 and `weir audit` read the fingerprint key from a file only its owner can

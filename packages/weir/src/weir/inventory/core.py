@@ -4,7 +4,7 @@ exist only while the run fingerprints them; none is returned.
 
 Every input is explicit. There is no default home, project or environment:
 a caller that wants the real home must say so, which is what lets a guard
-refuse to touch it.
+refuse to touch it. A project of None walks no project directory.
 """
 
 from __future__ import annotations
@@ -107,7 +107,8 @@ class InventoryInputError(Exception):
 @dataclass(frozen=True, kw_only=True)
 class InventoryInputs:
     home: Path
-    project: Path
+    # None: no project files are walked and no map is read.
+    project: Path | None
     # The fingerprint key file; created (0600) when missing.
     key_path: Path
     # The launch environment: an env file, or a mapping the caller read
@@ -147,7 +148,7 @@ def _launch_location(path: Path | None, line: int | None) -> Location:
 @dataclass
 class _Collector:
     home: Path
-    project: Path
+    project: Path | None
     found: list[_Found] = field(default_factory=list[_Found])
     not_scanned: list[NotScanned] = field(default_factory=list[NotScanned])
     not_fully_read: list[PartlyRead] = field(default_factory=list[PartlyRead])
@@ -314,6 +315,8 @@ def _project(c: _Collector, results: list[ScannerResult]) -> dict[Path, bool]:
     """Returns {file: git-ignored} for every project file walked. An env file
     inside the project is a project file too, reported here as well as by
     the launch environment."""
+    if c.project is None:
+        return {}
     files, skipped = walk_project(c.home, c.project)
     for s in skipped:
         c.skip(s.path, s.reason)
@@ -367,18 +370,21 @@ class _MapRead:
     dirs: list[MapEntry] = field(default_factory=list[MapEntry])
 
 
-def _map_entry(c: _Collector, item: MapLocation) -> MapEntry:
+def _map_entry(c: _Collector, item: MapLocation, project: Path) -> MapEntry:
     if (name := env_name(item.location)) is not None:
         return MapEntry(kind=item.kind, display=_safe_label(item.location) or "?", name=name)
-    path = absolute(resolve_entry(item.location, home=c.home, project=c.project))
+    path = absolute(resolve_entry(item.location, home=c.home, project=project))
     return MapEntry(
         kind=item.kind, display=_safe_label(c.display(path)) or "?", path=posix(path)
     )
 
 
 def _map(c: _Collector, ignored: dict[Path, bool]) -> _MapRead:
+    project = c.project
+    if project is None:
+        return _MapRead()
     try:
-        loaded = load_map(c.project)
+        loaded = load_map(project)
     except MapError as exc:
         raise InventoryInputError(str(exc)) from exc
     if loaded is None:
@@ -389,11 +395,11 @@ def _map(c: _Collector, ignored: dict[Path, bool]) -> _MapRead:
         # A proposal is a person's to approve; until then it changes nothing.
         return read
     for item in reach.extra_locations:
-        path = absolute(resolve_entry(item.location, home=c.home, project=c.project))
+        path = absolute(resolve_entry(item.location, home=c.home, project=project))
         if item.kind is MapKind.DIR:
             if not path.is_dir():
                 c.skip(path, NotScannedReason.MISSING)
-            read.dirs.append(_map_entry(c, item))
+            read.dirs.append(_map_entry(c, item, project))
             continue
         if not path.is_file():
             c.skip(path, NotScannedReason.MISSING)
@@ -402,7 +408,7 @@ def _map(c: _Collector, ignored: dict[Path, bool]) -> _MapRead:
             Source.MAP, [_whole_file_hit("map", Reason.MAP, path.name)], path=path, text=None,
             git_ignored=ignored.get(path, False),
         )
-    read.intended_gaps = [_map_entry(c, gap) for gap in reach.intended_gaps]
+    read.intended_gaps = [_map_entry(c, gap, project) for gap in reach.intended_gaps]
     read.fine = reach.fine_env()
     return read
 
@@ -426,14 +432,23 @@ def _credential_id(f: _Found, name: str, scope: str | None) -> str:
     return base64.b32encode(digest).decode("ascii").lower()[:16]
 
 
-def take_inventory(inputs: InventoryInputs) -> InventoryResult:
+def _project_dir(project: Path | None) -> Path:
+    """Where a scanner report's relative paths resolve."""
+    if project is None:
+        raise InventoryInputError("a scanner report needs a project directory")
+    return project
+
+
+def take_inventory(inputs: InventoryInputs, *, key: bytes | None = None) -> InventoryResult:
+    """`key`, when given, is used in place of the key file, which is then
+    neither read nor created (`weir statusline setup` writes it on yes)."""
     home = absolute(inputs.home)
-    project = absolute(inputs.project)
+    project = absolute(inputs.project) if inputs.project is not None else None
     for label, directory in (("home", home), ("project", project)):
-        if not directory.is_dir():
+        if directory is not None and not directory.is_dir():
             raise InventoryInputError(f"{label} directory does not exist: {directory}")
     try:
-        key = load_or_create_key(inputs.key_path)
+        key = key if key is not None else load_or_create_key(inputs.key_path)
     except FingerprintKeyError as exc:
         raise InventoryInputError(str(exc)) from exc
 
@@ -442,9 +457,9 @@ def take_inventory(inputs: InventoryInputs) -> InventoryResult:
     results: list[ScannerResult] = []
     try:
         for report in inputs.gitleaks_reports:
-            results.extend(load_gitleaks(report, project))
+            results.extend(load_gitleaks(report, _project_dir(project)))
         for report in inputs.trufflehog_reports:
-            results.extend(load_trufflehog(report, project))
+            results.extend(load_trufflehog(report, _project_dir(project)))
     except ScannerReportError as exc:
         raise InventoryInputError(str(exc)) from exc
 
@@ -458,7 +473,8 @@ def take_inventory(inputs: InventoryInputs) -> InventoryResult:
     return _assemble(
         c, key, reach,
         Inputs(
-            home=posix(home), project=posix(project), env_source=env_source,
+            home=posix(home), project=posix(project) if project is not None else None,
+            env_source=env_source,
             env_file=posix(env_file) if env_file is not None else None,
             gitleaks_reports=[posix(absolute(p)) for p in inputs.gitleaks_reports],
             trufflehog_reports=[posix(absolute(p)) for p in inputs.trufflehog_reports],

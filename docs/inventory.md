@@ -5,8 +5,10 @@
 
 `weir inventory` finds the credentials an agent could reach and lists them by
 **name, source, location and classification only**. It never prints, logs,
-caches or stores a value, a fragment of one, a masked form (`prefix...last4`)
-or a fingerprint. This document is the interface the guard settings
+caches or stores a value, a fragment of one or a masked form
+(`prefix...last4`), and never prints a fingerprint: what it can store, with
+`--store`, is a keyed fingerprint plus offsets
+([Values never leave the process](#values-never-leave-the-process)). This document is the interface the guard settings
 generator (`weir guard`) and later components build on: the Python API, the
 JSON report (`weir-inventory/1`) and the fingerprint store
 (`weir-inventory-store/1`).
@@ -20,7 +22,7 @@ Schema artifacts, generated from the structs and drift-tested:
 ## Running it
 
 ```sh
-weir inventory --home DIR [--project DIR] [--env-file FILE | --process-env]
+weir inventory --home DIR [--project DIR | --no-project] [--env-file FILE | --process-env]
                [--gitleaks REPORT]... [--trufflehog REPORT]...
                [--key FILE] [--unknown-list FILE] [--store FILE]
                [--json] [--strict]
@@ -30,6 +32,7 @@ weir inventory --home DIR [--project DIR] [--env-file FILE | --process-env]
 | --- | --- |
 | `--home` | **Required.** The home directory to inventory. There is no default, so nothing ever reads a real home by accident. |
 | `--project` | Project directory (default `.`). Its `.weir/reach.yml` is the approved map. |
+| `--no-project` | Walk no project directory and read no map: only the standard locations, the shell startup files and the launch environment. The report's `inputs.project` is null, as in [`weir statusline setup`](statusline.md)'s first inventory. Refused (exit 2) with `--project`, `--gitleaks` or `--trufflehog`. |
 | `--env-file` | The agent's launch environment as `NAME=value` lines (dotenv style: `export ` and one level of quotes are stripped, a quoted value runs to its closing quote across lines, an unquoted value opening a PEM block (`-----BEGIN <label>-----`) runs to its `-----END <label>-----` line or, unclosed, to the end of the file and is then a secret, any other unquoted value ends before a ` #` comment and trailing blanks, `#` lines skipped), or NUL-separated `env -0` output. |
 | `--process-env` | Use this process's own environment as the launch environment. Without either option only shell startup files are read, and the report says so. |
 | `--gitleaks` | Import a gitleaks JSON report (`gitleaks detect --report-format json`). Repeatable. Relative `File` paths resolve against the project. |
@@ -274,7 +277,7 @@ from weir.inventory import InventoryInputs, take_inventory, default_key_path
 
 result = take_inventory(InventoryInputs(
     home=Path("/fake/home"),            # required, no default
-    project=Path("/fake/home/work/proj"),
+    project=Path("/fake/home/work/proj"),  # or None: no project files, no map
     key_path=default_key_path(Path("/fake/home")),
     env_file=Path("/fake/launch.env"),  # or process_env=dict(...); at most one
     gitleaks_reports=[...],
@@ -284,7 +287,8 @@ result.report   # weir.inventory.Inventory: value-free, JSON via encode_report()
 result.store    # weir.inventory.Store: keyed fingerprints plus offsets
 ```
 
-`take_inventory` raises `InventoryInputError` for an unusable input. It is
+`take_inventory` raises `InventoryInputError` for an unusable input,
+including a scanner report with no project to resolve it against. It is
 deterministic: the same inputs and key give byte-identical
 `encode_report()` and `encode_store()` output. The key only affects the
 store; the report does not depend on it.
@@ -309,7 +313,7 @@ fields in schema order, lists sorted. Top level:
 | field | type | meaning |
 | --- | --- | --- |
 | `schema` | string | `"weir-inventory/1"` |
-| `inputs` | object | `home`, `project` (absolute), `env_source` (`file` / `process` / `none`), `env_file`, `gitleaks_reports`, `trufflehog_reports`, `map_file` (or null), `map_status` (`approved`, `proposed` or null), `location_list_version` |
+| `inputs` | object | `home`, `project` (absolute, or null with `--no-project`), `env_source` (`file` / `process` / `none`), `env_file`, `gitleaks_reports`, `trufflehog_reports`, `map_file` (or null), `map_status` (`approved`, `proposed` or null), `location_list_version` |
 | `counts` | object | `credentials`, `distinct_values` (distinct keyed fingerprints among the records whose value was read), one count per source (`standard_location`, `project_scan`, `environment`, `map`), `env_not_secret`, `env_withheld`, `env_unknown`, `env_fine`, `intended_gaps`, `map_dirs`, `git_ignored_files`, `not_scanned`, `not_fully_read` |
 | `credentials` | array | sorted by source, location, line, name, scope |
 | `env_unknown` | array | `{name, location}`, sorted |

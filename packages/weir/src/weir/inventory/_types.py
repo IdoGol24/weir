@@ -223,7 +223,8 @@ class EnvSource(enum.StrEnum):
 
 class Inputs(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     home: str
-    project: str
+    # None when no project directory was walked.
+    project: str | None
     env_source: EnvSource
     env_file: str | None
     gitleaks_reports: list[str]

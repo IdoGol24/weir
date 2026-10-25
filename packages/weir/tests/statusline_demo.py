@@ -16,7 +16,7 @@ output is the transcript's path: the temporary directory is the fake home,
 so its prefix is written `~`, which keeps the bytes the same on every
 machine and operating system.
 
-The two status lines at the top of the README are two more fake sessions,
+The two status lines in the README are two more fake sessions,
 one that holds no credential and one that reads one and sends another,
 each run once beside a stand-in for an existing status line.
 

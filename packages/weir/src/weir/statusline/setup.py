@@ -1,7 +1,8 @@
 """`weir statusline setup` and `undo` (docs/statusline.md, "Setup and undo").
 
-Setup writes the backup (or, with no settings file, a marker that it
-creates one), the command file, then `statusLine`; undo writes
+Setup writes a first inventory's files when it took one, the backup (or,
+with no settings file, a marker that it creates one), the command file,
+then `statusLine`; undo writes
 `statusLine` back, removes the command file, then the backup or marker.
 So an interrupted run leaves both usable.
 """
@@ -14,6 +15,7 @@ import os
 import shlex
 import stat
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -161,13 +163,18 @@ class Plan:
     command_text: str | None = None
 
 
-def plan_setup(paths: Paths) -> Plan:
+def refuse_windows() -> None:
+    """Before anything else, a first inventory included."""
     if os.name != "posix":
         raise SetupError(
             "weir statusline setup supports POSIX shells (Linux, macOS) only for now: on"
             " Windows it would run your status line command in a shell it was not written"
             " for; nothing changed", 2,
         )
+
+
+def plan_setup(paths: Paths) -> Plan:
+    refuse_windows()
     marker = paths.marker()
     if marker is not None:
         raise SetupError(f"already set up ({marker} exists); run weir statusline undo first")
@@ -244,33 +251,57 @@ def describe(paths: Paths, plan: Plan, *, undo: bool) -> list[str]:
     return lines
 
 
-def apply(paths: Paths, plan: Plan, *, undo: bool) -> None:
+def apply(
+    paths: Paths, plan: Plan, *, undo: bool, first: Callable[[], None] | None = None
+) -> None:
+    """`first`, once the settings are known unchanged, writes what setup
+    writes before the settings: a first inventory's files."""
     if _read(paths.settings) != plan.before:
         then = "nothing restored. Run weir statusline undo again" if undo else "nothing written"
         raise SetupError(f"{paths.settings} changed since the change was shown; {then}")
-    if not undo:
-        paths.backup.parent.mkdir(parents=True, exist_ok=True)
-        if plan.before is None:
-            write_atomic(paths.created, b"", 0o600)
-        else:
-            write_atomic(paths.backup, plan.before, 0o600)
-        if plan.command_text is not None:
-            paths.command_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            write_atomic(paths.command_file, plan.command_text.encode(), 0o600)
-    if plan.remove:
-        paths.settings.unlink()  # undo: there was none before setup
-    elif plan.after is not None:
-        mode = 0o600 if plan.before is None else stat.S_IMODE(paths.settings.stat().st_mode)
-        write_atomic(paths.settings, plan.after, mode)
+    if first is not None:
+        first()
+    target = paths.settings
+    try:
+        if not undo:
+            target = paths.created if plan.before is None else paths.backup
+            target.parent.mkdir(parents=True, exist_ok=True)
+            write_atomic(target, b"" if plan.before is None else plan.before, 0o600)
+            if plan.command_text is not None:
+                target = paths.command_file
+                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                write_atomic(target, plan.command_text.encode(), 0o600)
+        target = paths.settings
+        if plan.remove:
+            target.unlink()  # undo: there was none before setup
+        elif plan.after is not None:
+            mode = 0o600 if plan.before is None else stat.S_IMODE(target.stat().st_mode)
+            write_atomic(target, plan.after, mode)
+        if undo:
+            target = paths.command_file
+            text = _read(target)
+            if text is not None and b" -m weir statusline report " in text:
+                target.unlink()
+                with contextlib.suppress(OSError):  # not empty: something else lives there
+                    target.parent.rmdir()
+            marker = paths.marker()
+            if marker is not None:
+                target = marker
+                marker.unlink()
+    except OSError as exc:
+        then = _finish(paths, undo)
+        raise SetupError(f"cannot write {target} ({exc.strerror}); {then}", 2) from exc
+
+
+def _finish(paths: Paths, undo: bool) -> str:
+    """How to finish after a write failed part way: the settings file
+    itself is always whole, as before or as written."""
     if undo:
-        text = _read(paths.command_file)
-        if text is not None and b" -m weir statusline report " in text:
-            paths.command_file.unlink()
-            with contextlib.suppress(OSError):  # not empty: something else lives there
-                paths.command_file.parent.rmdir()
-        marker = paths.marker()
-        if marker is not None:
-            marker.unlink()
+        return "run weir statusline undo again once it can be written"
+    if paths.marker() is not None:
+        return (f"{paths.settings} is unchanged. Run weir statusline undo to finish,"
+                " then weir statusline setup again once it can be written")
+    return f"{paths.settings} is unchanged. Run weir statusline setup again once it can be written"
 
 
 def confirmed(answer: str) -> bool:

@@ -26,6 +26,7 @@ from typing import NoReturn
 import click
 import msgspec
 
+from weir._text_safety import plural
 from weir.adapters.otel import REMEDIATION, OtlpRejectError, decode_input, map_wire
 from weir.adapters.otel.exposure import scan_surface
 from weir.audit import AuditInputError, audit_paths, load_inputs
@@ -53,6 +54,8 @@ from weir.gauge.ladder import capability_ladder_lines
 from weir.gauge.provenance import provenance_gauge_lines
 from weir.graph import build_session_graph
 from weir.inventory import (
+    FingerprintKeyError,
+    Inventory,
     InventoryInputError,
     InventoryInputs,
     default_key_path,
@@ -61,6 +64,7 @@ from weir.inventory import (
     take_inventory,
 )
 from weir.inventory.core import write_private
+from weir.inventory.fingerprint import new_key, read_key, write_new_key
 from weir.inventory.text import inventory_lines, unknown_list_lines
 from weir.label import label_graph
 from weir.report import exposure_lines, finding_lines, render_html_report
@@ -350,9 +354,13 @@ def _write_output(path: Path, data: bytes) -> None:
     "--project",
     "project",
     type=click.Path(file_okay=False, path_type=Path),
-    default=Path("."),
-    show_default=True,
-    help="Project directory; its .weir/reach.yml is the approved map.",
+    default=None,
+    help="Project directory; its .weir/reach.yml is the approved map [default: .].",
+)
+@click.option(
+    "--no-project",
+    is_flag=True,
+    help="Walk no project directory and read no map.",
 )
 @click.option(
     "--env-file",
@@ -403,7 +411,8 @@ def _write_output(path: Path, data: bytes) -> None:
 @click.option("--strict", is_flag=True, help="Exit 1 when any environment variable is unknown.")
 def inventory_command(
     home: Path,
-    project: Path,
+    project: Path | None,
+    no_project: bool,
     env_file: Path | None,
     process_env: bool,
     gitleaks_reports: tuple[Path, ...],
@@ -417,9 +426,13 @@ def inventory_command(
     """(experimental) List credentials by name, source and location. Never prints a value."""
     if env_file is not None and process_env:
         raise click.UsageError("--env-file and --process-env are mutually exclusive")
+    if no_project and (project is not None or gitleaks_reports or trufflehog_reports):
+        raise click.UsageError(
+            "--no-project cannot be used with --project, --gitleaks or --trufflehog"
+        )
     inputs = InventoryInputs(
         home=home,
-        project=project,
+        project=None if no_project else project or Path("."),
         key_path=key_path or default_key_path(home.absolute()),
         env_file=env_file,
         process_env=dict(os.environ) if process_env else None,
@@ -445,14 +458,22 @@ def inventory_command(
     raise SystemExit(1 if strict and report.counts.env_unknown else 0)
 
 
-def _inventory_options[F: Callable[..., object]](required: bool) -> Callable[[F], F]:
-    """--inventory, --store and --key: one `weir inventory --store` run's files."""
+def _inventory_options[F: Callable[..., object]](
+    required: bool, *, defaults: bool = False
+) -> Callable[[F], F]:
+    """--inventory, --store and --key: one `weir inventory --store` run's
+    files; with `defaults`, setup's HOME/.weir paths when left out."""
 
     def apply(command: F) -> F:
         for name, flag, help_text in reversed((
-            ("report_path", "--inventory", "The weir-inventory/1 report (weir inventory --json)."),
-            ("store_path", "--store", "The fingerprint store from the same weir inventory run."),
-            ("key_path", "--key", "The fingerprint key that run used. Never created."),
+            ("report_path", "--inventory", "The weir-inventory/1 report (weir inventory --json)"
+             + (" [default: HOME/.weir/inventory.json, taken first when missing]."
+                if defaults else ".")),
+            ("store_path", "--store", "The fingerprint store from the same weir inventory run"
+             + (" [default: HOME/.weir/store.json]." if defaults else ".")),
+            ("key_path", "--key", "The fingerprint key that run used"
+             + (" [default: HOME/.weir/fingerprint.key; created only for a first inventory]."
+                if defaults else ". Never created.")),
         )):
             command = click.option(
                 flag, name, type=click.Path(dir_okay=False, path_type=Path), required=required,
@@ -614,25 +635,151 @@ def _apply_if_yes(apply: Callable[[], None], done: str) -> None:
     click.echo(f"\n{done}")
 
 
+def _setup_error(message: str) -> NoReturn:
+    _fail(statusline_setup.SetupError(message, 2))
+
+
+def _require(paths: statusline_setup.Paths, needed: list[Path]) -> None:
+    """The report, store and key an inventory setup did not take reads:
+    each must exist, or every status line run would say `error`."""
+    for path in needed:
+        if path == paths.report and not path.is_file():
+            _setup_error(f"{path} does not exist; nothing changed")
+        if not path.is_file():
+            _setup_error(
+                f"{path} does not exist, and {paths.report} needs it; nothing changed."
+                " Give the store and key that inventory was taken with (--store, --key)"
+            )
+
+
+_REFRESH = [
+    "  to refresh it, run from the shell Claude Code starts from:",
+    "    weir inventory --home ~ --no-project --process-env --json"
+    " --store ~/.weir/store.json > ~/.weir/inventory.json",
+    "  replace --no-project by --project DIR to include a project's files; the status line"
+    " picks up the new report on its next refresh, so no second setup is needed",
+    "",
+]
+
+
+def _existing_inventory(paths: statusline_setup.Paths) -> list[str]:
+    """The inventory at the default path, used as it is: never taken again."""
+    try:
+        report = msgspec.json.decode(paths.report.read_bytes(), type=Inventory)
+    except OSError as exc:
+        _setup_error(f"{paths.report}: cannot be read ({exc.strerror}); nothing changed")
+    except (msgspec.ValidationError, msgspec.DecodeError):
+        _setup_error(f"{paths.report}: not a weir inventory --json report; nothing changed")
+    _require(paths, [paths.store, paths.key])
+    count = plural(report.counts.credentials, "credential")
+    return [f"inventory: {paths.report} (existing, {count})", ""]
+
+
+def _first_inventory(paths: statusline_setup.Paths) -> tuple[list[str], Callable[[], None]]:
+    """No inventory at the default path: take one now of the home and the
+    launch environment, walking no project directory, and write its files
+    only on yes. Returns the lines to show and what yes writes."""
+    home = Path.home()
+    try:
+        key = read_key(paths.key)
+    except FingerprintKeyError as exc:
+        _setup_error(f"{exc}; nothing changed")
+    created = key is None
+    key = new_key() if key is None else key
+    inputs = InventoryInputs(
+        home=home, project=None, key_path=paths.key, process_env=dict(os.environ),
+    )
+    try:
+        result = take_inventory(inputs, key=key)
+    except InventoryInputError as exc:
+        _setup_error(f"{exc}; nothing changed")
+    unknown = home.absolute() / ".weir" / "unknown-env.txt"
+    listing = inventory_lines(result.report, unknown_list_path=unknown.as_posix())
+    lines = [
+        f"inventory: none yet at {paths.report}; setup takes one now of the standard"
+        " credential locations in your home, your shell startup files and the launch"
+        " environment",
+        "  this shell's environment is taken as the environment Claude Code starts with",
+        "  project files are not scanned",
+        "",
+        *("  " + line if line else "" for line in listing),
+        "",
+        "  on yes, written owner-only:",
+        f"    fingerprint key  {paths.key} "
+        + ("(new)" if created else "(exists: used as it is, not written)"),
+        f"    store            {paths.store}",
+        f"    unknown names    {unknown}",
+        f"    report           {paths.report}",
+        "",
+    ]
+    names = "".join(line + "\n" for line in unknown_list_lines(result.report.env_unknown))
+
+    def write() -> None:
+        target = paths.key
+        try:
+            if created:
+                write_new_key(paths.key, key)
+            for target, data in (
+                (paths.store, encode_store(result.store)), (unknown, names.encode("utf-8")),
+                (paths.report, encode_report(result.report)),
+            ):
+                write_private(target, data)
+        except FileExistsError:
+            raise statusline_setup.SetupError(
+                f"{paths.key} was created since the change was shown; nothing written."
+                " Run weir statusline setup again", 1,
+            ) from None
+        except FingerprintKeyError as exc:
+            raise statusline_setup.SetupError(str(exc), 2) from exc
+        except OSError as exc:
+            raise statusline_setup.SetupError(
+                f"cannot write {target} ({exc.strerror}); {paths.settings} is unchanged."
+                " Run weir statusline setup again once it can be written", 2,
+            ) from exc
+
+    return lines, write
+
+
 @statusline_group.command("setup")
-@_inventory_options(required=True)
+@_inventory_options(required=False, defaults=True)
 @_CACHE
 @_CLAUDE_DIR
 @_DRY_RUN
 def statusline_setup_command(
-    report_path: Path, store_path: Path, key_path: Path, cache: Path | None,
-    claude_dir: Path | None, dry_run: bool,
+    report_path: Path | None, store_path: Path | None, key_path: Path | None,
+    cache: Path | None, claude_dir: Path | None, dry_run: bool,
 ) -> None:
     """(experimental) Add the weir segment beside the status line in
     Claude Code's user settings and install the /weir command. Shows the
-    exact change, then writes only after you type yes."""
-    paths = _paths(claude_dir, cache, report=report_path, store=store_path, key=key_path)
+    exact change, then writes only after you type yes. With no
+    --inventory, uses HOME/.weir/inventory.json, taking that inventory
+    first when there is none."""
     try:
+        statusline_setup.refuse_windows()
+        weir_dir = Path.home() / ".weir"
+        paths = _paths(
+            claude_dir, cache, report=report_path or weir_dir / "inventory.json",
+            store=store_path or weir_dir / "store.json",
+            key=key_path or default_key_path(Path.home()),
+        )
         plan = statusline_setup.plan_setup(paths)
     except statusline_setup.SetupError as exc:
         _fail(exc)
+    shown: list[str] = []
+    first: Callable[[], None] | None = None
+    if report_path is None:
+        if paths.report.exists():
+            shown = _existing_inventory(paths)
+        else:
+            shown, first = _first_inventory(paths)
+    else:
+        _require(paths, [paths.report, *(
+            p for p, given in ((paths.store, store_path), (paths.key, key_path)) if given is None
+        )])
+    if report_path is None and store_path is None and key_path is None:
+        shown += _REFRESH
     click.echo("weir statusline setup will make this change:")
-    for line in statusline_setup.describe(paths, plan, undo=False):
+    for line in [*shown, *statusline_setup.describe(paths, plan, undo=False)]:
         click.echo(line)
     undo = statusline_setup.undo_command(claude_dir)
     click.echo(f"undo: {undo} puts the status line back")
@@ -640,7 +787,8 @@ def statusline_setup_command(
         click.echo("dry run: nothing written")
         return
     _apply_if_yes(
-        lambda: statusline_setup.apply(paths, plan, undo=False), f"applied; to undo: {undo}"
+        lambda: statusline_setup.apply(paths, plan, undo=False, first=first),
+        f"applied; to undo: {undo}",
     )
 
 

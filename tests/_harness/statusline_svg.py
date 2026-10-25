@@ -1,4 +1,4 @@
-"""Render the README's status line animation from real CLI output.
+"""Render the status line recording (docs/statusline.md) from real CLI output.
 
 Like demo_svg.py, this is generated, never recorded. The caller runs the
 real `weir statusline` over a fake session, once per status line refresh,
@@ -8,7 +8,7 @@ is the status line, moving through each refresh's segment (the scanning
 ones first) to the finished counts; then `/weir` types at the prompt above
 it and the report lands in the transcript. Each segment is drawn in the
 colours its ANSI SGR codes name. render_states_svg draws the segment's two
-states as two status lines, for the top of the README.
+states as two status lines, for the README.
 test_statusline_svg_drift.py and test_statusline_states_svg_drift.py
 regenerate both and compare bytes, so they cannot go stale silently.
 

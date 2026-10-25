@@ -37,12 +37,30 @@ def load_or_create_key(path: Path) -> bytes:
     read as "every credential rotated". So is a key file another user owns
     or others can read or write (`key_file_problem`).
     """
+    key = read_key(path)
+    if key is not None:
+        return key
+    key = new_key()
+    try:
+        write_new_key(path, key)
+    except FileExistsError:
+        # Two runs racing to create the key must not each write one and
+        # leave fingerprints from the loser that no longer verify.
+        if path.is_file():
+            return load_or_create_key(path)
+        raise FingerprintKeyError(f"cannot create fingerprint key {path}: it exists") from None
+    return key
+
+
+def read_key(path: Path) -> bytes | None:
+    """The local key, or None when there is no key file. Refused as
+    `load_or_create_key` refuses it; never created."""
     try:
         with path.open("rb") as handle:
             problem = key_file_problem(os.fstat(handle.fileno()))
             text = handle.read().decode("ascii").strip()
     except FileNotFoundError:
-        return _create_key(path)
+        return None
     except OSError as exc:
         raise FingerprintKeyError(f"cannot read fingerprint key {path}: {exc.strerror}") from exc
     except UnicodeDecodeError:
@@ -58,20 +76,21 @@ def load_or_create_key(path: Path) -> bytes:
     return key
 
 
-def _create_key(path: Path) -> bytes:
+def new_key() -> bytes:
+    return secrets.token_bytes(_KEY_BYTES)
+
+
+def write_new_key(path: Path, key: bytes) -> None:
+    """Create the key file (mode 0600, parent 0700) holding `key`. Raises
+    FileExistsError when there is one already: it is never replaced."""
     try:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     except OSError as exc:
         raise FingerprintKeyError(f"cannot create fingerprint key {path}: {exc.strerror}") from exc
-    key = secrets.token_bytes(_KEY_BYTES)
-    # O_EXCL: two runs racing to create the key must not each write one and
-    # leave fingerprints from the loser that no longer verify.
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError as exc:
-        if path.is_file():
-            return load_or_create_key(path)
-        raise FingerprintKeyError(f"cannot create fingerprint key {path}: {exc.strerror}") from exc
+    except FileExistsError:
+        raise
     except OSError as exc:
         raise FingerprintKeyError(f"cannot create fingerprint key {path}: {exc.strerror}") from exc
     try:
@@ -79,7 +98,6 @@ def _create_key(path: Path) -> bytes:
             handle.write(key.hex() + "\n")
     except OSError as exc:
         raise FingerprintKeyError(f"cannot create fingerprint key {path}: {exc.strerror}") from exc
-    return key
 
 
 def fingerprint(key: bytes, value: str) -> str:
