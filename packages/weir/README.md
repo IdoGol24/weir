@@ -131,6 +131,8 @@ If you set `CLAUDE_CONFIG_DIR` to move Claude Code's config directory, pass `"$C
 
 `weir statusline` shows the audit while you work: a segment on Claude Code's status line such as `weir: 2 in context, 1 sent`, counting how many of your inventoried credentials entered the current session's context and how many were sent out in a tool call. It reads the session's transcript and its subagent transcripts; a file it cannot read makes it say `unknown`, never a false zero. The `/weir` command reports, per credential, where it came from, the turn and tool call that moved it, where it now sits, and what to do. Both are display only, local and offline, and never show a value ([contract](https://github.com/IdoGol24/weir/blob/main/docs/statusline.md)).
 
+![Terminal recording: the status line under a fake Claude Code session counts up while it scans and settles on "weir: 2 in context, 1 sent", then /weir is typed and reports each of the two fake credentials: where it came from, the turn and tool call that moved it, where it now sits, and the advice to rotate it.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/statusline.svg)
+
 ```sh
 weir statusline setup --inventory inventory.json --store store.json --key ~/.weir/fingerprint.key
 weir statusline undo

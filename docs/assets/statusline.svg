@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="926" height="658" viewBox="0 0 926 658" role="img" aria-label="Terminal recording: the status line scans a fake session and settles on weir: 2 in context, 1 sent, then /weir lists each credential, where it came from, the turn and tool call that moved it, where it sits now and what to do">
+<rect width="926" height="658" rx="8" fill="#0d1117"/>
+<path d="M0 8a8 8 0 0 1 8-8h910a8 8 0 0 1 8 8v26H0Z" fill="#161b22"/>
+<circle cx="20" cy="17" r="6" fill="#ff5f56"/>
+<circle cx="38" cy="17" r="6" fill="#ffbd2e"/>
+<circle cx="56" cy="17" r="6" fill="#27c93f"/>
+<path d="M0 578H926" stroke="#30363d"/>
+<rect y="616" width="926" height="32" fill="#161b22"/>
+<defs><clipPath id="k"><rect class="t" x="39" y="588" width="42" height="21"/></clipPath></defs>
+<style>.r{opacity:0}.c{fill:#7ee787}@keyframes s0{0%,3.33%{opacity:0}3.44%,11%{opacity:1}11.11%,100%{opacity:0}}.s0{animation:s0 9.0s infinite}@keyframes s1{0%,11.11%{opacity:0}11.22%,18.78%{opacity:1}18.89%,100%{opacity:0}}.s1{animation:s1 9.0s infinite}@keyframes s2{0%,18.89%{opacity:0}19%,93.33%{opacity:1}93.44%,100%{opacity:0}}.s2{animation:s2 9.0s infinite}@keyframes p{0%,0%{opacity:0}0.11%,93.33%{opacity:1}93.44%,100%{opacity:0}}.p{animation:p 9.0s infinite}@keyframes q{0%,25.56%{opacity:0}25.67%,32.78%{opacity:1}32.89%,100%{opacity:0}}.q{animation:q 9.0s infinite}.t{transform-box:view-box;transform-origin:39px 0;animation:k 9.0s steps(5) infinite}@keyframes k{0%,25.56%{transform:scaleX(0)}28.89%,100%{transform:scaleX(1)}}@keyframes a0{0%,32.78%{opacity:0}32.89%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r0{animation:a0 9.0s infinite}@keyframes a1{0%,33.56%{opacity:0}33.67%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r1{animation:a1 9.0s infinite}@keyframes a2{0%,34.33%{opacity:0}34.44%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r2{animation:a2 9.0s infinite}@keyframes a3{0%,35.11%{opacity:0}35.22%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r3{animation:a3 9.0s infinite}@keyframes a4{0%,35.89%{opacity:0}36%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r4{animation:a4 9.0s infinite}@keyframes a5{0%,36.67%{opacity:0}36.78%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r5{animation:a5 9.0s infinite}@keyframes a6{0%,37.44%{opacity:0}37.56%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r6{animation:a6 9.0s infinite}@keyframes a7{0%,38.22%{opacity:0}38.33%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r7{animation:a7 9.0s infinite}@keyframes a8{0%,39%{opacity:0}39.11%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r8{animation:a8 9.0s infinite}@keyframes a9{0%,39.78%{opacity:0}39.89%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r9{animation:a9 9.0s infinite}@keyframes a10{0%,40.56%{opacity:0}40.67%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r10{animation:a10 9.0s infinite}@keyframes a11{0%,41.33%{opacity:0}41.44%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r11{animation:a11 9.0s infinite}@keyframes a12{0%,42.11%{opacity:0}42.22%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r12{animation:a12 9.0s infinite}@keyframes a13{0%,42.89%{opacity:0}43%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r13{animation:a13 9.0s infinite}@keyframes a14{0%,43.67%{opacity:0}43.78%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r14{animation:a14 9.0s infinite}@keyframes a15{0%,44.44%{opacity:0}44.56%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r15{animation:a15 9.0s infinite}@keyframes a16{0%,45.22%{opacity:0}45.33%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r16{animation:a16 9.0s infinite}@keyframes a17{0%,46%{opacity:0}46.11%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r17{animation:a17 9.0s infinite}@keyframes a18{0%,46.78%{opacity:0}46.89%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r18{animation:a18 9.0s infinite}@keyframes a19{0%,47.56%{opacity:0}47.67%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r19{animation:a19 9.0s infinite}@keyframes a20{0%,48.33%{opacity:0}48.44%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r20{animation:a20 9.0s infinite}@keyframes a21{0%,49.11%{opacity:0}49.22%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r21{animation:a21 9.0s infinite}@keyframes a22{0%,49.89%{opacity:0}50%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r22{animation:a22 9.0s infinite}@keyframes a23{0%,50.67%{opacity:0}50.78%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r23{animation:a23 9.0s infinite}@keyframes a24{0%,51.44%{opacity:0}51.56%,93.33%{opacity:1}93.44%,100%{opacity:0}}.r24{animation:a24 9.0s infinite}@media (prefers-reduced-motion:reduce){.r{opacity:1;animation:none}.x{opacity:0}.t{animation:none}}</style>
+<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14">
+<text class="r s0 x" x="22" y="637" fill="#d29922" xml:space="preserve">weir: 1 in context, 0 sent, scanning… 37%</text>
+<text class="r s1 x" x="22" y="637" fill="#d29922" xml:space="preserve">weir: 1 in context, 0 sent, scanning… 87%</text>
+<text class="r s2" x="22" y="637" fill="#ff7b72" xml:space="preserve">weir: 2 in context, 1 sent</text>
+<text class="r p c" x="22" y="602">&gt;</text>
+<text class="r q x" x="39" y="602" fill="#e6edf3" clip-path="url(#k)" xml:space="preserve">/weir</text>
+<text class="r r0 c" x="22" y="60">&gt;</text>
+<text class="r r0" x="39" y="60" fill="#e6edf3" xml:space="preserve">/weir</text>
+<text class="r r1" x="22" y="81" fill="#ff7b72" xml:space="preserve">weir: 2 in context, 1 sent</text>
+<text class="r r2" x="22" y="102" fill="#8b949e" xml:space="preserve">session: ~/.claude/projects/-fake-home-work-proj/4b9f0c1e-2d3a-4e5f-8a6b-7c8d9e0f1a2b.jsonl (1 file read)</text>
+<text class="r r3" x="22" y="123" fill="#8b949e" xml:space="preserve"></text>
+<text class="r r4" x="22" y="144" fill="#e6edf3" xml:space="preserve">GH_TOKEN (launch env)</text>
+<text class="r r5" x="22" y="165" fill="#8b949e" xml:space="preserve">  source: launch env, the environment Claude Code starts with</text>
+<text class="r r6" x="22" y="186" fill="#8b949e" xml:space="preserve">  entered the context: 1 time, first at turn 1: the Bash tool call, argument command,</text>
+<text class="r r7" x="22" y="207" fill="#8b949e" xml:space="preserve">    ~/.claude/projects/-fake-home-work-proj/4b9f0c1e-2d3a-4e5f-8a6b-7c8d9e0f1a2b.jsonl:20</text>
+<text class="r r8" x="22" y="228" fill="#8b949e" xml:space="preserve">  sent in a tool call: 1 time, first at turn 1: the Bash tool call, argument command,</text>
+<text class="r r9" x="22" y="249" fill="#8b949e" xml:space="preserve">    ~/.claude/projects/-fake-home-work-proj/4b9f0c1e-2d3a-4e5f-8a6b-7c8d9e0f1a2b.jsonl:20</text>
+<text class="r r10" x="22" y="270" fill="#8b949e" xml:space="preserve">  now sits in: ~/.claude/projects/-fake-home-work-proj/4b9f0c1e-2d3a-4e5f-8a6b-7c8d9e0f1a2b.jsonl; and in</text>
+<text class="r r11" x="22" y="291" fill="#8b949e" xml:space="preserve">    the conversation the model received; and wherever the Bash tool call sent it</text>
+<text class="r r12" x="22" y="312" fill="#8b949e" xml:space="preserve">  advice: rotate it at its issuer; remove GH_TOKEN from the environment Claude Code starts with; delete</text>
+<text class="r r13" x="22" y="333" fill="#8b949e" xml:space="preserve">    the session files above once it is rotated</text>
+<text class="r r14" x="22" y="354" fill="#8b949e" xml:space="preserve"></text>
+<text class="r r15" x="22" y="375" fill="#e6edf3" xml:space="preserve">ACME_API_TOKEN (launch env)</text>
+<text class="r r16" x="22" y="396" fill="#8b949e" xml:space="preserve">  source: launch env, the environment Claude Code starts with</text>
+<text class="r r17" x="22" y="417" fill="#8b949e" xml:space="preserve">  entered the context: 1 time, first at turn 1: the Bash tool result,</text>
+<text class="r r18" x="22" y="438" fill="#8b949e" xml:space="preserve">    ~/.claude/projects/-fake-home-work-proj/4b9f0c1e-2d3a-4e5f-8a6b-7c8d9e0f1a2b.jsonl:3</text>
+<text class="r r19" x="22" y="459" fill="#8b949e" xml:space="preserve">  now sits in: ~/.claude/projects/-fake-home-work-proj/4b9f0c1e-2d3a-4e5f-8a6b-7c8d9e0f1a2b.jsonl; and in</text>
+<text class="r r20" x="22" y="480" fill="#8b949e" xml:space="preserve">    the conversation the model received</text>
+<text class="r r21" x="22" y="501" fill="#8b949e" xml:space="preserve">  advice: rotate it at its issuer; remove ACME_API_TOKEN from the environment Claude Code starts with;</text>
+<text class="r r22" x="22" y="522" fill="#8b949e" xml:space="preserve">    delete the session files above once it is rotated</text>
+<text class="r r23" x="22" y="543" fill="#8b949e" xml:space="preserve"></text>
+<text class="r r24" x="22" y="564" fill="#8b949e" xml:space="preserve">not found in this session: 3 credentials; not checkable: 0 credentials</text>
+</g></svg>
