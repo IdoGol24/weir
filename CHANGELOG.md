@@ -113,6 +113,8 @@
   an error instead of installing older code
   ([action/README.md](action/README.md)).
 
+- **`weir --version`** prints the installed version, as `weir 0.7.0`.
+
 ### Changed
 - **A fingerprint key file others can read is refused.** `weir
   inventory`, `weir audit` and `weir statusline` all refuse (exit 2) a
