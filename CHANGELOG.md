@@ -7,9 +7,11 @@
   agent sessions (experimental).** Given the `weir-inventory/1` report, the
   fingerprint store and the key from one `weir inventory --store` run, it
   reads Claude Code session files (main transcripts, subagent transcripts
-  and their sidecars, and saved tool outputs), `CLAUDE.md` and auto-memory files, and OTLP/JSON
-  telemetry (GenAI attributes and Claude Code's own log events) offline,
-  and reports per
+  and their sidecars, and saved tool outputs, which are stored text whatever
+  their lines hold; the base64 data of an image is not searched, and a PDF
+  whose text is in compressed streams makes the result unknown),
+  `CLAUDE.md` and auto-memory files, and OTLP/JSON telemetry (GenAI
+  attributes and Claude Code's own log events) offline, and reports per
   credential, by inventory name and never by value, whether it entered the
   agent's context or was sent out in a tool call, with counts and the file,
   line, field, tool and argument of each sighting. Strings are matched by
@@ -23,6 +25,23 @@
   directory it names counts like `~/.claude/projects`.
   Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
   schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
+- **weir-scan: `weir statusline`, a Claude Code status-line segment and a
+  `/weir` report (experimental).** The segment counts, for the current
+  session, the inventoried credentials that entered the agent's context
+  and those sent in a tool call (`weir: 2 in context, 1 sent`), shows
+  `unknown` rather than a false zero, and reads a long session in
+  checkpointed steps (`scanning… P%`). A long record has 5 seconds of
+  its own; one not searched whole in three tries in a row, each cancelled
+  or out of time, makes it `partly checked`, never a count: `weir audit`
+  or `/weir` gives the full one.
+  `/weir` lists each one with its source, turn, tool call, where it now
+  sits and advice. `setup` shows the change, applies it on an exact `yes`
+  beside the existing status line, and `undo` puts it back
+  ([docs/statusline.md](docs/statusline.md)).
+- **weir-scan: a fingerprint key file others can read is refused.** This
+  applies to `weir inventory`, `weir audit` and `weir statusline` alike: a
+  key file another user owns, or that others can read or write, is exit 2.
+  `chmod 600` a key file made by hand.
 - **weir-scan: the inventory store carries a key check.**
   `weir-inventory-store/1` gains `key_check`, an HMAC of a fixed message
   under the fingerprint key, so a reader can tell the store's key from

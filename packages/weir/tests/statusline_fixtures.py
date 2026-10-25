@@ -1,0 +1,223 @@
+"""Fixtures for the `weir statusline` tests (docs/statusline.md).
+
+FAKE DATA ONLY. Everything lives under the temporary directory the caller
+passes: the fake home and inventory of `audit_fixtures.build`, a fake Claude
+config directory (`home/.claude`) holding a fake session, and a fake weir
+state directory. Nothing here reads a real home, setting or session.
+
+A session is laid out as Claude Code lays one out: the transcript
+`projects/<project>/<session id>.jsonl`, and beside it the session's own
+directory `projects/<project>/<session id>/` with `subagents/` and
+`tool-results/`. The tests take what a status line should say from a real
+`weir audit --json` run over the same files, read through the counting rule
+of docs/statusline.md, never from the status line's own output.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shlex
+import subprocess
+import sys
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+import audit_fixtures as fx
+import pytest
+from click.testing import CliRunner
+
+from weir.cli.main import main
+
+PROJECT = "-fake-home-work-proj"
+
+# docs/statusline.md, "Setup and undo": setup supports POSIX shells only.
+posix_shell = pytest.mark.skipif(
+    os.name != "posix", reason="weir statusline setup supports POSIX shells only"
+)
+
+
+@dataclass(frozen=True)
+class Run:
+    exit_code: int
+    stdout: str
+    stderr: str
+
+    @property
+    def lines(self) -> list[str]:
+        return self.stdout.splitlines()
+
+
+@dataclass
+class Claude:
+    """A fake Claude config directory and weir state directory."""
+
+    setup: fx.Setup
+    config: Path
+    state: Path
+
+    @property
+    def settings(self) -> Path:
+        return self.config / "settings.json"
+
+    @property
+    def command_file(self) -> Path:
+        return self.config / "commands" / "weir.md"
+
+    def transcript(self, session_id: str = fx.SESSION_ID) -> Path:
+        return self.config / "projects" / PROJECT / f"{session_id}.jsonl"
+
+    def session_dir(self, session_id: str = fx.SESSION_ID) -> Path:
+        return self.config / "projects" / PROJECT / session_id
+
+    def inputs(self) -> list[str]:
+        s = self.setup
+        return ["--inventory", str(s.report), "--store", str(s.store), "--key", str(s.key)]
+
+    def env(self) -> dict[str, str]:
+        """The environment the commands run with: the fake home only."""
+        return {"HOME": str(self.setup.home), "CLAUDE_CONFIG_DIR": str(self.config)}
+
+    def invoke(self, args: Sequence[str], stdin: str | None = None) -> Run:
+        result = CliRunner().invoke(
+            main, list(args), input=stdin, env=self.env(), catch_exceptions=False
+        )
+        return Run(result.exit_code, result.stdout, result.stderr)
+
+    def statusline(
+        self, session_id: str = fx.SESSION_ID, *, transcript: Path | None = None,
+        extra: Sequence[str] = (),
+    ) -> Run:
+        """`weir statusline` as Claude Code runs it: the session JSON on stdin."""
+        payload = status_json(transcript or self.transcript(session_id), session_id)
+        args = ["statusline", *self.inputs(), "--cache", str(self.state), *extra]
+        return self.invoke(args, stdin=payload)
+
+    def audit(self, session_id: str = fx.SESSION_ID) -> dict[str, object]:
+        """`weir audit --json` over the session's files: the transcript and,
+        when it exists, the session's own directory."""
+        paths: list[Path | str] = [self.transcript(session_id)]
+        if self.session_dir(session_id).is_dir():
+            paths.append(self.session_dir(session_id))
+        run = self.setup.audit(paths)
+        assert run.exit_code in (0, 1, 3), run.stderr
+        return run.report
+
+
+def dense_lockfile(size: int) -> str:
+    """About `size` characters of a fake lockfile: package names and
+    integrity hashes, every hash a candidate the audit checks."""
+    lines: list[str] = []
+    length = 0
+    while length < size:
+        n = len(lines)
+        line = f'  "pkg-{n}": "sha512-{hashlib.sha512(str(n).encode()).hexdigest()}"\n'
+        lines.append(line)
+        length += len(line)
+    return "".join(lines)
+
+
+def tool_result_and_copy(session: fx.Session, tool_id: str, text: str) -> int:
+    """A tool result as Claude Code writes it: in the message, and again in
+    the record's `toolUseResult`."""
+    block = {"type": "tool_result", "tool_use_id": tool_id, "content": text}
+    envelope = session._envelope("user", message={"role": "user", "content": [block]})  # pyright: ignore[reportPrivateUsage]
+    return session.record({**envelope, "toolUseResult": {"stdout": text, "stderr": ""}})
+
+
+def build(root: Path, *, bashrc: str | None = None, extra_env: str = "") -> Claude:
+    setup = fx.build(root, bashrc=bashrc, extra_env=extra_env)
+    config = setup.home / ".claude"
+    (config / "projects" / PROJECT).mkdir(parents=True)
+    return Claude(setup=setup, config=config, state=setup.home / ".weir" / "statusline")
+
+
+def status_json(transcript: Path, session_id: str) -> str:
+    """The JSON Claude Code passes a status line command on stdin (the
+    documented fields this command reads, plus a few it ignores)."""
+    return json.dumps({
+        "session_id": session_id,
+        "transcript_path": str(transcript),
+        "cwd": "/fake/home/work/proj",
+        "model": {"id": "fake-model", "display_name": "Fake"},
+        "workspace": {"current_dir": "/fake/home/work/proj"},
+        "context_window": {"used_percentage": 12},
+    })
+
+
+# --- the counting rule (docs/statusline.md, "The segment") --------------------
+
+
+def groups(setup: fx.Setup) -> dict[str, str]:
+    """Credential id -> the value it holds, as the store links them: ids
+    whose stored fingerprints are equal are one value. An id the store holds
+    no fingerprint for is its own group."""
+    store = json.loads(setup.store.read_text())
+    report = json.loads(setup.report.read_text())
+    out = {c["id"]: c["id"] for c in report["credentials"]}
+    for record in store["records"]:
+        out[record["credential_id"]] = "fingerprint:" + record["fingerprint"]
+    return out
+
+
+def expected_counts(setup: fx.Setup, report: Mapping[str, object]) -> tuple[int, int, bool]:
+    """(in context, sent, incomplete) from an audit report, by the rule of
+    docs/statusline.md, "What is counted": values, not inventory records; a
+    `context` or `tool_call` hit put a value in the context, a `tool_call`
+    hit sent it."""
+    group = groups(setup)
+    context: set[str] = set()
+    sent: set[str] = set()
+    for hit in report["hits"]:  # type: ignore[union-attr]
+        if hit["kind"] in ("context", "tool_call"):
+            context.add(group[hit["credential"]])
+        if hit["kind"] == "tool_call":
+            sent.add(group[hit["credential"]])
+    return len(context), len(sent), bool(report["unknown"])
+
+
+# docs/statusline.md, "The segment": a record too long to search within a run
+PARTLY_CHECKED = "weir: partly checked, run /weir"
+
+
+def segment_for(counts: tuple[int, int, bool]) -> str:
+    """The segment docs/statusline.md prints for finished counts."""
+    context, sent, incomplete = counts
+    if incomplete and not (context or sent):
+        return "weir: unknown"
+    line = f"weir: {context} in context, {sent} sent"
+    return line + ", part unknown" if incomplete else line
+
+
+# --- running a settings command the way Claude Code does ---------------------
+
+
+def run_shell(command: str, stdin: str, env: Mapping[str, str]) -> Run:
+    """Run a status line command in a shell, with the session JSON on stdin,
+    as Claude Code does. The environment holds the fake home and PATH.
+    Windows' "\r\n" line ends in the output read back as "\n"."""
+    full = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env}
+    proc = subprocess.run(
+        ["sh", "-c", command], input=stdin.encode(), capture_output=True, env=full, timeout=120,
+        check=False,
+    )
+
+    def text(data: bytes) -> str:
+        return data.decode().replace("\r\n", "\n")
+
+    return Run(proc.returncode, text(proc.stdout), text(proc.stderr))
+
+
+def weir_command() -> str:
+    """How setup is expected to start weir: this interpreter, quoted for
+    the shell, `-m weir`."""
+    return f"{shlex.quote(sys.executable)} -m weir"
+
+
+def python_command(code: str) -> str:
+    """A command that runs `code` in this interpreter, the same in a POSIX
+    shell and in Windows' cmd.exe (the shell `run_beside` uses there).
+    `code` holds no double quote."""
+    return f'"{sys.executable}" -c "{code}"'

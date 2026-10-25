@@ -95,7 +95,7 @@ permissions:
 
 The inputs, the outputs and a whole workflow are in [the action's README](https://github.com/IdoGol24/weir/tree/main/action).
 
-## Also included: the flow scan, `weir inventory` and `weir audit` (experimental)
+## Also included: the flow scan, `weir inventory`, `weir audit` and the status line (experimental)
 
 ### The flow scan
 
@@ -126,6 +126,17 @@ weir audit --inventory inventory.json --store store.json --key ~/.weir/fingerpri
 ```
 
 If you set `CLAUDE_CONFIG_DIR` to move Claude Code's config directory, pass `"$CLAUDE_CONFIG_DIR/projects"` instead; with the variable set, the audit reads that projects folder the way it reads `~/.claude/projects`.
+
+### The Claude Code status line and `/weir` (experimental)
+
+`weir statusline` shows the audit while you work: a segment on Claude Code's status line such as `weir: 2 in context, 1 sent`, counting how many of your inventoried credentials entered the current session's context and how many were sent out in a tool call. It reads the session's transcript and its subagent transcripts; a file it cannot read makes it say `unknown`, never a false zero. The `/weir` command reports, per credential, where it came from, the turn and tool call that moved it, where it now sits, and what to do. Both are display only, local and offline, and never show a value ([contract](https://github.com/IdoGol24/weir/blob/main/docs/statusline.md)).
+
+```sh
+weir statusline setup --inventory inventory.json --store store.json --key ~/.weir/fingerprint.key
+weir statusline undo
+```
+
+Setup shows the exact change to your Claude Code settings, keeps the status line you already have (its output comes first), and writes nothing until you type `yes`; `--dry-run` only shows it. Undo puts the status line back and keeps every other setting, and refuses when the status line changed since. Setup supports Linux and macOS for now.
 
 ## Why you can trust it
 

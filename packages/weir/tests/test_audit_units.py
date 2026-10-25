@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import random
 from pathlib import Path
 
 import audit_fixtures as fx
@@ -18,6 +19,7 @@ import canary_fixtures as cfx
 import pytest
 
 from weir.audit import inputs as audit_inputs
+from weir.audit import matching
 from weir.inventory import fingerprint as inventory_fingerprint
 
 # --- the fingerprint and the key check agree with the inventory's -----------
@@ -270,6 +272,71 @@ def test_claude_code_records_are_classified_by_type_and_location(
     assert run.exit_code == {"context": 1, "tool_call": 1, "unknown": 3, "stored": 0}[kind]
     state = {"context": "in_context", "tool_call": "in_tool_call"}.get(kind, kind)
     assert fx.credential(run.report, setup.ids[fx.ACME])["state"] == state
+
+
+def test_the_base64_data_of_an_image_block_is_not_searched(tmp_path: Path) -> None:
+    """An image is binary data no value can be matched in; a document's
+    base64 data and a document whose source is text are searched as any
+    text is."""
+    setup = fx.build(tmp_path)
+    value = setup.values[fx.ACME]
+    blob = base64.b64encode(f" {value} ".encode()).decode()
+
+    def block(kind: str, media_type: str) -> dict[str, object]:
+        return {"type": kind, "source": {"type": "base64", "media_type": media_type, "data": blob}}
+
+    image = block("image", "image/png")
+    in_result = {"type": "tool_result", "tool_use_id": "t", "content": [image]}
+    text = {"type": "document", "source": {"type": "text", "media_type": "text/plain",
+                                           "data": f"key {value}"}}
+
+    def one(content: list[object]) -> fx.Run:
+        record = {"type": "user", "message": {"role": "user", "content": content}}
+        return _one_record(setup, tmp_path, record)
+
+    skipped = one([image, in_result])
+    searched = [one([block("document", "application/pdf")]), one([text])]
+
+    assert fx.hits(skipped.report, setup.ids[fx.ACME]) == []
+    for run in searched:
+        assert _only_hit(run, setup)["location"] == "message.content[0].source.data"
+
+
+@pytest.mark.parametrize(
+    ("before", "skipped"),
+    [
+        (b"", True),
+        (b"3 0 obj << /Title (Upstream\nNotes) >> endobj\n", False),
+        (b"3 0 obj << /Length 18 >> stream\n(see endstream) Tj\nendstream\nendobj\n", False),
+    ],
+    ids=["streams", "stream and a line end in a string", "endstream in a plain stream"],
+)
+def test_the_bytes_of_a_compressed_pdf_stream_are_not_searched(
+    tmp_path: Path, before: bytes, skipped: bool
+) -> None:
+    """A PDF stream under a `/Filter` holds no text as written: its bytes
+    are not searched, and the line is not scanned, never clean. The PDF's
+    plain streams are searched, and so is a stream whose dictionary cannot
+    be told apart from the bytes before it."""
+    setup = fx.build(tmp_path)
+    plain = f"({setup.values[fx.ACME]}) Tj".encode()
+    packed = f"({setup.values[fx.GH]}) Tj".encode()
+    pdf = (
+        b"%PDF-1.4\n1 0 obj << /Length " + str(len(plain)).encode() + b" >> stream\n"
+        + plain + b"\nendstream endobj\n" + before + b"2 0 obj << /Length "
+        + str(len(packed)).encode() + b" /Filter /FlateDecode >> stream\n" + packed
+        + b"\nendstream endobj\n%%EOF\n"
+    )
+    source = {"type": "base64", "media_type": "application/pdf",
+              "data": base64.b64encode(pdf).decode()}
+    record = {"type": "user", "message": {"role": "user", "content": [
+        {"type": "document", "source": source}]}}
+
+    report = _one_record(setup, tmp_path, record).report
+
+    assert fx.credential(report, setup.ids[fx.ACME])["state"] == "in_context"
+    assert (fx.hits(report, setup.ids[fx.GH]) == []) == skipped
+    assert [u["reason"] for u in report["unknown"]] == ["not_scanned"]  # type: ignore[union-attr,index]
 
 
 def test_a_tool_result_names_the_tool_of_its_tool_use(tmp_path: Path) -> None:
@@ -1047,3 +1114,16 @@ def test_a_message_record_of_an_unnamed_shape_is_unknown_not_stored(
     hit = _only_hit(run, setup)
     assert (hit["kind"], hit["line"], hit["location"]) == ("unknown", line, location)
     assert (run.report["result"], run.exit_code) == ("unknown", 3)
+
+
+def test_the_json_literals_scanned_are_those_the_regular_expression_finds() -> None:
+    """The json form stops scanning at the first quote with no closing quote
+    after it, so text whose quotes are all escaped is linear, not quadratic;
+    it unescapes the same literals as trying every quote."""
+    rng = random.Random(5)
+    for _ in range(3_000):
+        text = "".join(rng.choice('ab"\\\\ \\n') for _ in range(rng.randrange(40)))
+        every = [(matching.json_unescape(m.group(1)), True)
+                 for m in matching._JSON_LITERAL.finditer(text)  # pyright: ignore[reportPrivateUsage]
+                 if "\\" in m.group(1)]
+        assert matching.json_texts(text)[1:] == every, text

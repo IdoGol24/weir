@@ -68,6 +68,9 @@ bytes is not scanned (`compressed`).
   before 0.7.0: run `weir inventory --store` again).
 - The key file is 64 hex characters (surrounding whitespace ignored), as
   `weir inventory` writes it. Anything else is exit 2.
+- The key file is its owner's alone, as `weir inventory` creates it (mode
+  0600): one another user owns, or that others can read or write, is exit
+  2, never used or repaired.
 - A store record with a `fingerprint_v` other than 1 is exit 2.
 
 An error names the input, never content read from it.
@@ -91,7 +94,7 @@ report still prints the path as given:
 | format | recognised when | read as |
 | --- | --- | --- |
 | `claude-code` | a JSON Lines file whose parsed lines are JSON objects, at least one a Claude Code message record: `type` `user` or `assistant`, a string `sessionId` and a `message` object; or, with no such record, a JSON Lines file inside a Claude Code projects directory with at least one record, every record's `type` a bookkeeping type: `summary`, or a type the Claude Code table below makes `stored` at every location (`file-history-snapshot`, say). A Claude Code projects directory is a directory `projects` directly inside a directory named `.claude` (`~/.claude/projects/`), or, when the environment variable `CLAUDE_CONFIG_DIR` is set, the `projects` directory of the Claude config directory it names; any other directory named `projects` is not one. A `user` or `assistant` record without a string `sessionId`, or a record of any other type, makes such a file `unknown` | a Claude Code session file: the main transcript or a subagent's (`<session>/subagents/*.jsonl`), or a file of bookkeeping records beside them |
-| `claude-code-tool-results` | a file whose parent directory is named `tool-results`, inside a Claude Code projects directory (as defined for `claude-code` above) | a large tool output Claude Code saved beside a session (`<session>/tool-results/`): text |
+| `claude-code-tool-results` | a file whose parent directory is named `tool-results`, inside a Claude Code projects directory (as defined for `claude-code` above), whatever its lines hold (an old session file the agent printed is not a session of its own) | a large tool output Claude Code saved beside a session (`<session>/tool-results/`): text |
 | `claude-code-subagent-meta` | a file named `*.meta.json` in a directory named `subagents`, inside a Claude Code projects directory | the sidecar Claude Code keeps beside a subagent's transcript (`<session>/subagents/agent-*.meta.json`): one JSON object |
 | `claude-code-memory` | a file named `CLAUDE.md`, anywhere, or a `.md` file in a directory named `memory` inside a Claude Code projects directory (`projects/<project>/memory/*.md`, `MEMORY.md` included) | a file Claude Code loads into the agent's context: a `CLAUDE.md` or an auto-memory file. Text |
 | `otlp` | a JSON Lines file whose parsed lines are OTLP/JSON export requests (an object holding `resourceSpans`, `resourceLogs` or `resourceMetrics`), or, when no line is an export request, a whole file that is one such request (pretty-printed, say) | exported telemetry |
@@ -226,6 +229,21 @@ A record's kind is decided by its `type` and the hit's location:
 An `attachment` with no `rendered` is `unknown`. A record whose `type` is
 not in the table is an **unrecognised record**.
 
+The `source.data` of an `image` block whose `source.type` is `base64`,
+wherever the block sits in a record, is not searched: it is binary data
+no value can be matched in, and a pasted image makes it megabytes long. A
+`document` block's base64 data (a PDF the agent read) is searched, as
+base64, like any other string, so PDF text is matched where a value sits
+whole in one literal string of a plain content stream. Text in a stream
+under a `/Filter` (compressed, say) cannot be matched exactly, so a line
+whose base64 `document` holds a `/Filter` is `not_scanned`: the audit is
+incomplete there, never clean, whether the name is written plainly or
+with `#` escapes (`/Fil#74er`). The bytes of such a stream are not
+searched (they hold no text as written, and are slow to search); the rest
+of the PDF is. A value split by `TJ` kerning or written
+as a PDF hex string is not matched, and the result can then be clean.
+A value in an image is never matched.
+
 A `claude-code-tool-results` file is `stored`: Claude Code shows the agent
 a preview of a large tool output and saves the whole output there, and the
 preview's own copy is in the transcript's `tool_result`.
@@ -301,7 +319,7 @@ The audit is **incomplete**, and lists each reason, when:
 | `no_files_read` | none | no file was read: the paths given are empty directories, do not exist, or hold only files not scanned. An empty input is never clean |
 | `unrecognised_format` | the file | a file's format is `unknown` |
 | `unparsed_line` | `<file>:<line>` | a line of a `claude-code` or `otlp` file is not a record, or each line of a `claude-code-subagent-meta` file when the file is not one JSON object |
-| `not_scanned` | the file | a file was not scanned (`compressed`, a `symlink` inside a directory, or a given path that is `missing`) |
+| `not_scanned` | the file, or `<file>:<line>` | a file was not scanned (`compressed`, a `symlink` inside a directory, or a given path that is `missing`), or a line holds a PDF `document` with a stream under a `/Filter`, whose text cannot be matched |
 | `unknown_kind` | `<file>:<line>` | a hit whose kind is `unknown` |
 
 An unrecognised record is walked in full and counted in the coverage, and

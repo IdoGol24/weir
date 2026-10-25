@@ -10,8 +10,10 @@ strings themselves never decide where a hit is.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
@@ -171,13 +173,15 @@ def recognise(
     """`projects_dirs`: the `projects` directories of the Claude config
     directories given, as absolute paths."""
     where = PurePath(os.path.abspath(path))
-    if _is_session(where, lines, projects_dirs):
-        return Format.CLAUDE_CODE
     # Claude Code's other files count only inside a Claude Code projects
     # directory: a `tool-results` or `subagents` folder elsewhere is anyone's.
     claude = _in_claude_projects(where, projects_dirs)
+    # A saved tool output is text Claude Code stored, whatever its lines hold:
+    # an old session file the agent printed is not a session of its own.
     if claude and where.parent.name == "tool-results":
         return Format.CLAUDE_CODE_TOOL_RESULTS
+    if _is_session(where, lines, projects_dirs):
+        return Format.CLAUDE_CODE
     if _is_claude_code_memory(where, projects_dirs):
         return Format.CLAUDE_CODE_MEMORY
     if claude and where.parent.name == "subagents" and where.name.endswith(".meta.json"):
@@ -342,11 +346,90 @@ def note_tools(record: dict[str, Json], tools: dict[str, str]) -> None:
                 tools[tool_id] = name
 
 
-def claude_code_sites(record: dict[str, Json], tools: dict[str, str]) -> Iterator[Site]:
+def _base64_blocks(record: dict[str, Json]) -> Iterator[tuple[str, Path_, Json]]:
+    """Each `image` or `document` block whose source is `base64`: its type,
+    the location of its `source.data`, and that data."""
+    stack: list[tuple[Json, Path_]] = [(record, ())]
+    while stack:
+        node, path = stack.pop()
+        if isinstance(node, list):
+            stack.extend((item, (*path, index)) for index, item in enumerate(node))
+        elif isinstance(node, dict):
+            source = node.get("source")
+            block = _str(node.get("type"))
+            if (
+                block in ("image", "document") and isinstance(source, dict)
+                and source.get("type") == "base64"
+            ):
+                yield block, (*path, "source", "data"), source.get("data")
+            stack.extend((child, (*path, key)) for key, child in node.items())
+
+
+_NOT_BASE64 = re.compile(r"[^A-Za-z0-9+/]")
+# A PDF name's character written as `#` and two hex digits (`/Fil#74er`)
+_NAME_ESCAPE = re.compile(rb"#([0-9A-Fa-f]{2})")
+
+
+# A PDF stream's data, from the line end after `stream` to `endstream`
+_STREAM = re.compile(rb"stream\r?\n(.*?)endstream", re.DOTALL)
+
+
+def _names(pdf: bytes) -> bytes:
+    """`pdf` with every `#xx` in its names written as the character."""
+    return _NAME_ESCAPE.sub(lambda m: bytes.fromhex(m[1].decode()), pdf)
+
+
+def _without_filtered_streams(pdf: bytes) -> bytes:
+    """`pdf` without the data of each stream whose own dictionary, after
+    the last `obj` before it, names a `/Filter`: bytes that are slow to
+    search and hold no text as written. Any other bytes are kept."""
+    kept: list[bytes] = []
+    at = 0
+    for stream in _STREAM.finditer(pdf):
+        dictionary = pdf[max(at, pdf.rfind(b"obj", at, stream.start())) : stream.start()]
+        filtered = b"/Filter" in _names(dictionary)
+        kept.append(pdf[at : stream.start(1) if filtered else stream.end(1)])
+        at = stream.end(1)
+    return b"".join(kept) + pdf[at:]
+
+
+@dataclass(frozen=True)
+class Attachments:
+    """A record's base64 `image` and `document` blocks, by the location of
+    their `source.data`."""
+
+    # Images: no value can be matched in them, and megabytes long for a
+    # pasted image
+    images: frozenset[Path_]
+    # Each document with a `/Filter` anywhere (a compressed stream, say),
+    # whose text no value can be matched in exactly: its data base64 again
+    # without the bytes of its filtered streams
+    encoded: dict[Path_, str]
+
+
+def attachments(record: dict[str, Json]) -> Attachments:
+    images: set[Path_] = set()
+    encoded: dict[Path_, str] = {}
+    for block, path, data in _base64_blocks(record):
+        if block == "image":
+            images.add(path)
+        elif isinstance(data, str):
+            digits = _NOT_BASE64.sub("", data)
+            pdf = base64.b64decode(digits[: len(digits) - len(digits) % 4])
+            if b"/Filter" in _names(pdf):
+                encoded[path] = base64.b64encode(_without_filtered_streams(pdf)).decode()
+    return Attachments(frozenset(images), encoded)
+
+
+def claude_code_sites(
+    record: dict[str, Json], tools: dict[str, str], attached: Attachments
+) -> Iterator[Site]:
     record_type = record.get("type")
     shown = record_type if isinstance(record_type, str) else None
     for string, path in strings(record):
-        yield Site(string, path, claude_code_place(record, path, tools), record_type=shown)
+        if path not in attached.images:
+            string = attached.encoded.get(path, string)
+            yield Site(string, path, claude_code_place(record, path, tools), record_type=shown)
 
 
 # --- OTLP telemetry ------------------------------------------------------------

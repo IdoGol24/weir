@@ -16,6 +16,8 @@ import os
 import secrets
 from pathlib import Path
 
+from weir.inventory.keyfile import key_file_problem
+
 FINGERPRINT_VERSION = 1
 _KEY_BYTES = 32
 # The key check's message: a fixed string, so the check says nothing about
@@ -32,16 +34,21 @@ def load_or_create_key(path: Path) -> bytes:
 
     A key file that exists but is not exactly 64 hex characters is an error,
     never silently replaced: replacing it would change every fingerprint and
-    read as "every credential rotated".
+    read as "every credential rotated". So is a key file another user owns
+    or others can read or write (`key_file_problem`).
     """
     try:
-        text = path.read_text(encoding="ascii").strip()
+        with path.open("rb") as handle:
+            problem = key_file_problem(os.fstat(handle.fileno()))
+            text = handle.read().decode("ascii").strip()
     except FileNotFoundError:
         return _create_key(path)
     except OSError as exc:
         raise FingerprintKeyError(f"cannot read fingerprint key {path}: {exc.strerror}") from exc
     except UnicodeDecodeError:
         raise FingerprintKeyError(f"fingerprint key {path} is not hex") from None
+    if problem is not None:
+        raise FingerprintKeyError(f"fingerprint key {path} {problem}")
     try:
         key = bytes.fromhex(text)
     except ValueError as exc:

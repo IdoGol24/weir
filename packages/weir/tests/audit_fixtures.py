@@ -192,7 +192,7 @@ class Session:
         message = {"role": "assistant", "model": "fake-model", "content": [block]}
         return self.record(self._envelope("assistant", message=message))
 
-    def tool_result(self, tool_id: str, content: str) -> tuple[int, str]:
+    def tool_result(self, tool_id: str, content: str | list[object]) -> tuple[int, str]:
         block = {"type": "tool_result", "tool_use_id": tool_id, "content": content}
         line = self.record(
             self._envelope("user", message={"role": "user", "content": [block]})

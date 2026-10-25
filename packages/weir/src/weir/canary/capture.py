@@ -27,6 +27,12 @@ _OPEN = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
+def compressed(data: bytes) -> bool:
+    """A file that starts this way is compressed (gzip): it is not scanned,
+    and so it is unknown, never clean."""
+    return data.startswith(_GZIP_MAGIC)
+
+
 class Role(enum.Enum):
     TELEMETRY = "otlp"
     REQUESTS = "requests"
@@ -79,7 +85,7 @@ class _Collector:
             raise self._fail(path, f"cannot be read ({exc.strerror})") from None
         finally:
             os.close(fd)
-        if data.startswith(_GZIP_MAGIC):
+        if compressed(data):
             self.files.append(CaptureFile(path, role, None, NotScannedReason.COMPRESSED))
             return
         if role is Role.REQUESTS and not _has_requests_header(data):

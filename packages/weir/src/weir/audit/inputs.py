@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import msgspec
 
 from weir.inventory._types import INVENTORY_SCHEMA, STORE_SCHEMA, Inventory, Store, ValueState
+from weir.inventory.keyfile import key_file_problem
 
 # docs/inventory.md, "The store": the version of the fingerprint input and
 # algorithm this audit computes, and the key check's message. Both are
@@ -70,7 +72,14 @@ def _read(path: Path, label: str) -> bytes:
 
 
 def _read_key(path: Path) -> bytes:
-    data = _read(path, "key")
+    try:
+        with path.open("rb") as handle:
+            problem = key_file_problem(os.fstat(handle.fileno()))
+            data = handle.read()
+    except OSError as exc:
+        raise AuditInputError(f"key {path}: cannot be read ({exc.strerror})") from None
+    if problem is not None:
+        raise AuditInputError(f"key {path}: {problem}")
     try:
         key = bytes.fromhex(data.decode("ascii").strip())
     except (UnicodeDecodeError, ValueError):
