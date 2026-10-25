@@ -10,6 +10,8 @@ import sys
 from collections.abc import Callable
 from types import FrameType
 
+from weir.statusline.segment import RESET
+
 SEPARATOR = " | "
 INNER_TIMEOUT_S = 10.0
 # The signals that cancel a run.
@@ -18,13 +20,18 @@ if sys.platform != "win32":  # Windows has no SIGHUP
     _CANCELS.append(signal.SIGHUP)
 
 
-def run_beside(inner: str | None, stdin: bytes, segment: Callable[[], str]) -> str:
+def run_beside(
+    inner: str | None, stdin: bytes, segment: Callable[[], str], *, colour: bool
+) -> str:
     """The existing command's output, then the segment on its last line.
     One that fails, prints nothing or runs too long shows the segment
-    alone, as Claude Code would show nothing for it."""
+    alone, as Claude Code would show nothing for it. With colour, a reset
+    after the output ends any colour it leaves on."""
     shown = "" if inner is None else _run(inner, stdin)
     line = segment()
-    return shown + SEPARATOR + line if shown.strip() else line
+    if not shown.strip():
+        return line
+    return shown + (RESET if colour else "") + SEPARATOR + line
 
 
 def _run(inner: str, stdin: bytes) -> str:

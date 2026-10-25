@@ -71,7 +71,7 @@ from weir.statusline import setup as statusline_setup
 from weir.statusline import valid_session_id
 from weir.statusline.compose import run_beside
 from weir.statusline.report import report_lines as session_report_lines
-from weir.statusline.segment import read_session
+from weir.statusline.segment import colour_wanted, note, read_session
 from weir.taint import build_tainted_graph
 
 _BOM = b"\xef\xbb\xbf"
@@ -549,25 +549,28 @@ def statusline_group(
     if report_path is None or store_path is None or key_path is None or cache is None:
         raise click.UsageError("weir statusline needs --inventory, --store, --key and --cache")
     stdin = click.get_binary_stream("stdin").read()
+    colour = colour_wanted(os.environ)
 
     def segment() -> str:
         try:
             session = _json.loads(stdin)
             session_id, transcript = session.get("session_id"), session.get("transcript_path")
         except (ValueError, AttributeError):
-            return "weir: no session"
+            return note("no session", colour=colour)
         if not (isinstance(session_id, str) and valid_session_id(session_id)
                 and isinstance(transcript, str) and transcript):
-            return "weir: no session"
+            return note("no session", colour=colour)
         try:
             inputs = load_inputs(report_path, store_path, key_path)
             return read_session(
-                inputs, cache, transcript, session_id, _claude_config_dirs(), budget_ms / 1000
+                inputs, cache, transcript, session_id, _claude_config_dirs(), budget_ms / 1000,
+                colour=colour,
             )
         except Exception:  # a failing status line shows nothing: a word instead
-            return "weir: error, run /weir"
+            return note("error", colour=colour, pointer=True)
 
-    click.echo(run_beside(inner, stdin, segment))
+    # Claude Code reads the line from a pipe: click would take the colours out.
+    click.echo(run_beside(inner, stdin, segment, colour=colour), color=True)
 
 
 @statusline_group.command("report")

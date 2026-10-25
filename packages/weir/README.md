@@ -4,6 +4,8 @@
 
 ![Weir plants fake keys in your agent, lets its telemetry flow, and checks every span, log and metric for those exact values: leak, clean or incomplete.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/weir-flow.svg)
 
+![Two status lines with the weir segment beside an existing one: first a green check and "nothing exposed", then a warning sign, "2 in context" in amber, "1 sent" in red, and a pointer to /weir.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/statusline-states.svg)
+
 Plant fake credentials where your real ones live, run your agent, and find every place it exposed them: its telemetry, the model it calls, or any other service.
 
 ```sh
@@ -129,9 +131,9 @@ If you set `CLAUDE_CONFIG_DIR` to move Claude Code's config directory, pass `"$C
 
 ### The Claude Code status line and `/weir` (experimental)
 
-`weir statusline` shows the audit while you work: a segment on Claude Code's status line such as `weir: 2 in context, 1 sent`, counting how many of your inventoried credentials entered the current session's context and how many were sent out in a tool call. It reads the session's transcript and its subagent transcripts; a file it cannot read makes it say `unknown`, never a false zero. The `/weir` command reports, per credential, where it came from, the turn and tool call that moved it, where it now sits, and what to do. Both are display only, local and offline, and never show a value ([contract](https://github.com/IdoGol24/weir/blob/main/docs/statusline.md)).
+`weir statusline` shows the audit while you work: a segment on Claude Code's status line that counts how many of your inventoried credentials entered the current session's context and how many were sent out in a tool call, such as `weir ⚠ 2 in context · 1 sent → /weir`, or `weir ✓ nothing exposed` when none did. It reads the session's transcript and its subagent transcripts; a file it cannot read makes it say `unknown`, never a false zero. The `/weir` command reports, per credential, where it came from, the turn and tool call that moved it, where it now sits, and what to do. Both are display only, local and offline, and never show a value ([contract](https://github.com/IdoGol24/weir/blob/main/docs/statusline.md)).
 
-![Terminal recording: the status line under a fake Claude Code session counts up while it scans and settles on "weir: 2 in context, 1 sent", then /weir is typed and reports each of the two fake credentials: where it came from, the turn and tool call that moved it, where it now sits, and the advice to rotate it.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/statusline.svg)
+![Terminal recording: the status line under a fake Claude Code session counts up while it scans and settles on "weir ⚠ 2 in context · 1 sent → /weir", then /weir is typed and reports each of the two fake credentials: where it came from, the turn and tool call that moved it, where it now sits, and the advice to rotate it.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/statusline.svg)
 
 ```sh
 weir statusline setup --inventory inventory.json --store store.json --key ~/.weir/fingerprint.key

@@ -6,8 +6,11 @@ and the real `weir statusline report` that `/weir` runs, and hands their
 output here. This lays it out as an animated SVG terminal: the bottom line
 is the status line, moving through each refresh's segment (the scanning
 ones first) to the finished counts; then `/weir` types at the prompt above
-it and the report lands in the transcript. test_statusline_svg_drift.py
-regenerates it and compares bytes, so it cannot go stale silently.
+it and the report lands in the transcript. Each segment is drawn in the
+colours its ANSI SGR codes name. render_states_svg draws the segment's two
+states as two status lines, for the top of the README.
+test_statusline_svg_drift.py and test_statusline_states_svg_drift.py
+regenerate both and compare bytes, so they cannot go stale silently.
 
 The status line is drawn as a plain terminal bottom line, not as any
 product's chrome. Animation is declarative CSS only, which runs in an <img>
@@ -17,6 +20,7 @@ demo_svg.py gives. No wall clock and no randomness (G1).
 
 from __future__ import annotations
 
+import re
 import textwrap
 from collections.abc import Sequence
 from xml.sax.saxutils import escape
@@ -37,8 +41,12 @@ _RULE = "#30363d"
 _PROMPT = "#7ee787"
 _CMD = "#e6edf3"
 _ALERT = "#ff7b72"
-_SCAN = "#d29922"
 _DIM = "#8b949e"
+# The fill of each SGR code the segment prints (docs/statusline.md,
+# "Colours"), and of a part it leaves in the terminal's own colour.
+SGR_FILLS = {32: "#3fb950", 33: "#d29922", 31: _ALERT, 2: _DIM}
+TEXT_FILL = _CMD
+_PAINTED = re.compile(r"\x1b\[0m|\x1b\[(\d+)m([^\x1b]*)\x1b\[0m|([^\x1b]+)")
 
 # One loop, in seconds: the status line refreshes and settles, /weir types
 # and its report bursts in, then the whole frame holds long enough to be read.
@@ -62,6 +70,27 @@ def _shown(at: float, until: float) -> str:
         f"0%,{_pct(at)}%{{opacity:0}}{_pct(at + 0.01)}%,{_pct(until)}%{{opacity:1}}"
         f"{_pct(until + 0.01)}%,100%{{opacity:0}}"
     )
+
+
+def _parts(line: str) -> list[tuple[str, str]]:
+    """A segment's parts: each one's text and fill."""
+    parts = [
+        (m[2], SGR_FILLS[int(m[1])]) if m[1] else (m[3], TEXT_FILL)
+        for m in _PAINTED.finditer(line) if m[1] or m[3]
+    ]
+    assert "\x1b" not in "".join(text for text, _ in parts), f"an SGR code not drawn: {line!r}"
+    return parts
+
+
+def _plain(line: str) -> str:
+    return "".join(text for text, _ in _parts(line))
+
+
+def _painted(x: float, y: float, line: str, cls: str = "") -> str:
+    """A <text> of `line`, one <tspan> per part in its colour."""
+    spans = "".join(f'<tspan fill="{fill}">{escape(text)}</tspan>' for text, fill in _parts(line))
+    attr = f'class="{cls}" ' if cls else ""
+    return f'<text {attr}x="{x:.0f}" y="{y:.0f}" xml:space="preserve">{spans}</text>'
 
 
 def _wrap(line: str) -> list[str]:
@@ -104,7 +133,7 @@ def render_statusline_svg(frames: Sequence[str], command: str, report: Sequence[
         rows.extend(("", part, fill) for part in _wrap(line))
 
     widest = max(len(p) + len(t) for p, t, _ in rows)
-    widest = max([widest, *map(len, frames)])
+    widest = max([widest, *(len(_plain(f)) for f in frames)])
     width = round(_PAD_X * 2 + widest * _CHAR_W)
     first_y = _BAR_H + 26
     # The prompt sits in its own band between a rule and the status line.
@@ -131,9 +160,7 @@ def render_statusline_svg(frames: Sequence[str], command: str, report: Sequence[
         until = _HOLD_END if last else at + _FRAME_GAP - 0.01
         css.append(f"@keyframes s{i}{{{_shown(at, until)}}}")
         css.append(f".s{i}{{animation:s{i} {_CYCLE}s infinite}}")
-        text(
-            f"r s{i}" + ("" if last else " x"), _PAD_X, frame_y, _ALERT if last else _SCAN, segment
-        )
+        body.append(_painted(_PAD_X, frame_y, segment, f"r s{i}" + ("" if last else " x")))
 
     # The prompt, and the command typing into it: a clip rect scaled
     # left-to-right in character steps, as in demo_svg.py. On submit the
@@ -192,7 +219,7 @@ def render_statusline_svg(frames: Sequence[str], command: str, report: Sequence[
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="Terminal recording: the status line scans a fake session and settles '
-        f"on {escape(frames[-1])}, then {escape(command)} lists each credential, where it "
+        f"on {escape(_plain(frames[-1]))}, then {escape(command)} lists each credential, where it "
         f'came from, the turn and tool call that moved it, where it sits now and what to do">',
         f'<rect width="{width}" height="{height}" rx="8" fill="{_BG}"/>',
         f'<path d="M0 8a8 8 0 0 1 8-8h{width - 16}a8 8 0 0 1 8 8v{_BAR_H - 8:.0f}H0Z" '
@@ -211,5 +238,33 @@ def render_statusline_svg(frames: Sequence[str], command: str, report: Sequence[
         f'font-size="{_FONT}">'
     )
     parts.extend(body)
+    parts.append("</g></svg>")
+    return "\n".join(parts) + "\n"
+
+
+def render_states_svg(lines: Sequence[str]) -> str:
+    """`lines` are status lines, each the real output of the segment beside
+    an existing status line; one bar each, as a terminal's bottom line."""
+    gap = 10.0
+    widest = max(len(_plain(line)) for line in lines)
+    width = round(_PAD_X * 2 + widest * _CHAR_W)
+    height = round(gap * 2 + len(lines) * _STATUS_H + (len(lines) - 1) * gap)
+    label = "Status lines, the weir segment beside an existing one: " + "; and ".join(
+        _plain(line) for line in lines
+    )
+    parts: list[str] = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" aria-label="{escape(label)}">',
+        f'<rect width="{width}" height="{height}" rx="8" fill="{_BG}"/>',
+        '<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" '
+        f'font-size="{_FONT}">',
+    ]
+    for i, line in enumerate(lines):
+        top = gap + i * (_STATUS_H + gap)
+        parts.append(
+            f'<rect x="{gap:.0f}" y="{top:.0f}" width="{width - 2 * gap:.0f}" '
+            f'height="{_STATUS_H:.0f}" rx="4" fill="{_BAR}"/>'
+        )
+        parts.append(_painted(_PAD_X, top + _STATUS_H / 2 + 5, line))
     parts.append("</g></svg>")
     return "\n".join(parts) + "\n"

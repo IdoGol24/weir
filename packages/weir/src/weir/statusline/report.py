@@ -30,7 +30,14 @@ from weir.audit import (
 from weir.audit.formats import json_lines
 from weir.audit.text import label
 from weir.canary.walk import Json
-from weir.statusline.segment import counted, segment_text, tally, value_groups
+from weir.statusline.segment import (
+    NOTHING_TO_CHECK,
+    counted,
+    note,
+    segment_text,
+    tally,
+    value_groups,
+)
 
 _SOURCES = {
     "environment": "the environment Claude Code starts with",
@@ -260,7 +267,10 @@ def report_lines(
     found = tally(report)
     groups = value_groups(inputs)
     context, sent = counted(found, inputs)
-    lines = [segment_text(context, sent, unknown=found.unknown)]
+    lines = [
+        segment_text(context, sent, unknown=found.unknown, pointer=False)
+        if inputs.by_fingerprint else note(NOTHING_TO_CHECK, colour=False)
+    ]
     shown = next((f.file for f in report.files if f.file == transcript), "[withheld]")
     lines.append(f"session: {shown} ({plural(report.coverage.files, 'file')} read)")
     turns = read_turns(transcript)

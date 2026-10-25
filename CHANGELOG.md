@@ -28,9 +28,17 @@
 - **weir-scan: `weir statusline`, a Claude Code status-line segment and a
   `/weir` report (experimental).** The segment counts, for the current
   session, the inventoried credentials that entered the agent's context
-  and those sent in a tool call (`weir: 2 in context, 1 sent`), shows
-  `unknown` rather than a false zero, and reads a long session in
-  checkpointed steps (`scanning… P%`). A long record has 5 seconds of
+  and those sent in a tool call (`weir ⚠ 2 in context · 1 sent → /weir`,
+  the first count amber and the second red, a zero dim), says
+  `weir ✓ nothing exposed` in green only for a session read to its end
+  with nothing found, shows a dim `nothing to check` rather than the
+  check when the inventory holds no credential weir can check, shows a dim `unknown`
+  rather than a false zero, and reads a long session in checkpointed
+  steps (a dim `scanning… P%`). Every
+  coloured part resets after itself, so the status line beside it keeps
+  its own colours, a colour that line leaves on is reset before the
+  segment, and `NO_COLOR` gives the same words with no colour
+  codes. A long record has 5 seconds of
   its own; one not searched whole in three tries in a row, each cancelled
   or out of time, makes it `partly checked`, never a count: `weir audit`
   or `/weir` gives the full one.
