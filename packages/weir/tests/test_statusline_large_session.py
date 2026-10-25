@@ -108,7 +108,8 @@ def _start(claude: sx.Claude, cache: Path, *extra: str) -> subprocess.Popen[byte
         env={**claude.env(), **sx.NO_COLOR},
     )
     assert proc.stdin is not None
-    proc.stdin.write(sx.status_json(claude.transcript(), fx.SESSION_ID).encode())
+    payload = sx.status_json(claude.transcript(), fx.SESSION_ID, claude.project())
+    proc.stdin.write(payload.encode())
     proc.stdin.close()
     return proc
 
@@ -199,7 +200,7 @@ def test_a_first_scan_cancelled_again_and_again_still_completes(
         _output(proc)
         kills += 1
     uninterrupted = _until_read(claude, tmp_path / "fresh", fresh, *budget)
-    report = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
+    report = claude.report(fx.SESSION_ID)
 
     counts = sx.expected_counts(claude.setup, claude.audit())
     expected = sx.segment_for(counts) + "\n"
@@ -252,7 +253,7 @@ def test_a_long_record_whose_search_is_cancelled_is_tried_three_times(
         searching.send_signal(signal.SIGKILL)
         _output(searching)
     shown = _until_read(claude, claude.state, _start(claude, claude.state))
-    report = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
+    report = claude.report(fx.SESSION_ID)
 
     counts = sx.expected_counts(claude.setup, claude.audit())
     expected = sx.segment_for(counts) + "\n"
@@ -307,7 +308,7 @@ def test_the_fingerprint_key_is_a_file_only_its_owner_can_read(tmp_path: Path) -
     session = fx.Session()
     session.prompt("hello")
     session.write(claude.transcript())
-    assert claude.statusline().stdout == "weir ✓ nothing exposed\n"
+    assert claude.statusline().stdout == "weir ✓ no known key seen\n"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="owner and mode bits are POSIX")
@@ -322,7 +323,7 @@ def test_a_key_file_others_can_read_is_refused(tmp_path: Path, mode: int) -> Non
     home = claude.setup.home
 
     line = claude.statusline()
-    report = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
+    report = claude.report(fx.SESSION_ID)
     audit = claude.setup.audit([claude.transcript()])
     inventory = claude.invoke(
         ["inventory", "--home", str(home), "--project", str(home / "work" / "proj"),

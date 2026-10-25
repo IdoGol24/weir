@@ -16,8 +16,8 @@ characters of one.
 
 ![Terminal recording: the status line under a fake Claude Code session counts up while it scans and settles on "weir ⚠ 2 in context · 1 sent → /weir", then /weir is typed and reports each of the two fake credentials: where it came from, the turn and tool call that moved it, where it now sits, and the advice to rotate it.](assets/statusline.svg)
 
-For example, `weir ⚠ 2 in context · 1 sent → /weir`, or `weir ✓ nothing
-exposed` when none did. It reads the session's transcript and its subagent
+For example, `weir ⚠ 2 in context · 1 sent → /weir`, or `weir ✓ no known
+key seen` when none did. It reads the session's transcript and its subagent
 transcripts; a file it cannot read makes it say `unknown`, never a false
 zero.
 
@@ -28,26 +28,30 @@ weir statusline --inventory REPORT --store STORE --key KEY --cache DIR [--inner 
 ```
 
 Claude Code runs this after each assistant message with the session's
-JSON on stdin; it reads `session_id` and `transcript_path`. It prints one
-line and always exits 0:
+JSON on stdin ([Claude Code's status line
+input](https://code.claude.com/docs/en/statusline)); it reads
+`session_id`, `transcript_path`, and the session's project folder (below)
+from `workspace.project_dir`, else `cwd`. It prints one line and always
+exits 0:
 
 | line | when |
 | --- | --- |
-| `weir ✓ nothing exposed` | the session's files are read to their end, nothing is unknown, and no value entered the context or was sent |
+| `weir ✓ no known key seen` | the session's files are read to their end, nothing is unknown, no value entered the context or was sent, and the session is in the inventory's project (below) |
+| `weir project not inventoried` | as for `✓ no known key seen`, but the session is not in the inventory's project, the inventory has no project, or the JSON names no project folder |
 | `weir ⚠ C in context · S sent → /weir` | the session's files are read to their end, and C or S is not 0 |
 | `weir ⚠ C in context · S sent · part unknown → /weir` | some of it is unknown (below), and C or S is not 0 |
 | `weir unknown` | some of it is unknown and nothing was found: the counts would be a false zero |
 | `weir scanning… P%` | not read to its end yet; `⚠ C in context · S sent · ` in front once something is found |
 | `weir partly checked → /weir` | a long record was not searched whole in three tries, each within its own time bound (below); `weir audit` or `/weir` gives the full counts |
-| `weir nothing to check` | the inventory holds no credential weir can check: there is nothing to count, so never `✓ nothing exposed` |
+| `weir nothing to check` | the inventory holds no credential weir can check: there is nothing to count, so never `✓ no known key seen` |
 | `weir no session` | stdin is not the status line JSON |
 | `weir error → /weir` | the inventory inputs cannot be used (a wrong key, say) |
 
 Only a session read to its end with nothing unknown and nothing found,
-against an inventory that holds a credential weir can check, says
-`✓ nothing exposed`; one still scanning, partly checked or unknown never
-does. The line names no credential and holds no value, so a shared
-screen gives nothing away.
+in the inventory's project, against an inventory that holds a credential
+weir can check, says `✓ no known key seen`; one still scanning, partly
+checked, unknown or outside that project never does. The line names no
+credential and holds no value, so a shared screen gives nothing away.
 
 ### Colours
 
@@ -56,16 +60,31 @@ renders:
 
 | part | colour |
 | --- | --- |
-| `✓ nothing exposed` | green (32) |
+| `✓ no known key seen` | green (32) |
 | `⚠`, and `C in context` when C is not 0 | amber (33, yellow in most terminal themes) |
 | `S sent` when S is not 0 | red (31) |
-| a count of 0, `part unknown`, `scanning… P%`, `unknown`, `partly checked → /weir`, `nothing to check`, `no session`, `error → /weir` | dim (2) |
+| a count of 0, `part unknown`, `scanning… P%`, `unknown`, `partly checked → /weir`, `project not inventoried`, `nothing to check`, `no session`, `error → /weir` | dim (2) |
 | `weir`, `·`, and `→ /weir` after the counts | the terminal's own |
 
 Every coloured part ends with a reset (0), so the status line beside it
 (below) keeps its own colours. When `NO_COLOR` is set and not empty
 ([no-color.org](https://no-color.org)), the line has the same words and
 symbols and no escape code.
+
+### The project
+
+The inventory covers one project at a time: the folder its `weir
+inventory --project` walked (`inputs.project` in its report), whose files
+it read keys from. The session is **in the inventory's project** when its
+project folder is that folder or under it, both resolved to absolute
+paths. Anywhere else the inventory does not know the keys in the project's
+files, so the line counts the inventory's keys as everywhere but is never
+green: where `✓ no known key seen` would show, it shows `project not
+inventoried`. With no project in the inventory, or no project folder in
+the JSON, the session is never in it, and a folder that is not an
+absolute path (`.`, `~/proj`, `$NAME`), or holds what no path Claude Code
+passes can (a NUL, a lone surrogate), is no project folder: Claude Code
+passes absolute ones, and weir never resolves one against its own folder.
 
 ### What is counted
 
@@ -143,8 +162,11 @@ The checkpoint is owner-only and holds credential ids, byte offsets, device
 and inode numbers, each file's format, whether a record was skipped, the
 offset of a long record being searched and the count of its tries, and
 HMAC-SHA256 values under the fingerprint key: no value, no fragment of
-one, no file name. A new inventory starts it over. Deleting the `--cache`
-directory is always safe.
+one, no file name. A new inventory starts it over. Beside the checkpoints,
+`--cache` holds the record of each session's project folder that `/weir`
+reads ([The /weir report](#the-weir-report)). Deleting the `--cache`
+directory is always safe: until the next refresh, `/weir` then says the
+folder is not known yet.
 
 ### Beside an existing status line
 
@@ -164,7 +186,7 @@ tints the segment; with `NO_COLOR` its output is printed as it is.
 ## The /weir report
 
 ```sh
-weir statusline report --inventory REPORT --store STORE --key KEY --session ID [--claude-dir DIR]
+weir statusline report --inventory REPORT --store STORE --key KEY --session ID [--cache DIR] [--claude-dir DIR]
 ```
 
 It audits the session's files in full (saved tool outputs included) and
@@ -193,9 +215,55 @@ command, a shell command run with `!`, their output or an interrupt note
 tool call that started it, from its sidecar. `--session` takes a plain session id
 (else exit 2) and finds `<Claude config dir>/projects/*/<id>.jsonl`.
 
+It judges [the project](#the-project) from the session's project folder
+the segment recorded: on each refresh with a project folder in its JSON,
+the segment records that folder in `--cache` (the report's `--cache`
+defaults to `~/.weir/statusline`, setup's default), in an owner-only file
+(mode 0600) that holds only the folder's path. Its name is the first 32
+hex characters of an HMAC-SHA256 of the session id under the fingerprint
+key, so it names neither the session nor the folder, and one session
+never finds another's. A refresh with no project folder removes the
+record. The segment and the report so judge the same
+folder: the one Claude Code was started in (`workspace.project_dir`, else
+`cwd`), never the folder the shell has moved to, and the report never says
+`✓ no known key seen` where the segment would not. When the session is
+not in the inventory's project, the report ends by saying so and how to
+switch the inventory, with the report, store and key it was given, to its
+folder:
+
+```text
+project: <folder> is not the inventoried project (<inventory's project, or none>), so keys in its files are not known
+  to switch the inventory to this folder, run from the shell Claude Code starts from:
+    weir inventory --home ~ --project <folder> --process-env --json --store <store> --key <key> > <report>
+  the earlier project's keys then stop being counted
+```
+
+The last line shows only when the inventory has a project.
+
+Before the segment's first refresh for the session, after one with no
+project folder, or with a record that cannot be read, the folder is not
+known: the report is never green, says `project: the session's project
+folder is not known yet (the status line records it on its first
+refresh)`, and gives the same command for the folder it runs in, unless
+that folder is in the inventory's project already or cannot be read (it
+was removed). The folder it runs in never
+decides green: it is the shell's current folder, not the one Claude Code
+was started in. A folder that is the home or holds it is never given as
+the project, as setup never offers it: its walk would read the whole
+home. The report then says `no switch command` instead.
+
 Setup installs the report as the `/weir` command
-(`<Claude config dir>/commands/weir.md`), whose `!` line runs it for
-`${CLAUDE_SESSION_ID}`.
+(`<Claude config dir>/commands/weir.md`), whose one `` !`…` `` line runs
+it with setup's `--cache` for `${CLAUDE_SESSION_ID}`, which Claude Code
+puts into the command's text
+([skills, "Available string substitutions"](https://code.claude.com/docs/en/slash-commands)).
+The report refuses anything but a plain session id, so no other text from
+Claude Code, and no folder name, is part of the command, and its
+`allowed-tools: Bash(<report> *)` rule matches that line. Claude Code
+puts text in for `$0` or `$ARGUMENTS` even inside quotes, so setup
+refuses (exit 2, nothing changed) when a path it would write into that
+line (the interpreter, `--claude-dir`, `--cache`, or the inventory, store
+or key) holds a `$`.
 
 ## Setup and undo
 
@@ -230,29 +298,48 @@ its default and that default file is missing. With no `--inventory`:
   missing.
 - When there is none, it is a first setup: setup takes the inventory now,
   of the standard credential locations in the home, the shell startup files
-  and the launch environment only. It walks no project directory, whatever
-  directory it runs in, so no project file is read. The environment of the
+  and the launch environment. Before it does, it names the current folder
+  and asks whether to include that project's files: only the exact line
+  `yes` includes it (as `weir inventory --project` does, its
+  `.weir/reach.yml` map included); any other answer, or none, leaves
+  project files out. The home itself, or a folder that holds it (`/`, say),
+  is never offered, as its walk would read the whole home: setup says the
+  project walk is skipped and goes on with no project. So does a current
+  folder that cannot be read (it was removed). The environment of the
   shell running setup is taken as the environment Claude Code starts with,
   so run setup from the shell you start Claude Code from. The preview lists
   the inventory as `weir inventory` lists it, by name, source and location
   only, never a value or a fragment of one, with its counts and the count
-  of unknown variables, and the files `yes` writes. It says that project
-  files were not scanned. The key is read when there is one (one others
-  can read is refused, below) and otherwise made in memory: nothing is
-  written yet.
+  of unknown variables, and the files `yes` writes. It names the project
+  folder, or says that no project folder is included, that the status line
+  then never shows `✓ no known key seen`, and the command that includes
+  one later (`weir inventory --project DIR`, into the files setup
+  writes). The key is read
+  when there is one (one others can read is refused, below) and otherwise
+  made in memory: nothing is written yet.
 
 In both cases, with `--store` and `--key` left to their defaults, the
 preview prints the command that refreshes the inventory, the
-[`weir inventory`](inventory.md) equivalent of setup's own first
-inventory. Run it from the shell you start Claude Code from:
+[`weir inventory`](inventory.md) equivalent of that inventory, with
+`--project` and its folder when it has a project and `--no-project` when
+not. Run it from the shell you start Claude Code from:
 
 ```sh
 weir inventory --home ~ --no-project --process-env --json --store ~/.weir/store.json > ~/.weir/inventory.json
 ```
 
-Replace `--no-project` by `--project DIR` to include a project's files.
-The status line picks up the new report on its next refresh, so no second
-setup is needed.
+To switch the project later, run it with `--project DIR` in place of
+`--no-project` (or of the project it names):
+
+```sh
+weir inventory --home ~ --project DIR --process-env --json --store ~/.weir/store.json > ~/.weir/inventory.json
+```
+
+The inventory holds one project at a time: the earlier project's keys
+then stop being counted, and a session in that project shows `project not
+inventoried` rather than `✓ no known key seen` ([The project](#the-project)).
+The status line picks up the new report on its next refresh, so no
+second setup is needed.
 
 **Setup** shows the exact change: the segment `statusLine` will run in
 `settings.json`, and the new `commands/weir.md`. The new `statusLine`
@@ -263,7 +350,8 @@ credential, and every other setting is kept. Undo, and setup with
 It writes only on the exact line `yes`, `--dry-run` writes nothing at all,
 and it refuses when
 the settings are not a JSON object, the status line already runs weir, a
-different `commands/weir.md` exists, or it is already set up. On a first
+different `commands/weir.md` exists, a path for `/weir` holds a `$`, or
+it is already set up. On a first
 setup it writes the inventory's files first, each owner-only (0600; a new
 `~/.weir` is created 0700, and an existing one keeps its own mode): the
 key (only when there was none, and never over one made since the preview), the store, the unknown variable names
@@ -309,6 +397,9 @@ user owns, or that others can read or write, is refused, never repaired.
 ## What it does not claim
 
 - Everything [`weir audit` does not claim](audit.md#what-the-audit-does-not-claim).
+- It knows only the keys in your inventory, as whole values: a key that
+  leaves inside a file or by its variable name is not seen, so
+  `✓ no known key seen` says no more than that.
 - It counts what the session's files hold now, and a value sent by value
   only: a tool call that names a variable (`$TOKEN`) is not counted.
 - A rewrite inside the part of a file already read that keeps its end and

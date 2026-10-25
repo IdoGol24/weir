@@ -78,9 +78,13 @@ class Paths:
         return command if inner is None else f"{command} --inner {shlex.quote(inner)}"
 
     def command_file_text(self) -> str:
-        """Claude Code runs the `!` line, with the session id put in, before
-        the model sees the prompt."""
-        report = self.command("report", "--claude-dir", _q(self.claude_dir))
+        """Claude Code runs the `!` line, with the session id put in
+        (code.claude.com/docs/en/slash-commands, "Available string
+        substitutions"), before the model sees the prompt. The report reads
+        the session's project folder from the record the status line keeps
+        in the cache, so no folder name is ever part of the command."""
+        report = self.command(
+            "report", "--claude-dir", _q(self.claude_dir), "--cache", _q(self.cache))
         return (
             "---\n"
             "description: Weir session report - which of your credentials reached this session,"
@@ -101,6 +105,25 @@ def undo_command(claude_dir: Path | None) -> str:
     """The undo of a setup given this option, as it runs from any directory."""
     given = "" if claude_dir is None else f" --claude-dir {_q(claude_dir)}"
     return "weir statusline undo" + given
+
+
+def holds_home(folder: str | Path, home: Path) -> bool:
+    """Is `folder` the home or a folder that holds it, both resolved? Its
+    walk as the project would read the whole home."""
+    real_home, here = Path(os.path.realpath(home)), Path(os.path.realpath(folder))
+    return here == real_home or here in real_home.parents
+
+
+def inventory_command(
+    project: str | None, report: str = "~/.weir/inventory.json",
+    store: str = "~/.weir/store.json", key: str | None = None,
+) -> str:
+    """The `weir inventory` that takes the inventory again into these
+    files, given as the shell reads them, with this project or none, run
+    from the shell Claude Code starts from."""
+    given = "--no-project" if project is None else f"--project {shlex.quote(project)}"
+    keyed = "" if key is None else f" --key {key}"
+    return f"weir inventory --home ~ {given} --process-env --json --store {store}{keyed} > {report}"
 
 
 def _read(path: Path) -> bytes | None:
@@ -175,6 +198,14 @@ def refuse_windows() -> None:
 
 def plan_setup(paths: Paths) -> Plan:
     refuse_windows()
+    for path in (Path(sys.executable), paths.claude_dir, paths.cache, paths.report, paths.store,
+                 paths.key):
+        if "$" in str(path.absolute()):
+            raise SetupError(
+                f"{path.absolute()}: the /weir command cannot hold a path with a $ in it, as"
+                " Claude Code puts text in for $0 or $ARGUMENTS there, even inside quotes;"
+                " nothing changed", 2,
+            )
     marker = paths.marker()
     if marker is not None:
         raise SetupError(f"already set up ({marker} exists); run weir statusline undo first")

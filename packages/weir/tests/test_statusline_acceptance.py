@@ -23,8 +23,10 @@ counting rule, and checked against where the fixture put each value.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
+import stat
 from pathlib import Path
 
 import audit_fixtures as fx
@@ -311,7 +313,8 @@ def test_setup_with_yes_adds_the_segment_beside_the_existing_command(tmp_path: P
     # The command Claude Code will now run prints the existing status line
     # and the weir segment beside it.
     shown = sx.run_shell(
-        line["command"], sx.status_json(claude.transcript(), fx.SESSION_ID), claude.env()
+        line["command"], sx.status_json(claude.transcript(), fx.SESSION_ID, claude.project()),
+        claude.env(),
     )
     expected = sx.expected_counts(claude.setup, claude.audit())
     assert expected[:2] == _planned(claude, plan)
@@ -329,7 +332,8 @@ def test_setup_with_no_status_line_adds_the_segment_alone(tmp_path: Path) -> Non
 
     assert run.exit_code == 0, run.stderr
     command = json.loads(claude.settings.read_text())["statusLine"]["command"]
-    shown = sx.run_shell(command, sx.status_json(claude.transcript(), fx.SESSION_ID), claude.env())
+    payload = sx.status_json(claude.transcript(), fx.SESSION_ID, claude.project())
+    shown = sx.run_shell(command, payload, claude.env())
     expected = sx.expected_counts(claude.setup, claude.audit())
     assert shown.stdout == sx.segment_for(expected, colour=True) + "\n"
 
@@ -503,9 +507,7 @@ def test_the_weir_report_lists_source_turn_tool_call_location_and_advice(
     labels = _labels(claude)
     transcript = str(claude.transcript())
 
-    run = claude.invoke(
-        ["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID]
-    )
+    run = claude.report(fx.SESSION_ID)
 
     assert run.exit_code == 0, run.stderr
     cfx.assert_value_free(run.stdout + run.stderr, claude.setup.values.values())
@@ -542,23 +544,125 @@ def test_the_weir_report_lists_source_turn_tool_call_location_and_advice(
     assert "rotate" in _field(gh, "advice")
 
 
-@sx.posix_shell
-def test_the_installed_weir_command_runs_the_report(tmp_path: Path) -> None:
+def _weir_line(claude: sx.Claude, session_id: str = fx.SESSION_ID) -> str:
+    """The installed /weir `!` line as Claude Code runs it: its command
+    with the session id put in, as Claude Code puts in ${CLAUDE_SESSION_ID}."""
+    text = claude.command_file.read_text()
+    (command,) = re.findall(r"^!`(.*)`$", text, flags=re.MULTILINE)
+    # Claude Code puts text in for `$0`, `$ARGUMENTS` and `${CLAUDE_*}`, even
+    # inside quotes: the session id must be the only text it puts in.
+    assert command.count("$") == 1 and "${CLAUDE_SESSION_ID}" in command
+    return command.replace("${CLAUDE_SESSION_ID}", session_id)
+
+
+def _installed(tmp_path: Path) -> sx.Claude:
     claude = sx.build(tmp_path)
     _report_session(claude)
     assert _setup(claude, answer="yes\n").exit_code == 0
+    return claude
 
-    text = claude.command_file.read_text()
-    (command,) = re.findall(r"^!`(.+)`$", text, flags=re.MULTILINE)
-    assert "${CLAUDE_SESSION_ID}" in command
-    shown = sx.run_shell(
-        command.replace("${CLAUDE_SESSION_ID}", fx.SESSION_ID), "", claude.env()
-    )
 
-    direct = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
-    assert shown.exit_code == 0, shown.stderr
+def _record(claude: sx.Claude, folder: str) -> Path:
+    """The file the status line recorded `folder` in: the one in its cache
+    holding exactly that path."""
+    (record,) = (p for p in claude.state.iterdir() if p.read_bytes() == os.fsencode(folder))
+    return record
+
+
+@sx.posix_shell
+def test_the_installed_weir_command_runs_the_report(tmp_path: Path) -> None:
+    claude = _installed(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    before = sx.run_shell(_weir_line(claude), "", claude.env(), claude.project())
+    claude.statusline(folder=claude.project())
+    shown = sx.run_shell(_weir_line(claude), "", claude.env(), str(elsewhere))
+
+    direct = claude.report(fx.SESSION_ID)
+    assert before.exit_code == shown.exit_code == 0, before.stderr + shown.stderr
     assert shown.stdout == direct.stdout
-    cfx.assert_value_free(text, claude.setup.values.values())
+    assert "project:" not in shown.stdout
+    assert before.lines[0] == sx.segment_for(
+        sx.expected_counts(claude.setup, claude.audit()), pointer=False, inside=False)
+    assert "project folder is not known yet" in before.stdout
+    cfx.assert_value_free(claude.command_file.read_text(), claude.setup.values.values())
+
+
+_ODD_NAMES = [
+    "it's $(echo x) \"y\" with spaces", "a'b", "w$(touch PWNED)", "w`touch PWNED`",
+    "new\nline", "#hash",
+]
+
+
+@sx.posix_shell
+@pytest.mark.parametrize(
+    "name", [*_ODD_NAMES, "//"],
+    ids=["owner's", "single quote", "dollar paren", "backticks", "newline", "leading hash",
+         "double slash"],
+)
+@pytest.mark.parametrize("where", ["in the project", "elsewhere"])
+def test_the_weir_command_never_lets_the_shell_read_the_folder_name(
+    tmp_path: Path, name: str, where: str,
+) -> None:
+    """Whatever the folder is called, the status line records it as it is
+    and /weir, run from another folder, answers for that very folder: no
+    command in its name runs."""
+    claude = _installed(tmp_path)
+    parent = Path(claude.project()) if where == "in the project" else tmp_path / "elsewhere"
+    folder = f"{parent}//sub" if name == "//" else str(parent / name)
+    Path(folder).mkdir(parents=True)
+    shell = tmp_path / "shell"
+    shell.mkdir()
+
+    line = claude.statusline(folder=folder)
+    run = sx.run_shell(_weir_line(claude), "", claude.env(), str(shell))
+
+    inside = where == "in the project"
+    assert run.exit_code == 0, run.stderr
+    assert not list(tmp_path.rglob("PWNED"))
+    expected = sx.expected_counts(claude.setup, claude.audit())
+    assert line.stdout == sx.segment_for(expected, inside=inside) + "\n"
+    assert run.lines[0] == sx.segment_for(expected, pointer=False, inside=inside)
+    named = f"project: {folder} is not the inventoried project ({claude.project()}),"
+    assert (named in run.stdout) is not inside
+    assert ("project:" in run.stdout) is not inside
+    assert "not known yet" not in run.stdout
+
+
+@sx.posix_shell
+def test_the_folder_record_is_private_and_names_neither_session_nor_folder(
+    tmp_path: Path,
+) -> None:
+    claude = sx.build(tmp_path)
+    folder = str(tmp_path / "it's a folder")
+
+    claude.statusline(folder=folder)
+
+    record = _record(claude, folder)
+    assert stat.S_IMODE(record.stat().st_mode) == 0o600
+    for part in (fx.SESSION_ID, *fx.SESSION_ID.split("-"), Path(folder).name, "folder"):
+        assert part not in record.stem, part
+
+
+@sx.posix_shell
+def test_a_session_never_finds_another_sessions_folder(tmp_path: Path) -> None:
+    claude = _installed(tmp_path)
+    other = "11111111-2222-4333-8444-555555555555"
+    session = fx.Session(session_id=other)
+    session.prompt("hello")
+    session.write(claude.transcript(other))
+    folder = claude.project()
+
+    claude.statusline(fx.SESSION_ID, folder=folder)
+    mine = sx.run_shell(_weir_line(claude), "", claude.env(), folder)
+    theirs = sx.run_shell(_weir_line(claude, other), "", claude.env(), folder)
+
+    assert mine.exit_code == theirs.exit_code == 0, mine.stderr + theirs.stderr
+    assert "not known yet" not in mine.stdout
+    assert "project: the session's project folder is not known yet" in theirs.stdout
+    assert theirs.lines[0] == sx.segment_for(
+        sx.expected_counts(claude.setup, claude.audit(other)), pointer=False, inside=False)
 
 
 @pytest.mark.parametrize("session_id", ["../escape", "", "a/b"])
@@ -571,7 +675,7 @@ def test_the_report_refuses_a_session_id_that_is_not_one(tmp_path: Path, session
     session.prompt("hello")
     session.write(claude.transcript().parent / f"{session_id}.jsonl")
 
-    run = claude.invoke(["statusline", "report", *claude.inputs(), "--session", session_id])
+    run = claude.report(session_id)
 
     assert run.exit_code == 2
     assert run.stdout == ""

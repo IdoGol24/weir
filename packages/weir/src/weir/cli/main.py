@@ -18,10 +18,11 @@ import functools
 import importlib.resources
 import json as _json
 import os
+import shlex
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 
 import click
 import msgspec
@@ -75,7 +76,13 @@ from weir.statusline import setup as statusline_setup
 from weir.statusline import valid_session_id
 from weir.statusline.compose import run_beside
 from weir.statusline.report import report_lines as session_report_lines
-from weir.statusline.segment import colour_wanted, note, read_session
+from weir.statusline.segment import (
+    colour_wanted,
+    note,
+    read_session,
+    recorded_folder,
+    session_folder,
+)
 from weir.taint import build_tainted_graph
 
 _BOM = b"\xef\xbb\xbf"
@@ -578,14 +585,15 @@ def statusline_group(
             session_id, transcript = session.get("session_id"), session.get("transcript_path")
         except (ValueError, AttributeError):
             return note("no session", colour=colour)
+        folder = _session_folder(session)
         if not (isinstance(session_id, str) and valid_session_id(session_id)
                 and isinstance(transcript, str) and transcript):
             return note("no session", colour=colour)
         try:
             inputs = load_inputs(report_path, store_path, key_path)
             return read_session(
-                inputs, cache, transcript, session_id, _claude_config_dirs(), budget_ms / 1000,
-                colour=colour,
+                inputs, cache, transcript, session_id, folder, _claude_config_dirs(),
+                budget_ms / 1000, colour=colour,
             )
         except Exception:  # a failing status line shows nothing: a word instead
             return note("error", colour=colour, pointer=True)
@@ -594,13 +602,29 @@ def statusline_group(
     click.echo(run_beside(inner, stdin, segment, colour=colour), color=True)
 
 
+def _session_folder(session: dict[str, object]) -> str | None:
+    """The session's project folder from the status line JSON
+    (code.claude.com/docs/en/statusline): `workspace.project_dir`, else
+    `cwd`; None when neither is there."""
+    workspace = session.get("workspace")
+    given = cast("dict[str, object]", workspace) if isinstance(workspace, dict) else {}
+    folder = given.get("project_dir")
+    folder = folder if isinstance(folder, str) and folder else session.get("cwd")
+    return session_folder(folder)
+
+
 @statusline_group.command("report")
 @_inventory_options(required=True)
 @click.option("--session", "session_id", required=True, help="The Claude Code session id.")
+@click.option(
+    "--cache", type=click.Path(file_okay=False, path_type=Path), default=None,
+    help="The status line's checkpoints directory, where it records the session's project"
+    " folder [default: HOME/.weir/statusline].",
+)
 @_CLAUDE_DIR
 def statusline_report_command(
     report_path: Path, store_path: Path, key_path: Path, session_id: str,
-    claude_dir: Path | None,
+    cache: Path | None, claude_dir: Path | None,
 ) -> None:
     """(experimental) The /weir report: per credential that reached the
     session, its source, the turn and tool call, where it now sits, and
@@ -608,7 +632,8 @@ def statusline_report_command(
     if not valid_session_id(session_id):
         click.echo("error: --session: not a session id", err=True)
         raise SystemExit(2)
-    projects = _paths(claude_dir, None).claude_dir / "projects"
+    paths = _paths(claude_dir, cache)
+    projects = paths.claude_dir / "projects"
     found = sorted(projects.glob(f"*/{session_id}.jsonl"))
     if len(found) != 1:
         many = "more than one transcript" if found else "no transcript"
@@ -616,16 +641,32 @@ def statusline_report_command(
         raise SystemExit(2)
     try:
         inputs = load_inputs(report_path, store_path, key_path)
-        lines = session_report_lines(inputs, str(found[0]), session_id, _claude_config_dirs())
+        try:
+            here: str | None = os.getcwd()
+        except OSError:  # the folder it runs in was removed
+            here = None
+        lines = session_report_lines(
+            inputs, str(found[0]), session_id, recorded_folder(inputs, paths.cache, session_id),
+            here,
+            [report_path, store_path, key_path], _claude_config_dirs(),
+        )
     except AuditInputError as exc:
         _fail(exc)
     for line in lines:
         click.echo(line)
 
 
+def _yes() -> bool:
+    """One answer line is an exact `yes`. Read from the binary stdin, one
+    object for the whole run: a text stream from click is new on each call
+    and would take the next answer into its own buffer."""
+    line = click.get_binary_stream("stdin").readline()
+    return statusline_setup.confirmed(line.decode("utf-8", "replace"))
+
+
 def _apply_if_yes(apply: Callable[[], None], done: str) -> None:
     click.echo("Type yes to apply: ", nl=False)
-    if not statusline_setup.confirmed(click.get_text_stream("stdin").readline()):
+    if not _yes():
         click.echo("\nnot applied: nothing written")
         return
     try:
@@ -652,18 +693,27 @@ def _require(paths: statusline_setup.Paths, needed: list[Path]) -> None:
             )
 
 
-_REFRESH = [
-    "  to refresh it, run from the shell Claude Code starts from:",
-    "    weir inventory --home ~ --no-project --process-env --json"
-    " --store ~/.weir/store.json > ~/.weir/inventory.json",
-    "  replace --no-project by --project DIR to include a project's files; the status line"
-    " picks up the new report on its next refresh, so no second setup is needed",
-    "",
-]
+def _refresh(project: str | None) -> list[str]:
+    """The command that takes the inventory again, with its project or none."""
+    return [
+        "  to refresh it, run from the shell Claude Code starts from:",
+        f"    {statusline_setup.inventory_command(project)}",
+        "  to switch the project, replace --no-project by --project DIR"
+        if project is None else
+        "  to switch the project, replace --project and its folder by --project DIR,"
+        " or by --no-project for none",
+        *([] if project is None else [
+            "  the inventory holds one project at a time: the earlier project's keys then"
+            " stop being counted"]),
+        "  the status line picks up the new report on its next refresh, so no second setup"
+        " is needed",
+        "",
+    ]
 
 
-def _existing_inventory(paths: statusline_setup.Paths) -> list[str]:
-    """The inventory at the default path, used as it is: never taken again."""
+def _existing_inventory(paths: statusline_setup.Paths) -> tuple[list[str], str | None]:
+    """The inventory at the default path, used as it is: never taken again.
+    Returns the lines to show and its project."""
     try:
         report = msgspec.json.decode(paths.report.read_bytes(), type=Inventory)
     except OSError as exc:
@@ -672,13 +722,47 @@ def _existing_inventory(paths: statusline_setup.Paths) -> list[str]:
         _setup_error(f"{paths.report}: not a weir inventory --json report; nothing changed")
     _require(paths, [paths.store, paths.key])
     count = plural(report.counts.credentials, "credential")
-    return [f"inventory: {paths.report} (existing, {count})", ""]
+    return [f"inventory: {paths.report} (existing, {count})", ""], report.inputs.project
 
 
-def _first_inventory(paths: statusline_setup.Paths) -> tuple[list[str], Callable[[], None]]:
-    """No inventory at the default path: take one now of the home and the
-    launch environment, walking no project directory, and write its files
-    only on yes. Returns the lines to show and what yes writes."""
+def _offer_project(home: Path, later: str) -> tuple[Path | None, list[str]]:
+    """The current folder as the project, only on an exact yes. Never the
+    home or a folder that holds it: its walk would read the whole home.
+    Returns the project and the preview's lines for it; with none, what
+    that means and `later`, the command that includes one."""
+
+    def none(why: str) -> tuple[None, list[str]]:
+        return None, [
+            f"  No project folder is included: {why}",
+            "  with no project, the status line never shows ✓ no known key seen; to include"
+            " one later, run from the shell Claude Code starts from:",
+            f"    {later}",
+        ]
+
+    try:
+        folder = Path.cwd()
+    except OSError:  # the folder setup runs in was removed
+        return none("the current folder cannot be read, so the project walk is skipped")
+    if statusline_setup.holds_home(folder, home):
+        return none(f"{folder} is or holds your home, and walking it would read the whole"
+                    " home, so the project walk is skipped")
+    click.echo("Include the files of the current folder in the inventory, as your project?")
+    click.echo(f"  {folder}")
+    click.echo("Type yes to include: ", nl=False)
+    included = _yes()
+    click.echo()
+    if included:
+        return folder, [f"  Project folder: {folder}"]
+    return none("project files are not scanned")
+
+
+def _first_inventory(
+    paths: statusline_setup.Paths,
+) -> tuple[list[str], Callable[[], None], str | None]:
+    """No inventory at the default path: take one now of the home, the
+    launch environment and the current folder when the person includes it,
+    and write its files only on yes. Returns the lines to show, what yes
+    writes and the project."""
     home = Path.home()
     try:
         key = read_key(paths.key)
@@ -686,8 +770,11 @@ def _first_inventory(paths: statusline_setup.Paths) -> tuple[list[str], Callable
         _setup_error(f"{exc}; nothing changed")
     created = key is None
     key = new_key() if key is None else key
+    files = (shlex.quote(str(p.absolute())) for p in (paths.report, paths.store, paths.key))
+    project, project_lines = _offer_project(
+        home, statusline_setup.inventory_command("DIR", *files))
     inputs = InventoryInputs(
-        home=home, project=None, key_path=paths.key, process_env=dict(os.environ),
+        home=home, project=project, key_path=paths.key, process_env=dict(os.environ),
     )
     try:
         result = take_inventory(inputs, key=key)
@@ -700,7 +787,7 @@ def _first_inventory(paths: statusline_setup.Paths) -> tuple[list[str], Callable
         " credential locations in your home, your shell startup files and the launch"
         " environment",
         "  this shell's environment is taken as the environment Claude Code starts with",
-        "  project files are not scanned",
+        *project_lines,
         "",
         *("  " + line if line else "" for line in listing),
         "",
@@ -737,7 +824,7 @@ def _first_inventory(paths: statusline_setup.Paths) -> tuple[list[str], Callable
                 " Run weir statusline setup again once it can be written", 2,
             ) from exc
 
-    return lines, write
+    return lines, write, result.report.inputs.project
 
 
 @statusline_group.command("setup")
@@ -753,7 +840,8 @@ def statusline_setup_command(
     Claude Code's user settings and install the /weir command. Shows the
     exact change, then writes only after you type yes. With no
     --inventory, uses HOME/.weir/inventory.json, taking that inventory
-    first when there is none."""
+    first when there is none, with the current folder as its project only
+    when you type yes to that offer."""
     try:
         statusline_setup.refuse_windows()
         weir_dir = Path.home() / ".weir"
@@ -767,17 +855,18 @@ def statusline_setup_command(
         _fail(exc)
     shown: list[str] = []
     first: Callable[[], None] | None = None
+    project: str | None = None
     if report_path is None:
         if paths.report.exists():
-            shown = _existing_inventory(paths)
+            shown, project = _existing_inventory(paths)
         else:
-            shown, first = _first_inventory(paths)
+            shown, first, project = _first_inventory(paths)
     else:
         _require(paths, [paths.report, *(
             p for p, given in ((paths.store, store_path), (paths.key, key_path)) if given is None
         )])
     if report_path is None and store_path is None and key_path is None:
-        shown += _REFRESH
+        shown += _refresh(project)
     click.echo("weir statusline setup will make this change:")
     for line in [*shown, *statusline_setup.describe(paths, plan, undo=False)]:
         click.echo(line)

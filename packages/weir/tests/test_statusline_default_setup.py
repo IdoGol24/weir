@@ -8,9 +8,10 @@ nothing but HOME, CLAUDE_CONFIG_DIR and the fake credentials, so no real
 environment, home or setting is read.
 
 1. Two commands are enough: setup with no flags inventories the home and
-   this shell's environment into ~/.weir, walking no project directory
-   whatever directory it runs in, and the status line it installs counts
-   what a real `weir audit` of the session counts.
+   this shell's environment into ~/.weir, and the status line it installs
+   counts what a real `weir audit` of the session counts. It walks the
+   current folder as the project only on an exact `yes` to its offer, and
+   never offers the home or a folder that holds it.
 2. The preview lists the inventory as `weir inventory` lists it, names
    only: never a value or a 6-character run of one.
 3. Nothing is written before the exact `yes`: not the key, the store, the
@@ -21,12 +22,15 @@ environment, home or setting is read.
 6. A key file others can read is refused, as `weir inventory` refuses it.
 7. Setup then undo leaves the settings byte-identical and ~/.weir in place.
 8. An interrupted setup leaves a state that a re-run finishes.
+10. The current folder is offered before a first inventory: the preview
+    and the refresh command show the choice.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shlex
 import stat
 import subprocess
 import sys
@@ -46,6 +50,8 @@ pytestmark = sx.posix_shell
 
 SESSION_ID = fx.SESSION_ID
 ACME, GH, AWS_SECRET = "ACME_API_TOKEN", "GH_TOKEN", "aws_secret_access_key"
+OFFER = "Type yes to include: "
+NO_FOLDER = "  No project folder is included: project files are not scanned"
 
 
 class Home:
@@ -173,6 +179,37 @@ def _setup(home: Home, monkeypatch: pytest.MonkeyPatch, *flags: str, answer: str
     return home.invoke(monkeypatch, ["statusline", "setup", *flags], stdin=answer, cwd=cwd)
 
 
+def _yes(home: Home) -> str:
+    """Yes to setup run from the fake project: before a first inventory,
+    no to the folder offer first."""
+    return "yes\n" if home.report.exists() else "no\nyes\n"
+
+
+def _refresh(run: sx.Run) -> list[str]:
+    """The refresh commands the preview prints."""
+    lines = run.lines
+    return [lines[n + 1].strip() for n, line in enumerate(lines[:-1])
+            if line == "  to refresh it, run from the shell Claude Code starts from:"]
+
+
+def _without_project(home: Home, why: str) -> list[str]:
+    """The preview's lines for no project folder: why, that the status line
+    is then never green, and the command, built for the files setup
+    writes, that includes a project later."""
+    files = (shlex.quote(str(p)) for p in (home.report, home.store, home.key))
+    return [
+        f"  No project folder is included: {why}",
+        "  with no project, the status line never shows ✓ no known key seen; to include one"
+        " later, run from the shell Claude Code starts from:",
+        f"    {statusline_setup.inventory_command('DIR', *files)}",
+    ]
+
+
+def _follows(run: sx.Run, lines: list[str]) -> None:
+    start = run.lines.index(lines[0])
+    assert run.lines[start : start + len(lines)] == lines, run.stdout
+
+
 def _no_project(report: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
     """A report of the empty fake project as setup takes it: no project."""
     return {**report, "inputs": {**report["inputs"], "project": None}}
@@ -200,7 +237,7 @@ def test_setup_with_no_flags_inventories_the_home_and_installs_a_working_status_
     expected_report = home.inventory(monkeypatch, tmp_path / "independent", as_json=True).stdout
     home.session()
 
-    run = home.process(["statusline", "setup"], stdin="yes\n")
+    run = home.process(["statusline", "setup"], stdin="no\nyes\n")
 
     assert run.exit_code == 0, run.stderr
     # The inventory is the one `weir inventory --home ~ --process-env` takes
@@ -215,7 +252,8 @@ def test_setup_with_no_flags_inventories_the_home_and_installs_a_working_status_
     command = json.loads(home.settings.read_text())["statusLine"]["command"]
     for path in (home.report, home.store, home.key):
         assert str(path) in command
-    shown = sx.run_shell(command, sx.status_json(home.transcript(), SESSION_ID), home.env)
+    payload = sx.status_json(home.transcript(), SESSION_ID, str(home.project))
+    shown = sx.run_shell(command, payload, home.env)
     expected = _expected_counts(home, home.audit(monkeypatch))
     assert expected[:2] == (2, 1)
     assert shown.stdout == sx.segment_for(expected, colour=True) + "\n"
@@ -250,7 +288,7 @@ def test_the_preview_lists_the_inventory_by_name_and_never_a_value(
                    for s in shown), credential["name"]
     assert "this shell's environment" in run.stdout
     assert "Claude Code starts with" in run.stdout
-    assert "  project files are not scanned" in shown
+    assert NO_FOLDER in shown
     cfx.assert_value_free(run.stdout + run.stderr, home.values.values())
 
 
@@ -298,6 +336,7 @@ def test_a_first_setup_run_from_the_home_walks_no_project_directory(
         run = _setup(home, monkeypatch, answer="yes\n", cwd=home.home)
 
     assert run.exit_code == 0, run.stderr
+    assert OFFER not in run.stdout
     assert cache not in read and transcript not in read
     report = json.loads(home.report.read_text())
     assert report["inputs"]["project"] is None
@@ -307,13 +346,16 @@ def test_a_first_setup_run_from_the_home_walks_no_project_directory(
     cfx.assert_value_free(run.stdout + run.stderr, [*home.values.values(), *planted.values()])
 
 
+@pytest.mark.parametrize("folder", ["no", "yes"])
 def test_the_printed_refresh_command_reproduces_the_first_inventory(
-    tmp_path: Path,
+    tmp_path: Path, folder: str,
 ) -> None:
     """Setup, then the refresh command its preview prints, each run by a
     shell with the fake home and the same fake environment: the second
-    report and store are the first, byte for byte."""
+    report and store are the first, byte for byte, with the project folder
+    or without it as chosen."""
     home = Home(tmp_path)
+    cfx.write(home.project / ".env", f"PROJECT_API_TOKEN={cfx.fake_value('default-setup-proj')}\n")
     env = {"PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin", **home.env}
 
     def shell(command: str, stdin: str = "") -> sx.Run:
@@ -323,10 +365,10 @@ def test_the_printed_refresh_command_reproduces_the_first_inventory(
         )
         return sx.Run(proc.returncode, proc.stdout.decode(), proc.stderr.decode())
 
-    setup = shell("weir statusline setup", "yes\n")
+    setup = shell("weir statusline setup", f"{folder}\nyes\n")
     assert setup.exit_code == 0, setup.stderr
     first = {p: p.read_bytes() for p in (home.report, home.store, home.key)}
-    printed = [line.strip() for line in setup.lines if line.strip().startswith("weir inventory --")]
+    printed = _refresh(setup)
     assert len(printed) == 1, setup.stdout
     home.report.unlink()
     home.store.unlink()
@@ -335,7 +377,57 @@ def test_the_printed_refresh_command_reproduces_the_first_inventory(
 
     assert refresh.exit_code == 0, refresh.stderr
     assert {p: p.read_bytes() for p in first} == first
-    assert json.loads(first[home.report])["inputs"]["project"] is None
+    report = json.loads(first[home.report])
+    assert report["inputs"]["project"] == (str(home.project) if folder == "yes" else None)
+    names = {c["name"] for c in report["credentials"]}
+    assert ("PROJECT_API_TOKEN" in names) is (folder == "yes")
+
+
+@sx.posix_shell
+def test_switching_the_project_as_the_preview_says_never_leaves_the_earlier_one_green(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup with the current folder as the project, then the refresh
+    command switched to another project as the preview says: the earlier
+    project's key stops being counted, and a session there is never green."""
+    home = Home(tmp_path)
+    token = cfx.fake_value("default-setup-proj")
+    cfx.write(home.project / ".env", f"PROJECT_API_TOKEN={token}\n")
+    other = home.home / "work" / "other"
+    other.mkdir()
+    env = {"PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin", **home.env}
+
+    def shell(command: str, stdin: str = "") -> sx.Run:
+        return sx.run_shell(command, stdin, env, str(home.project))
+
+    setup = shell("weir statusline setup", "yes\nyes\n")
+    assert setup.exit_code == 0, setup.stderr
+    assert "to switch the project" in setup.stdout
+    assert "the earlier project's keys then stop being counted" in setup.stdout
+    session = fx.Session(session_id=SESSION_ID)
+    session.prompt("show me the env file")
+    session.tool_use("Bash", {"command": "cat .env"}, "t1")
+    session.tool_result("t1", f"PROJECT_API_TOKEN={token}\n")
+    session.write(home.transcript())
+    status = json.loads(home.settings.read_text())["statusLine"]["command"]
+
+    def line(folder: Path) -> str:
+        return shell(status, sx.status_json(home.transcript(), SESSION_ID, str(folder))).stdout
+
+    before = _expected_counts(home, home.audit(monkeypatch))
+    assert before[:2] == (1, 0)
+    assert line(home.project) == sx.segment_for(before, colour=True) + "\n"
+    (printed,) = _refresh(setup)
+    given = f"--project {shlex.quote(str(home.project))}"
+    assert given in printed
+    switched = shell(printed.replace(given, f"--project {shlex.quote(str(other))}"))
+    assert switched.exit_code == 0, switched.stderr
+    assert json.loads(home.report.read_text())["inputs"]["project"] == str(other)
+
+    after = _expected_counts(home, home.audit(monkeypatch))
+    assert after == (0, 0, False)
+    assert line(home.project) == sx.segment_for(after, colour=True, inside=False) + "\n"
+    assert line(other) == sx.segment_for(after, colour=True) + "\n"
 
 
 @pytest.mark.parametrize("flag", ["--project", "--gitleaks", "--trufflehog"])
@@ -364,9 +456,11 @@ def test_no_project_is_refused_with_a_project_or_a_scanner_report(
 
 @pytest.mark.parametrize(
     "flags, answer",
-    [(["--dry-run"], None), ([], "no\n"), ([], ""), ([], "y\n"), ([], "YES\n"),
-     ([], " yes\n"), ([], "yes please\n")],
-    ids=["dry run", "no", "nothing", "y", "YES", "space yes", "yes please"],
+    [(["--dry-run"], None), (["--dry-run"], "yes\nyes\n"), ([], "no\nno\n"), ([], ""),
+     ([], "no\n"), ([], "yes\n"), ([], "yes\nno\n"), ([], "no\ny\n"), ([], "no\nYES\n"),
+     ([], "no\n yes\n"), ([], "no\nyes please\n")],
+    ids=["dry run", "dry run, folder", "no", "nothing", "folder no only", "folder yes only",
+         "folder, no", "y", "YES", "space yes", "yes please"],
 )
 def test_nothing_is_written_before_the_exact_yes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list[str], answer: str | None,
@@ -386,11 +480,14 @@ def test_nothing_is_written_before_the_exact_yes(
 # --- 4. an existing inventory ------------------------------------------------------
 
 
+@pytest.mark.parametrize("no_project", [False, True], ids=["project", "no project"])
 def test_an_inventory_at_the_default_path_is_used_and_not_taken_again(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_project: bool,
 ) -> None:
+    """No folder is offered, and the refresh command is the one a first
+    setup prints for that inventory's project choice."""
     home = Home(tmp_path)
-    first = home.inventory(monkeypatch, home.weir, as_json=True).stdout
+    first = home.inventory(monkeypatch, home.weir, as_json=True, no_project=no_project).stdout
     cfx.write(home.report, first)
     home.report.chmod(0o600)
     kept = {p: p.read_bytes() for p in (home.report, home.store, home.key)}
@@ -402,10 +499,11 @@ def test_an_inventory_at_the_default_path_is_used_and_not_taken_again(
 
     assert run.exit_code == 0, run.stderr
     assert f"inventory: {home.report} (existing, {count} credentials)" in run.lines
-    first_setup = _setup(Home(tmp_path / "other"), monkeypatch, "--dry-run")
-    assert [line for line in run.lines if line.startswith("    weir inventory --")] == [
-        line for line in first_setup.lines if line.startswith("    weir inventory --")
-    ] != []
+    assert OFFER not in run.stdout
+    first_setup = _setup(Home(tmp_path / "other"), monkeypatch, "--dry-run",
+                         answer="no\n" if no_project else "yes\n", cwd=home.project)
+    assert _refresh(run) == _refresh(first_setup) != []
+    assert "--project DIR" in run.stdout
     assert "LATE_API_TOKEN" not in run.stdout
     assert {p: p.read_bytes() for p in kept} == kept
     command = json.loads(home.settings.read_text())["statusLine"]["command"]
@@ -421,7 +519,7 @@ def test_an_inventory_without_its_store_is_refused(
     home.store.unlink()
     before = home.snapshot()
 
-    run = _setup(home, monkeypatch, answer="yes\n")
+    run = _setup(home, monkeypatch, answer=_yes(home))
 
     assert run.exit_code == 2
     assert str(home.store) in run.stderr
@@ -480,7 +578,7 @@ def test_store_and_key_flags_place_a_first_inventory(
     out = tmp_path / "keys"
     flags = ["--store", str(out / "store.json"), "--key", str(out / "fingerprint.key")]
 
-    run = _setup(home, monkeypatch, *flags, answer="yes\n")
+    run = _setup(home, monkeypatch, *flags, answer=_yes(home))
 
     assert run.exit_code == 0, run.stderr
     assert home.report.is_file()
@@ -504,7 +602,7 @@ def test_a_key_file_others_can_read_is_refused(
     home.key.chmod(mode)
     before = home.snapshot()
 
-    runs = [_setup(home, monkeypatch, "--dry-run"), _setup(home, monkeypatch, answer="yes\n")]
+    runs = [_setup(home, monkeypatch, "--dry-run"), _setup(home, monkeypatch, answer=_yes(home))]
 
     for run in runs:
         assert run.exit_code == 2
@@ -521,13 +619,14 @@ def test_an_existing_private_key_is_used_and_kept(
     home.key.write_text("ab" * 32 + "\n")
     home.key.chmod(0o600)
 
-    run = _setup(home, monkeypatch, answer="yes\n")
+    run = _setup(home, monkeypatch, answer=_yes(home))
 
     assert run.exit_code == 0, run.stderr
     assert home.key.read_text() == "ab" * 32 + "\n"
     home.session()
     command = json.loads(home.settings.read_text())["statusLine"]["command"]
-    shown = sx.run_shell(command, sx.status_json(home.transcript(), SESSION_ID), home.env)
+    payload = sx.status_json(home.transcript(), SESSION_ID, str(home.project))
+    shown = sx.run_shell(command, payload, home.env)
     assert shown.stdout == sx.segment_for(
         _expected_counts(home, home.audit(monkeypatch)), colour=True) + "\n"
 
@@ -545,7 +644,7 @@ def test_setup_then_undo_leaves_the_settings_as_they_were_and_weir_in_place(
     if original is not None:
         home.settings.write_bytes(original)
 
-    setup = _setup(home, monkeypatch, answer="yes\n")
+    setup = _setup(home, monkeypatch, answer=_yes(home))
     undo = home.invoke(monkeypatch, ["statusline", "undo"], stdin="yes\n")
 
     assert setup.exit_code == 0, setup.stderr
@@ -588,18 +687,19 @@ def test_an_interrupted_first_setup_is_finished_by_a_rerun(
         m.setattr(cli, "write_new_key", counted(cli.write_new_key))  # pyright: ignore[reportAttributeAccessIssue]
         m.setattr(statusline_setup, "write_atomic", counted(statusline_setup.write_atomic))
         with pytest.raises(Stopped):
-            _setup(home, monkeypatch, answer="yes\n")
+            _setup(home, monkeypatch, answer=_yes(home))
 
-    rerun = _setup(home, monkeypatch, answer="yes\n")
+    rerun = _setup(home, monkeypatch, answer=_yes(home))
     if rerun.exit_code == 1:  # the backup was written: undo, then set up again
         assert "already set up" in rerun.stderr
         assert home.invoke(monkeypatch, ["statusline", "undo"], stdin="yes\n").exit_code == 0
         assert home.settings.read_bytes() == b'{"theme": "dark"}'
-        rerun = _setup(home, monkeypatch, answer="yes\n")
+        rerun = _setup(home, monkeypatch, answer=_yes(home))
 
     assert rerun.exit_code == 0, rerun.stderr
     command = json.loads(home.settings.read_text())["statusLine"]["command"]
-    shown = sx.run_shell(command, sx.status_json(home.transcript(), SESSION_ID), home.env)
+    payload = sx.status_json(home.transcript(), SESSION_ID, str(home.project))
+    shown = sx.run_shell(command, payload, home.env)
     assert shown.stdout == sx.segment_for(
         _expected_counts(home, home.audit(monkeypatch)), colour=True) + "\n"
 
@@ -629,7 +729,7 @@ def test_setup_refuses_plainly_when_the_command_directory_is_read_only(
     commands = home.config / "commands"
     commands.mkdir(mode=0o500)
     try:
-        run = _setup(home, monkeypatch, answer="yes\n")
+        run = _setup(home, monkeypatch, answer=_yes(home))
     finally:
         commands.chmod(0o700)
 
@@ -638,7 +738,7 @@ def test_setup_refuses_plainly_when_the_command_directory_is_read_only(
     assert home.settings.read_bytes() == original
     assert home.invoke(monkeypatch, ["statusline", "undo"], stdin="yes\n").exit_code == 0
     assert home.settings.read_bytes() == original
-    assert _setup(home, monkeypatch, answer="yes\n").exit_code == 0
+    assert _setup(home, monkeypatch, answer=_yes(home)).exit_code == 0
 
 
 @needs_modes
@@ -650,14 +750,14 @@ def test_setup_refuses_plainly_when_the_claude_directory_is_read_only(
     home.settings.write_bytes(original)
     home.config.chmod(0o500)
     try:
-        run = _setup(home, monkeypatch, answer="yes\n")
+        run = _setup(home, monkeypatch, answer=_yes(home))
     finally:
         home.config.chmod(0o700)
 
     _refused_plainly(run, Path(str(home.settings) + ".weir-backup"), "weir statusline setup again")
     assert home.settings.read_bytes() == original
     # The inventory was written before the settings: a re-run uses it.
-    rerun = _setup(home, monkeypatch, answer="yes\n")
+    rerun = _setup(home, monkeypatch, answer=_yes(home))
     assert rerun.exit_code == 0, rerun.stderr
     assert f"inventory: {home.report} (existing," in rerun.stdout
 
@@ -669,7 +769,7 @@ def test_undo_refuses_plainly_when_the_claude_directory_is_read_only(
     home = Home(tmp_path)
     original = b'{"theme": "dark"}'
     home.settings.write_bytes(original)
-    assert _setup(home, monkeypatch, answer="yes\n").exit_code == 0
+    assert _setup(home, monkeypatch, answer=_yes(home)).exit_code == 0
     set_up = home.settings.read_bytes()
     home.config.chmod(0o500)
     try:
@@ -696,7 +796,7 @@ def test_a_first_inventory_write_that_fails_names_the_real_file(
     home.settings.write_bytes(b'{"theme": "dark"}')
     home.weir.chmod(0o500)
     try:
-        run = _setup(home, monkeypatch, answer="yes\n")
+        run = _setup(home, monkeypatch, answer=_yes(home))
     finally:
         home.weir.chmod(0o700)
 
@@ -747,7 +847,167 @@ def test_with_no_project_the_listing_says_the_map_was_not_looked_for(
     assert "  map         none (.weir/reach.yml not found)" in walked.lines
 
 
+# --- 10. the project folder --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "folder", ["yes", "no", "", "y", "YES", " yes", "yes please"],
+    ids=["yes", "no", "empty", "y", "YES", "space yes", "yes please"],
+)
+def test_the_current_folder_is_included_only_on_the_exact_yes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, folder: str,
+) -> None:
+    """The offer names the folder before the inventory is taken; the
+    preview, the report and the refresh command follow the answer."""
+    home = Home(tmp_path)
+    cfx.write(home.project / ".env", f"PROJECT_API_TOKEN={cfx.fake_value('default-setup-proj')}\n")
+    included = folder == "yes"
+
+    run = _setup(home, monkeypatch, answer=f"{folder}\nyes\n")
+
+    assert run.exit_code == 0, run.stderr
+    offer = run.stdout.split("weir statusline setup will make this change:")[0]
+    assert str(home.project) in offer and OFFER in offer
+    assert (f"  Project folder: {home.project}" in run.lines) is included
+    assert (NO_FOLDER in run.lines) is not included
+    report = json.loads(home.report.read_text())
+    assert report["inputs"]["project"] == (str(home.project) if included else None)
+    assert ("PROJECT_API_TOKEN" in {c["name"] for c in report["credentials"]}) is included
+    flag = f"--project {shlex.quote(str(home.project))}" if included else "--no-project"
+    assert [f" {flag} " in line for line in _refresh(run)] == [True]
+    cfx.assert_value_free(run.stdout + run.stderr, home.values.values())
+
+
+def test_at_the_end_of_input_the_folder_is_left_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = Home(tmp_path)
+
+    run = _setup(home, monkeypatch, "--dry-run")
+
+    assert run.exit_code == 0, run.stderr
+    assert OFFER in run.stdout
+    _follows(run, _without_project(home, "project files are not scanned"))
+    assert [" --no-project " in line for line in _refresh(run)] == [True]
+
+
+@pytest.mark.parametrize("where", ["home", "above home"])
+def test_the_home_or_a_folder_that_holds_it_is_never_offered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str,
+) -> None:
+    home = Home(tmp_path)
+    cwd = home.home if where == "home" else home.home.parent
+
+    run = _setup(home, monkeypatch, answer="yes\n", cwd=cwd)
+
+    assert run.exit_code == 0, run.stderr
+    assert OFFER not in run.stdout
+    skipped = [line for line in run.lines if line.startswith("  No project folder is included: ")]
+    assert len(skipped) == 1, run.stdout
+    _follows(run, _without_project(home, f"{cwd} is or holds your home, and walking it would"
+                                         " read the whole home, so the project walk is skipped"))
+    assert json.loads(home.report.read_text())["inputs"]["project"] is None
+    assert [" --no-project " in line for line in _refresh(run)] == [True]
+
+
+def test_a_first_setup_from_a_deleted_folder_includes_no_project_and_never_crashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = Home(tmp_path)
+    gone = tmp_path / "gone"
+    gone.mkdir()
+
+    with monkeypatch.context() as m:
+        for name in list(os.environ):
+            m.delenv(name)
+        for name, value in home.env.items():
+            m.setenv(name, value)
+        m.chdir(gone)
+        gone.rmdir()
+        result = CliRunner().invoke(main, ["statusline", "setup", "--dry-run"], input="yes\n")
+    run = sx.Run(result.exit_code, result.stdout, result.stderr)
+
+    assert run.exit_code == 0, run.stderr
+    assert OFFER not in run.stdout
+    _follows(run, _without_project(
+        home, "the current folder cannot be read, so the project walk is skipped"))
+    assert [" --no-project " in line for line in _refresh(run)] == [True]
+
+
+@pytest.mark.parametrize("flags", [[], ["--store", "custom/store.json"]], ids=["defaults", "store"])
+def test_the_command_to_include_a_project_later_makes_the_status_line_green_there(
+    tmp_path: Path, flags: list[str],
+) -> None:
+    """Setup with no project, then the command its preview gives, with DIR
+    the project: it rewrites the inventory and store the installed status
+    line reads, which is then green there."""
+    home = Home(tmp_path)
+    flags = [str(tmp_path / f) if f.endswith(".json") else f for f in flags]
+    env = {"PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin", **home.env}
+    setup = sx.run_shell(shlex.join(["weir", "statusline", "setup", *flags]), "no\nyes\n", env,
+                         str(home.project))
+    assert setup.exit_code == 0, setup.stderr
+    (later,) = (line.strip() for line in setup.lines if " --project DIR " in line)
+    status = json.loads(home.settings.read_text())["statusLine"]["command"]
+    session = fx.Session(session_id=SESSION_ID)
+    session.prompt("hello")
+    session.write(home.transcript())
+    payload = sx.status_json(home.transcript(), SESSION_ID, str(home.project))
+    before = sx.run_shell(status, payload, {**env, **sx.NO_COLOR})
+    words = shlex.split(status)
+    read = {name: Path(words[words.index(name) + 1]) for name in ("--inventory", "--store")}
+    stored = read["--store"].stat().st_ino
+
+    run = sx.run_shell(later.replace(" DIR ", f" {shlex.quote(str(home.project))} "), "", env,
+                       str(home.project))
+
+    assert run.exit_code == 0, run.stderr
+    assert json.loads(read["--inventory"].read_text())["inputs"]["project"] == str(home.project)
+    assert read["--store"].stat().st_ino != stored
+    assert before.stdout == "weir project not inventoried\n"
+    after = sx.run_shell(status, payload, {**env, **sx.NO_COLOR})
+    assert after.stdout == "weir ✓ no known key seen\n"
+
+
+@pytest.mark.parametrize("folder", ["no", "yes"])
+def test_the_refresh_hint_names_an_earlier_project_only_when_there_is_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, folder: str,
+) -> None:
+    home = Home(tmp_path)
+
+    run = _setup(home, monkeypatch, "--dry-run", answer=f"{folder}\n")
+
+    assert run.exit_code == 0, run.stderr
+    assert ("earlier project" in run.stdout) is (folder == "yes")
+
+
 # --- Windows ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("where", ["--cache", "--claude-dir", "--store", "interpreter"])
+def test_a_path_with_a_dollar_sign_is_refused_before_anything_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str,
+) -> None:
+    """Every path setup writes into the /weir line: Claude Code would put
+    text in for `$0` or `$ARGUMENTS` there, even inside quotes."""
+    home = Home(tmp_path)
+    home.settings.write_bytes(b'{"theme": "dark"}')
+    odd = tmp_path / "a$0b$ARGUMENTS"
+    before = home.snapshot()
+    flags = [] if where == "interpreter" else [
+        where, str(odd / "store.json" if where == "--store" else odd)]
+    if where == "interpreter":
+        monkeypatch.setattr(sys, "executable", str(odd / "python"))
+
+    runs = [_setup(home, monkeypatch, *flags, "--dry-run"),
+            _setup(home, monkeypatch, *flags, answer="no\nyes\n")]
+
+    monkeypatch.undo()
+    for run in runs:
+        assert run.exit_code == 2, run.stdout
+        assert str(odd) in run.stderr and "nothing changed" in run.stderr
+        assert "weir inventory (names only" not in run.stdout
+    assert home.snapshot() == before
 
 
 def test_setup_with_no_flags_refuses_on_windows_before_any_inventory(
@@ -757,7 +1017,7 @@ def test_setup_with_no_flags_refuses_on_windows_before_any_inventory(
     before = home.snapshot()
     monkeypatch.setattr(os, "name", "nt")  # Windows, as setup sees it
 
-    runs = [_setup(home, monkeypatch, "--dry-run"), _setup(home, monkeypatch, answer="yes\n")]
+    runs = [_setup(home, monkeypatch, "--dry-run"), _setup(home, monkeypatch, answer=_yes(home))]
 
     monkeypatch.undo()
     for run in runs:

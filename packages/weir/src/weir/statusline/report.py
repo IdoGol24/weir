@@ -4,14 +4,16 @@ A full `weir audit` of one Claude Code session's files, read per
 credential: where the credential comes from, the turn and tool call that
 put it in the context or sent it out, where it now sits, and what to do.
 Every string it prints came out of the audit report, which already applied
-the audit's printing rule, or is a number, a fixed word or a session line
-number. It never prints a value.
+the audit's printing rule, or is a number, a fixed word, a session line
+number, or a folder or inventory path it was given or the inventory
+names. It never prints a value.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shlex
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
@@ -33,11 +35,13 @@ from weir.canary.walk import Json
 from weir.statusline.segment import (
     NOTHING_TO_CHECK,
     counted,
+    inventoried,
     note,
     segment_text,
     tally,
     value_groups,
 )
+from weir.statusline.setup import holds_home, inventory_command
 
 _SOURCES = {
     "environment": "the environment Claude Code starts with",
@@ -253,11 +257,53 @@ def _block(
     yield f"  advice: {_advice(members, state, bool(entered or sent), value_files)}"
 
 
-def report_lines(
-    inputs: Inputs, transcript: str, session_id: str, claude_config_dirs: Sequence[str]
+def _not_inventoried(
+    inputs: Inputs, folder: str | None, here: str | None, files: Sequence[Path]
 ) -> list[str]:
-    """The report for one session. Raises `AuditInputError` on a file the
-    audit refuses (a FIFO in the session's directory, say)."""
+    """Why a session outside the inventory's project, or whose project
+    folder the status line has not recorded, is never green, and how to
+    switch the inventory (`files`: its report, store and key) to its
+    folder, else to `here`, the current folder (None: it cannot be read).
+    None when `here` is in the project already, and never a folder that
+    holds the home: its walk would read the whole home."""
+    project = "none" if inputs.project is None else inputs.project
+    target = here if folder is None else folder
+    lines = [
+        "",
+        f"project: {folder} is not the inventoried project ({project}),"
+        " so keys in its files are not known"
+        if folder is not None else
+        "project: the session's project folder is not known yet (the status line records it"
+        f" on its first refresh), so it is not known to be the inventoried project ({project})",
+    ]
+    if target is None:
+        return [*lines, "  no switch command: the current folder cannot be read"]
+    if folder is None and inventoried(inputs.project, here):
+        return lines
+    if holds_home(target, Path.home()):
+        return [*lines, f"  no switch command: {target} is or holds your home, and walking it"
+                        " as the project would read the whole home"]
+    report, store, key = (shlex.quote(str(path.absolute())) for path in files)
+    return [
+        *lines,
+        "  to switch the inventory to this folder, run from the shell Claude Code starts from:"
+        if folder is not None else
+        f"  to switch the inventory to the current folder, {target}, run from the shell"
+        " Claude Code starts from:",
+        f"    {inventory_command(target, report, store, key)}",
+        *([] if inputs.project is None
+          else ["  the earlier project's keys then stop being counted"]),
+    ]
+
+
+def report_lines(
+    inputs: Inputs, transcript: str, session_id: str, folder: str | None, here: str | None,
+    files: Sequence[Path], claude_config_dirs: Sequence[str],
+) -> list[str]:
+    """The report for one session, whose project folder is `folder` (None:
+    unknown), run in the folder `here` (None: it cannot be read) with the
+    inventory `files` (its report, store and key). Raises `AuditInputError` on a file the audit
+    refuses (a FIFO in the session's directory, say)."""
     paths = [transcript]
     if os.path.isdir(os.path.join(os.path.dirname(transcript), session_id)):
         paths.append(os.path.join(os.path.dirname(transcript), session_id))
@@ -267,8 +313,9 @@ def report_lines(
     found = tally(report)
     groups = value_groups(inputs)
     context, sent = counted(found, inputs)
+    inside = inventoried(inputs.project, folder)
     lines = [
-        segment_text(context, sent, unknown=found.unknown, pointer=False)
+        segment_text(context, sent, unknown=found.unknown, inventoried=inside, pointer=False)
         if inputs.by_fingerprint else note(NOTHING_TO_CHECK, colour=False)
     ]
     shown = next((f.file for f in report.files if f.file == transcript), "[withheld]")
@@ -302,4 +349,6 @@ def report_lines(
     for unknown in report.unknown:
         subject = "" if unknown.subject is None else f" {unknown.subject}"
         lines.append(f"unknown: {unknown.reason.value}{subject}")
+    if not inside:
+        lines.extend(_not_inventoried(inputs, folder, here, files))
     return lines

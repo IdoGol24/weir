@@ -12,7 +12,8 @@ else is read again from the start, and so is a file whose first steps
 were recognised as no format once a later one is. A long record not
 searched whole in LONG_RECORD_TRIES tries, each within its own time bound,
 is skipped, and the session is then partly checked. The checkpoint never
-holds a value, a fragment of one or a file name.
+holds a value, a fragment of one or a file name. Beside it the segment
+records the session's project folder, which /weir reads.
 """
 
 from __future__ import annotations
@@ -115,6 +116,33 @@ RESET = "\x1b[0m"
 POINTER = "→ /weir"
 # The words for an inventory that holds no credential weir can check.
 NOTHING_TO_CHECK = "nothing to check"
+# The words where a session outside the inventory's project would be green.
+NOT_INVENTORIED = "project not inventoried"
+
+
+def session_folder(given: object) -> str | None:
+    """A project folder Claude Code passed: absolute, as it passes one.
+    Anything else (`.`, `~/proj`, `$NAME`, or text no path Claude Code
+    passes holds: a NUL, a lone surrogate, which no UTF-8 text holds) is
+    unknown, never resolved against this process's own folder. The UTF-8
+    test is the same everywhere, unlike `os.fsencode`, which lets lone
+    surrogates through on Windows and escaped bytes on POSIX."""
+    if not (isinstance(given, str) and os.path.isabs(given) and "\0" not in given):
+        return None
+    try:
+        given.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    return given
+
+
+def inventoried(project: str | None, folder: str | None) -> bool:
+    """Is the session's project folder the inventory's project or under
+    it, both resolved? Never with no project or no folder."""
+    if project is None or not folder:
+        return False
+    root, here = Path(os.path.realpath(project)), Path(os.path.realpath(folder))
+    return here == root or root in here.parents
 
 
 def colour_wanted(environ: Mapping[str, str]) -> bool:
@@ -132,10 +160,11 @@ def note(words: str, *, colour: bool, pointer: bool = False) -> str:
 
 
 def segment_text(
-    context: int, sent: int, *, unknown: bool, partial: bool = False,
+    context: int, sent: int, *, unknown: bool, inventoried: bool, partial: bool = False,
     scanning: int | None = None, colour: bool = False, pointer: bool = True,
 ) -> str:
-    """The segment's line; without `pointer`, the /weir report's first line."""
+    """The segment's line; without `pointer`, the /weir report's first line.
+    Outside the inventory's project (not `inventoried`), never green."""
     if partial:
         return note("partly checked", colour=colour, pointer=pointer)
     counts = (
@@ -147,10 +176,13 @@ def segment_text(
         progress = _paint(f"{SCANNING} {scanning}%", DIM, colour)
         return f"weir {counts} · {progress}" if context or sent else f"weir {progress}"
     if not (context or sent):
-        # Nothing exposed only when every file was read and nothing is unknown.
-        return note("unknown", colour=colour) if unknown else (
-            "weir " + _paint("✓ nothing exposed", GREEN, colour)
-        )
+        # No known key seen only when every file was read and nothing is
+        # unknown, in the inventory's project.
+        if unknown:
+            return note("unknown", colour=colour)
+        if not inventoried:
+            return note(NOT_INVENTORIED, colour=colour)
+        return "weir " + _paint("✓ no known key seen", GREEN, colour)
     line = f"weir {counts}"
     if unknown:
         line += " · " + _paint("part unknown", DIM, colour)
@@ -223,6 +255,43 @@ class _Cache(msgspec.Struct, frozen=True):
     files: dict[str, _Entry]
 
 
+def _mac(key: bytes, label: str, data: bytes) -> str:
+    message = b"weir-statusline " + label.encode() + b"\0" + data
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+def _folder_record(inputs: Inputs, cache: Path, session_id: str) -> Path:
+    """Where the status line records a session's project folder: a name
+    keyed by the session id alone, holding neither it nor the folder."""
+    return cache / f"{_mac(inputs.key, 'folder', session_id.encode())[:32]}.folder"
+
+
+def record_folder(inputs: Inputs, cache: Path, session_id: str, folder: str | None) -> None:
+    """Record the session's project folder for /weir, unless it is already.
+    With none, remove the record: /weir is never green where the segment
+    is not."""
+    path = _folder_record(inputs, cache, session_id)
+    if folder is None:
+        path.unlink(missing_ok=True)
+        return
+    data = os.fsencode(folder)
+    try:
+        if path.read_bytes() == data:
+            return
+    except OSError:
+        pass  # none yet
+    write_private(path, data)
+
+
+def recorded_folder(inputs: Inputs, cache: Path, session_id: str) -> str | None:
+    """The project folder the status line recorded for the session; None
+    before its first refresh, or when the record cannot be read."""
+    try:
+        return session_folder(os.fsdecode(_folder_record(inputs, cache, session_id).read_bytes()))
+    except OSError:
+        return None
+
+
 class Reader:
     """Reads a session's files in steps until a deadline, keeping progress
     in one checkpoint file per session."""
@@ -242,8 +311,7 @@ class Reader:
         self._entries: dict[str, _Entry] = {}
 
     def _mac(self, label: str, data: bytes) -> str:
-        message = b"weir-statusline " + label.encode() + b"\0" + data
-        return hmac.new(self._inputs.key, message, hashlib.sha256).hexdigest()
+        return _mac(self._inputs.key, label, data)
 
     def load(self) -> None:
         now = time.time()
@@ -471,10 +539,12 @@ def _image_bytes(line: bytes) -> int:
 
 
 def read_session(
-    inputs: Inputs, cache: Path, transcript: str, session_id: str,
+    inputs: Inputs, cache: Path, transcript: str, session_id: str, folder: str | None,
     claude_config_dirs: Sequence[str], budget_s: float, *, colour: bool = False,
 ) -> str:
-    """The segment for one session."""
+    """The segment for one session, whose project folder is `folder`,
+    recorded for /weir (None: unknown, and the record removed)."""
+    record_folder(inputs, cache, session_id, folder)
     if not inputs.by_fingerprint:
         return note(NOTHING_TO_CHECK, colour=colour)  # nothing to count: never a clean
     deadline = time.monotonic() + budget_s
@@ -485,6 +555,6 @@ def read_session(
     context, sent = counted(found, inputs)
     scanning = done * 100 // total if done < total else None
     return segment_text(
-        context, sent, unknown=found.unknown, partial=found.partial, scanning=scanning,
-        colour=colour,
+        context, sent, unknown=found.unknown, inventoried=inventoried(inputs.project, folder),
+        partial=found.partial, scanning=scanning, colour=colour,
     )
