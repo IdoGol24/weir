@@ -1,3 +1,4 @@
+import importlib.metadata
 import json
 from pathlib import Path
 
@@ -8,6 +9,12 @@ from weir.cli.main import main
 _FIXTURES_DIR = Path(__file__).parents[3] / "fixtures"
 _PLANTED_IBAN = "DE89370400440532013000"
 _OTLP_FIXTURE = Path(__file__).parents[3] / "fixtures" / "otlp" / "injection-exfil.full.json"
+
+
+def test_version_prints_the_installed_weir_scan_version() -> None:
+    result = CliRunner().invoke(main, ["--version"])
+    assert result.exit_code == 0
+    assert result.output == f"weir {importlib.metadata.version('weir-scan')}\n"
 
 
 def test_gauge_on_full_capture_trace_exits_zero() -> None:

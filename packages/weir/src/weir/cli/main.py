@@ -105,6 +105,7 @@ def _severity_at_or_above(severity: str, threshold: str) -> bool:
 
 
 @click.group()
+@click.version_option(package_name="weir-scan", prog_name="weir", message="%(prog)s %(version)s")
 def main() -> None:
     # `weir scan` renders wire-controlled span names and attribute keys, so
     # its stdout is not ASCII-safe. A cp437 console would otherwise abort the

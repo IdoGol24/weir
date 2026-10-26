@@ -1,135 +1,152 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0] - 2026-10-26
 
 ### Added
-- **weir-scan: `weir audit` checks your own credentials against your own
-  agent sessions (experimental).** Given the `weir-inventory/1` report, the
-  fingerprint store and the key from one `weir inventory --store` run, it
-  reads Claude Code session files (main transcripts, subagent transcripts
-  and their sidecars, and saved tool outputs, which are stored text whatever
-  their lines hold; the base64 data of an image is not searched, and a PDF
-  whose text is in compressed streams makes the result unknown),
-  `CLAUDE.md` and auto-memory files, and OTLP/JSON telemetry (GenAI
-  attributes and Claude Code's own log events) offline, and reports per
-  credential, by inventory name and never by value, whether it entered the
-  agent's context or was sent out in a tool call, with counts and the file,
-  line, field, tool and argument of each sighting. Strings are matched by
-  keyed fingerprint in every form the canary judge matches (raw, JSON, double
-  JSON, URL, base64, base64url, hex). An unrecognised file format, a line
-  that is not a record, a file not scanned or a sighting whose place it
-  cannot classify makes the result `unknown`, exit 3, never a false clean,
-  and so does an empty input: a missing or empty directory, or paths whose
-  files were all skipped.
-  When `CLAUDE_CONFIG_DIR` is set, the projects folder of the Claude config
-  directory it names counts like `~/.claude/projects`.
-  Exit codes: 0 clean, 1 exposed, 2 unusable input, 3 unknown. Report
-  schema `weir-audit/1` ([docs/audit.md](docs/audit.md)).
-- **weir-scan: `weir statusline`, a Claude Code status-line segment and a
-  `/weir` report (experimental).** The segment counts, for the current
-  session, the inventoried credentials that entered the agent's context
-  and those sent in a tool call (`weir ⚠ 2 in context · 1 sent → /weir`,
-  the first count amber and the second red, a zero dim), says
+- **`weir statusline`: a Claude Code status-line segment and a `/weir`
+  report (experimental).** The segment counts, for the current session,
+  the inventoried credentials that entered the agent's context and those
+  sent out in a tool call (`weir ⚠ 2 in context · 1 sent → /weir`, the
+  first count amber, the second red, a zero dim). It says
   `weir ✓ no known key seen` in green only for a session read to its end
-  with nothing found in the inventory's project (it knows only the
-  inventory's keys, as whole values), shows a dim `weir project not
-  inventoried` in its place when the session's project folder
-  (`workspace.project_dir`, else `cwd`) is not that project or under it,
-  or the inventory has none (a folder that is not an absolute path, or
-  holds a NUL, counts as none), and `/weir`, which reads the same folder
-  from the record the segment keeps per session in its `--cache` (no
-  folder name is ever part of the command; a refresh with no folder
-  removes the record; setup refuses a path for `/weir` that holds a `$`),
-  then gives the command that switches its
-  inventory to this folder
-  (never the home or a folder that holds it),
-  shows a dim `nothing to check` rather than the check when the
-  inventory holds no credential weir can check, shows a dim `unknown`
-  rather than a false zero, and reads a long session in checkpointed
-  steps (a dim `scanning… P%`). Every
-  coloured part resets after itself, so the status line beside it keeps
-  its own colours, a colour that line leaves on is reset before the
-  segment, and `NO_COLOR` gives the same words with no colour
-  codes. A long record has 5 seconds of
-  its own; one not searched whole in three tries in a row, each cancelled
-  or out of time, makes it `partly checked`, never a count: `weir audit`
-  or `/weir` gives the full one.
-  `/weir` lists each one with its source, turn, tool call, where it now
-  sits and advice. `setup` shows the change, applies it on an exact `yes`
-  beside the existing status line, and `undo` puts it back
-  ([docs/statusline.md](docs/statusline.md)).
-- **weir-scan: `weir statusline setup` needs no flags.** `--inventory`,
-  `--store` and `--key` default to `~/.weir/inventory.json`,
-  `~/.weir/store.json` and `~/.weir/fingerprint.key`; each flag still
-  overrides its default, and with `--inventory` given setup behaves as
-  before, but refuses (exit 2) when the `--inventory` file is missing,
-  or when `--store` or `--key` is left to a default file that is missing. With no inventory at the default path,
-  setup takes one of the standard credential locations in the home, the
-  shell startup files and the launch environment, with the shell it runs
-  in taken as the environment Claude Code starts with, and shows it by
-  name, source and location only (never a value) before the `yes`. Before
-  taking it, setup names the current folder and offers to include its
-  files as the project; only an exact `yes` includes it, and the preview
-  names the project folder, or says none is included, that the status
-  line then never shows `✓ no known key seen`, and the command that
-  includes one later. The home, or a folder that holds it, is never
-  offered: its walk would read the whole home. Nor is a current folder
-  that cannot be read. Nothing is written before the exact `yes`, `--dry-run` writes nothing, and on `yes`
-  it writes the key (only when there is none: a key file others can read
-  is refused, never repaired), the store, the unknown variable names and
-  the report, all owner-only, then the settings. An inventory already at
-  the default path is used as it is and named in the preview. With the
-  default store and key, the preview prints the command that refreshes
-  the inventory, run from the shell Claude Code starts from:
+  with nothing found, inside the inventory's project: it knows only the
+  inventory's keys, so it claims no more than that. The session's project
+  folder is Claude Code's `workspace.project_dir`, else `cwd`; when it is
+  not the inventory's project or under it, when the inventory has no
+  project, or when the folder is not a usable absolute path, the line
+  shows a dim `weir project not inventoried` in place of the green.
+  Otherwise it says so plainly, in dim text: `nothing to check` when the
+  inventory holds no credential weir can check, `unknown` rather than a
+  false zero, and `scanning… P%` while a long session is read in
+  checkpointed steps. A long record gets 5 seconds
+  of its own; one not searched whole in three tries in a row makes the
+  session `partly checked`, never a count, and `weir audit` or `/weir`
+  gives the full answer. Every coloured part resets after itself, so the
+  status line beside it keeps its own colours, and `NO_COLOR` gives the
+  same words with no colour codes. `/weir` lists each credential with its
+  source, turn, tool call, where it now sits and what to do. It judges the
+  same folder the status line saw: the segment records each session's
+  project folder in an owner-only file in its cache, and `/weir` reads it
+  by session id, so no folder name is ever part of the command. Until the
+  status line has recorded a folder, `/weir` is never green. Outside the
+  inventory's project it says so and gives the command that switches the
+  inventory to that folder, never to the home or a folder that holds it.
+  Neither ever shows a value ([docs/statusline.md](docs/statusline.md)).
+- **Status-line setup in two commands.** `weir statusline setup` needs no
+  flags: `--inventory`, `--store` and `--key` default to
+  `~/.weir/inventory.json`, `~/.weir/store.json` and
+  `~/.weir/fingerprint.key`, and each flag still overrides its default.
+  With no inventory at the default path, setup takes one of the standard
+  credential locations in the home, the shell startup files and the
+  launch environment (the shell it runs in is taken as the environment
+  Claude Code starts with). Before it does, setup names the current
+  folder and offers to include its files as the project; only an exact
+  `yes` includes it. The home, or a folder that holds it, is never
+  offered, since its walk would read the whole home, and neither is a
+  folder that cannot be read. Without a project the preview says the
+  status line then never shows green and gives the command that includes
+  one later. The preview lists each credential found by name, source and
+  location only, never a value. An inventory already at the default path
+  is used as it is and named in the preview. Nothing is written before an
+  exact `yes`, and `--dry-run` writes nothing. On `yes` it writes the key
+  (only when there is none), the store, the unknown variable names and
+  the report, all readable by the owner only, then adds the segment
+  beside the existing status line. With the default store and key, the
+  preview prints the command that refreshes the inventory:
   `weir inventory --home ~ --no-project --process-env --json --store
   ~/.weir/store.json > ~/.weir/inventory.json`, with `--project DIR` in
-  place of `--no-project` when the inventory has a project. It holds one
-  project at a time: the same command with another `--project DIR`
-  switches the project, and any earlier project's keys then stop being
-  counted. The status line picks up the new report on its next refresh,
-  so no second setup is needed.
-  `undo` leaves `~/.weir` in place.
-- **weir-scan: `weir statusline setup` and `undo` refuse plainly when they
-  cannot write.** A read-only Claude config directory or `commands/`, or
-  a full disk, gave a Python traceback; it is now exit 2 with a message
-  naming the file and how to finish (run setup again, or `weir statusline
-  undo`). `settings.json` is never left half written.
-- **weir-scan: `weir inventory --no-project`.** It walks no project
-  directory and reads no map; the report's `inputs.project` is null, as in
-  a `weir statusline setup` first inventory with no project folder. It is
-  refused (exit 2) with `--project`, `--gitleaks` or `--trufflehog`.
-  Without it, `weir inventory` behaves as before.
-- **weir-scan: a fingerprint key file others can read is refused.** This
-  applies to `weir inventory`, `weir audit` and `weir statusline` alike: a
-  key file another user owns, or that others can read or write, is exit 2.
-  `chmod 600` a key file made by hand.
-- **weir-scan: the inventory store carries a key check.**
-  `weir-inventory-store/1` gains `key_check`, an HMAC of a fixed message
-  under the fingerprint key, so a reader can tell the store's key from
-  another one. `weir audit` refuses a store without it: run
-  `weir inventory --store` again.
+  place of `--no-project` when the inventory has a project. The inventory
+  holds one project at a time: the same command with another
+  `--project DIR` switches it, and the earlier project's keys then stop
+  being counted. The status line picks up the new report on its next
+  refresh. Setup refuses a path for the `/weir` command that holds a `$`,
+  which Claude Code would substitute. With `--inventory` given,
+  setup refuses (exit 2) when that file is missing, or when `--store` or
+  `--key` is left to a default file that is missing. `weir statusline
+  undo` puts the settings back and leaves `~/.weir` in place.
+- **`weir audit` checks your own credentials against your own agent
+  sessions (experimental).** Given the report, the fingerprint store and
+  the key from one `weir inventory --store` run, it reads Claude Code
+  session files (main and subagent transcripts, their sidecars and saved
+  tool outputs), `CLAUDE.md` and auto-memory files, and OTLP/JSON
+  telemetry offline. For each credential, by inventory name and never by
+  value, it reports whether it entered the agent's context or was sent
+  out in a tool call, with counts and the file, line, field, tool and
+  argument of each sighting. Values are matched by keyed fingerprint in
+  every form the canary judge matches (raw, JSON, double JSON, URL,
+  base64, base64url, hex); the base64 data of an image is not searched.
+  An unrecognised file format, a line that is not a record, a file not
+  scanned, a sighting it cannot place, a PDF whose text is compressed, or
+  an empty input (a missing or empty directory, or paths whose files were
+  all skipped) makes the result `unknown`, never a false clean. When
+  `CLAUDE_CONFIG_DIR` is set, the `projects` folder of that directory
+  counts like `~/.claude/projects`. Exit codes: 0 clean, 1 exposed, 2
+  unusable input, 3 unknown. Report schema `weir-audit/1`
+  ([docs/audit.md](docs/audit.md)).
+- **`weir inventory --no-project`.** It walks no project directory and
+  reads no map; the report's `inputs.project` is null, as in a first
+  status-line setup with no project folder. It cannot be
+  combined with `--project`, `--gitleaks` or `--trufflehog` (exit 2).
+- **The inventory store carries a key check.** `weir-inventory-store/1`
+  gains `key_check`, an HMAC of a fixed message under the fingerprint
+  key, so a reader can tell whether a store was made with its key.
+  `weir audit` refuses a store without it: run `weir inventory --store`
+  again.
 - **A GitHub Action: `uses: IdoGol24/weir@<ref>`.** One step in a pull
   request job installs weir-scan and weir-run at exact versions (by
-  default the versions at the action's ref, wheels only), runs
+  default the versions recorded at the action's ref, wheels only), runs
   `weir-run run --config` (`canary.toml` by default, `require-isolation`
-  optional) and posts the verdict as one PR comment, updated in place on a
-  re-run, with the job's own `GITHUB_TOKEN` and `pull-requests: write`
-  only. The comment and the step summary show the result and the report's
-  own lines, never a value. The job passes on clean (0) and fails on leak
-  (1), incomplete (3) and error (2, or an exit code the report's result
-  line does not confirm). A comment that cannot be posted, as on a pull
-  request from a fork, is a warning; the verdict stands. On GitHub-hosted
-  Linux runners it allows unprivileged user namespaces so the flows run
-  isolated. Of the action's own steps only the one that posts the comment
-  is given the token, after the flows have run; with `python-version` set,
-  actions/setup-python also receives it through its own `token` input
-  default and exits before the check step, so no process holds the token
-  while the flows run. The comment names the pull request's head commit;
-  on a `pull_request` event GitHub checks out the merge of that head into
-  the base branch, so the tree judged is that merge commit. At a ref
-  between releases, where the recorded weir-run needs a newer weir-scan
-  than the one recorded, it stops with an error instead of installing
-  older code. Its README is `action/README.md`.
+  optional) and posts the verdict as one PR comment, updated in place on
+  a re-run. The comment and the step summary show the result and the
+  report's own lines, never a value. The job passes on clean (0) and
+  fails on leak (1), incomplete (3) and error (2, or an exit code the
+  report's result line does not confirm). A comment that cannot be
+  posted, as on a pull request from a fork, is a warning and the verdict
+  stands. On GitHub-hosted Linux runners it allows unprivileged user
+  namespaces so the flows run isolated. It uses the job's own
+  `GITHUB_TOKEN` with `pull-requests: write` only, and of its own steps
+  only the one that posts the comment, after the flows have run, is given
+  the token. The comment names the pull request's head commit; on a
+  `pull_request` event the tree judged is GitHub's merge of that head
+  into the base branch. At a ref between releases, where the recorded
+  weir-run needs a newer weir-scan than the one recorded, it stops with
+  an error instead of installing older code
+  ([action/README.md](action/README.md)).
+
+- **`weir --version`** prints the installed version, as `weir 0.7.0`.
+
+### Changed
+- **A fingerprint key file others can read is refused.** `weir
+  inventory`, `weir audit` and `weir statusline` all refuse (exit 2) a
+  key file another user owns or that others can read or write. Run
+  `chmod 600` on a key file made by hand.
+- **`weir statusline setup` and `undo` refuse plainly when they cannot
+  write.** A read-only Claude config directory or `commands/` folder, or
+  a full disk, is exit 2 with a message naming the file and how to finish
+  (run setup again, or `weir statusline undo`), and `settings.json` is
+  never left half written.
+- **A shorter README.** It leads with the sample and the two ways to use
+  Weir: testing your agent with planted fake keys, and watching your own
+  Claude Code sessions. The detail it no longer carries moved to
+  [docs/canary.md](docs/canary.md), a new [docs/scan.md](docs/scan.md),
+  [docs/audit.md](docs/audit.md), [docs/statusline.md](docs/statusline.md)
+  and [action/README.md](action/README.md).
+
+### Corpus
+- The release commit regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.6.0 to
+  0.7.0. That diff is version-only; no flow fact, node count or finding
+  moved.
+
+## [weir-run 0.2.1] - 2026-10-26
+
+Released beside weir-scan 0.7.0, still requiring `weir-scan>=0.6.0`. No
+code change.
+
+### Changed
+- **The README names the GitHub Action.** Its limits no longer say there
+  is no GitHub Action; they point to the action that runs a config and
+  posts the verdict on the pull request.
 
 ## [0.6.0] - 2026-10-22
 
