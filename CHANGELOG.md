@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.7.1] - 2026-10-26
+
+### Fixed
+- **`/weir` no longer prints part of a key in a folder name.** When the
+  report says the session is not in the inventoried project, or that it
+  cannot tell, it named the inventory's project folder and the session's
+  or current folder as they were. A folder name that holds a key, 6 or
+  more characters of a key the report found, or a segment shaped like a
+  key now shows as `[withheld]`, as every other place the report names
+  does, and the command to switch the inventory to that folder says to
+  run it in the folder, with `--project .`. When the inventory's report,
+  store or key sits under such a folder (a home whose name holds part of
+  a key, say), the switch command is not shown: the report gives the
+  whole command to run in the folder, with a placeholder for each
+  inventory path, to fill in with the inventory's own. A folder or file
+  name with a character the report does not print, such as a line break,
+  is handled the same way, so it no longer adds a line of its own to the
+  switch command.
+
+### Corpus
+- The release commit regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.7.0 to
+  0.7.1. That diff is version-only; no flow fact, node count or finding
+  moved.
+
 ## [0.7.0] - 2026-10-26
 
 ### Added

@@ -627,7 +627,7 @@ requires-dist = [
 
 [[package]]
 name = "weir-scan"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "packages/weir" }
 dependencies = [
     { name = "click" },

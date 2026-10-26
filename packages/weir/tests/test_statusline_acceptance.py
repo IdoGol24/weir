@@ -34,6 +34,8 @@ import canary_fixtures as cfx
 import pytest
 import statusline_fixtures as sx
 
+from weir._text_safety import flatten_untrusted
+
 # --- 1. counts ---------------------------------------------------------------
 
 
@@ -624,10 +626,15 @@ def test_the_weir_command_never_lets_the_shell_read_the_folder_name(
     expected = sx.expected_counts(claude.setup, claude.audit())
     assert line.stdout == sx.segment_for(expected, inside=inside) + "\n"
     assert run.lines[0] == sx.segment_for(expected, pointer=False, inside=inside)
-    named = f"project: {folder} is not the inventoried project ({claude.project()}),"
+    # Printed under the audit's rule for a path: flattened to one line.
+    shown = flatten_untrusted(folder)
+    named = f"project: {shown} is not the inventoried project ({claude.project()}),"
     assert (named in run.stdout) is not inside
     assert ("project:" in run.stdout) is not inside
     assert "not known yet" not in run.stdout
+    # A name the rule prints otherwise is never printed raw: run in it.
+    assert (folder in run.stdout) is (not inside and shown == folder)
+    assert ("--project . " in run.stdout) is (not inside and shown != folder)
 
 
 @sx.posix_shell

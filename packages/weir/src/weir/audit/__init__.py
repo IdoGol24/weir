@@ -23,7 +23,13 @@ from weir.audit._types import (
     UnknownReason,
     report_json_schema,
 )
-from weir.audit.audit import audit_chunks, audit_files, audit_paths, encode_report
+from weir.audit.audit import (
+    audit_chunks,
+    audit_files,
+    audit_naming,
+    audit_paths,
+    encode_report,
+)
 from weir.audit.inputs import AuditInputError, Inputs, load_inputs
 from weir.audit.text import report_lines
 
@@ -45,6 +51,7 @@ __all__ = [
     "UnknownReason",
     "audit_chunks",
     "audit_files",
+    "audit_naming",
     "audit_paths",
     "encode_report",
     "load_inputs",

@@ -17,6 +17,7 @@ process of its own, its output a pipe, as Claude Code runs it.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import itertools
 import json
 import re
@@ -630,6 +631,215 @@ def test_the_report_never_advises_walking_the_home(tmp_path: Path, passed: bool)
         " as the project would read the whole home"
     )
     assert "weir inventory" not in report.stdout
+
+
+_NAMED = [
+    "inventoried project", "current folder", "secret-shaped current folder",
+    "high-entropy current folder", "recorded", "recorded, a whole key the session never held",
+]
+
+
+def _named_folders(claude: sx.Claude, named: str) -> tuple[str, str, str, str]:
+    """A session that put a key in the context, and the inventory's
+    project, the recorded folder ("": none), the current folder (as the
+    OS names it) and the one of them `named` names: it holds 6 characters of that key, a key
+    found nowhere else, or is a name in a key's shape or a long random run."""
+    _exposed(claude)
+    project = claude.project()
+    values = claude.setup.values
+    run = "ghp_" + cfx.fake_value("shaped-folder", 36) if "shaped" in named else (
+        "Xk9Qm2Vp7Rt4Wz8Ny3Lb6Hc1" if "entropy" in named else
+        values[fx.AWS_ID] if "whole" in named else values[fx.ACME][3:9])
+    odd = str(Path(project).parent / run)
+    Path(odd).mkdir()
+    if named == "inventoried project":
+        report = json.loads(claude.setup.report.read_text())
+        report["inputs"]["project"] = odd
+        claude.setup.report.write_text(json.dumps(report))
+        return odd, "", str(Path(project)), odd
+    if named.startswith("recorded"):
+        return project, odd, project, odd
+    return project, "", odd, odd
+
+
+@pytest.mark.parametrize("named", _NAMED)
+def test_the_report_withholds_a_folder_name_that_holds_a_value_or_reads_as_one(
+    tmp_path: Path, named: str,
+) -> None:
+    """docs/statusline.md, "The /weir report": its project lines name a
+    folder under the audit's printing rule, and the switch command for a
+    withheld folder is run in it."""
+    claude = sx.build(tmp_path)
+    project, folder, here, odd = _named_folders(claude, named)
+
+    report = claude.report(folder=folder, cwd=here)
+
+    lead = "  to switch the inventory to {}, run{} from the shell Claude Code starts from:"
+    if named == "inventoried project":
+        tail = [_UNKNOWN.format("[withheld]"),
+                lead.format(f"the current folder, {here}", ""), *_switch(claude, here)]
+    elif named.startswith("recorded"):
+        tail = [f"project: [withheld] is not the inventoried project ({project}),"
+                " so keys in its files are not known",
+                lead.format("this folder", " in it"), *_switch(claude, ".")]
+    else:
+        tail = [_UNKNOWN.format(project),
+                lead.format("the current folder, [withheld]", " in it"), *_switch(claude, ".")]
+    assert report.exit_code == 0, report.stderr
+    assert report.lines[-len(tail) - 1 :] == ["", *tail]
+    assert Path(odd).name not in report.stdout
+    cfx.assert_value_free(report.stdout + report.stderr, claude.setup.values.values())
+
+
+@pytest.mark.parametrize(
+    "folder", ["/Users/Bob/Dev/ProjX2", "/home/Ann/src/Go1/Api", "/home/kim/Code/MyApp2/Web3UI"],
+)
+def test_the_report_names_a_folder_whose_segments_joined_read_as_a_random_run(
+    tmp_path: Path, folder: str,
+) -> None:
+    """docs/statusline.md, "The /weir report": a key's shape is looked for
+    in each segment of a folder the project lines name. These folders hold
+    no key and no segment reads as one, though their segments joined, with
+    no `.`, `-`, `_` or space between, read as a long random run."""
+    claude = sx.build(tmp_path)
+    _exposed(claude)
+
+    report = claude.report(folder=folder)
+
+    assert report.exit_code == 0, report.stderr
+    assert report.lines[-5:] == [
+        "",
+        f"project: {folder} is not the inventoried project ({claude.project()}),"
+        " so keys in its files are not known",
+        "  to switch the inventory to this folder, run from the shell Claude Code starts from:",
+        *_switch(claude, folder),
+    ]
+
+
+@sx.posix_shell
+def test_the_switch_command_for_a_withheld_folder_switches_the_inventory_run_in_it(
+    tmp_path: Path,
+) -> None:
+    claude = sx.build(tmp_path)
+    _, folder, here, _ = _named_folders(claude, "recorded")
+    printed = claude.report(folder=folder, cwd=here).lines[-2].strip()
+    env = {**claude.env(), "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin"}
+
+    switched = sx.run_shell(printed, "", env, cwd=folder)
+
+    assert switched.exit_code == 0, switched.stderr
+    assert claude.project() == folder
+
+
+_NOT_SHOWN = [
+    "  no switch command shown: a path in it holds part of a key, reads like one, or holds a"
+    " character the report does not print. To switch the inventory to this folder, run this in"
+    " it from the shell Claude Code starts from, with the inventory's own paths in place of the"
+    " <...> parts:",
+    "    weir inventory --home ~ --project . --process-env --json"
+    " --store <the inventory's store> --key <the inventory's key> > <the inventory's report>",
+]
+
+
+def _inventory_under_a_home(claude: sx.Claude, home: str) -> tuple[str, Path]:
+    """A session that put a key in the context, and the inventory's files
+    moved under a home folder whose name holds 6 characters of that key, a
+    line break, or neither. Returns the 6 characters and the files' folder."""
+    _exposed(claude)
+    run = claude.setup.values[fx.ACME][3:9]
+    named = {"holds part of a found key": run, "holds a line break": "new\nline"}
+    weir = claude.setup.root / ("home-" + named.get(home, "other")) / ".weir"
+    weir.mkdir(parents=True)
+    s = claude.setup
+    claude.setup = dataclasses.replace(
+        s, report=s.report.rename(weir / s.report.name), store=s.store.rename(weir / s.store.name),
+        key=s.key.rename(weir / s.key.name),
+    )
+    return run, weir
+
+
+@pytest.mark.parametrize(
+    "home", ["holds part of a found key", pytest.param("holds a line break", marks=sx.posix_shell),
+             "ordinary"],
+)
+def test_the_switch_command_is_not_shown_when_an_inventory_path_holds_part_of_a_key(
+    tmp_path: Path, home: str,
+) -> None:
+    """docs/statusline.md, "The /weir report": the switch command's
+    inventory paths are printed under the audit's printing rule too. Its
+    files under a home whose name holds 6 characters of a key the session
+    found, or a line break: the command is not shown, only its shape with
+    a placeholder for each inventory path."""
+    claude = sx.build(tmp_path)
+    run, weir = _inventory_under_a_home(claude, home)
+    project = claude.project()
+    folder = _elsewhere(claude)
+
+    report = claude.report(folder=folder)
+
+    switch = [*_NOT_SHOWN, "  the earlier project's keys then stop being counted"] if (
+        home != "ordinary") else [
+        "  to switch the inventory to this folder, run from the shell Claude Code starts from:",
+        *_switch(claude, folder),
+    ]
+    assert report.exit_code == 0, report.stderr
+    assert report.lines[-len(switch) - 2 :] == [
+        "",
+        f"project: {folder} is not the inventoried project ({project}),"
+        " so keys in its files are not known",
+        *switch,
+    ]
+    assert run not in report.stdout + report.stderr
+    assert (str(weir) in report.stdout) is (home == "ordinary")
+    cfx.assert_value_free(report.stdout + report.stderr, claude.setup.values.values())
+
+
+@sx.posix_shell
+@pytest.mark.parametrize("home", ["holds part of a found key", "holds a line break"])
+def test_the_switch_recipe_with_the_inventory_s_paths_filled_in_switches_the_inventory(
+    tmp_path: Path, home: str,
+) -> None:
+    """The command shape /weir gives in place of a command it cannot show,
+    run in the folder with the inventory's own paths in its <...> parts,
+    takes the inventory again as the status line reads it."""
+    claude = sx.build(tmp_path)
+    _inventory_under_a_home(claude, home)
+    folder = _elsewhere(claude)
+    recipe = claude.report(folder=folder).lines[-2].strip()
+    s = claude.setup
+    for part, path in (("store", s.store), ("key", s.key), ("report", s.report)):
+        recipe = recipe.replace(f"<the inventory's {part}>", shlex.quote(str(path)))
+    env = {**claude.env(), "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin"}
+
+    switched = sx.run_shell(recipe, "", env, cwd=folder)
+
+    assert switched.exit_code == 0, switched.stderr
+    assert claude.project() == folder
+    assert claude.statusline(folder=folder).stdout == sx.segment_for(
+        sx.expected_counts(claude.setup, claude.audit()), inside=True) + "\n"
+
+
+@pytest.mark.parametrize("passed", [True, False], ids=["recorded", "not recorded"])
+def test_a_home_whose_name_holds_part_of_a_key_is_withheld_where_no_command_is_given(
+    tmp_path: Path, passed: bool,
+) -> None:
+    """Claude Code started from a home whose name holds 6 characters of a
+    key the session found: the line that gives no switch command for the
+    home names it `[withheld]`."""
+    claude = sx.build(tmp_path)
+    _exposed(claude)
+    home = claude.setup.root / ("u-" + claude.setup.values[fx.ACME][3:9])
+    home.mkdir()
+    claude.setup = dataclasses.replace(claude.setup, home=home)
+
+    report = claude.report(folder=str(home) if passed else "", cwd=str(home))
+
+    assert report.exit_code == 0, report.stderr
+    assert report.lines[-1] == (
+        "  no switch command: [withheld] is or holds your home, and walking it"
+        " as the project would read the whole home"
+    )
+    cfx.assert_value_free(report.stdout + report.stderr, claude.setup.values.values())
 
 
 def test_a_report_with_nothing_to_check_names_the_folder_it_was_given(tmp_path: Path) -> None:

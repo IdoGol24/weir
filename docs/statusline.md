@@ -252,6 +252,28 @@ was started in. A folder that is the home or holds it is never given as
 the project, as setup never offers it: its walk would read the whole
 home. The report then says `no switch command` instead.
 
+Each folder these lines name, and each inventory file the switch command
+names (its report, store and key), is printed under the audit's rule for
+a path ([docs/audit.md, "Printing"](audit.md#printing)), with a
+credential shape looked for in each segment (between `/` or `\`) rather
+than over the whole path: one that holds a value or a run of 6
+characters of a value the audit found, or has a segment in a credential
+shape, is withheld, and a character it does not print (a line break,
+say) reads as a space. A folder such as `/Users/Bob/Dev/ProjX2`, whose
+segments joined read as a long random run but none does alone, is
+printed. The switch command never names a path in another form
+than the rule prints it. A folder printed otherwise (`[withheld]`, or with
+a space for such a character): its switch command says to run it in that
+folder, with `--project .` in place of the folder. An inventory file
+printed otherwise, under a home folder whose name holds part of a key,
+say: the switch command is not shown. The report says so and gives the
+command to run in the folder with a placeholder for each inventory path:
+
+```text
+  no switch command shown: a path in it holds part of a key, reads like one, or holds a character the report does not print. To switch the inventory to this folder, run this in it from the shell Claude Code starts from, with the inventory's own paths in place of the <...> parts:
+    weir inventory --home ~ --project . --process-env --json --store <the inventory's store> --key <the inventory's key> > <the inventory's report>
+```
+
 Setup installs the report as the `/weir` command
 (`<Claude config dir>/commands/weir.md`), whose one `` !`…` `` line runs
 it with setup's `--cache` for `${CLAUDE_SESSION_ID}`, which Claude Code
