@@ -72,11 +72,13 @@ from weir.report import exposure_lines, finding_lines, render_html_report
 from weir.rules_commons import load_rules
 from weir.schema.exposure import ExposureSurface
 from weir.schema.trace import CanonicalTrace, decode_canonical_trace
+from weir.statusline import hook as redaction_hook
 from weir.statusline import setup as statusline_setup
 from weir.statusline import valid_session_id
 from weir.statusline.compose import run_beside
 from weir.statusline.report import report_lines as session_report_lines
 from weir.statusline.segment import (
+    NOT_REDACTED,
     colour_wanted,
     note,
     read_session,
@@ -467,10 +469,11 @@ def inventory_command(
 
 
 def _inventory_options[F: Callable[..., object]](
-    required: bool, *, defaults: bool = False
+    required: bool, *, defaults: bool = False, checked: bool = True
 ) -> Callable[[F], F]:
     """--inventory, --store and --key: one `weir inventory --store` run's
-    files; with `defaults`, setup's HOME/.weir paths when left out."""
+    files; with `defaults`, setup's HOME/.weir paths when left out. Without
+    `checked`, click does not test them, so the command reports them."""
 
     def apply(command: F) -> F:
         for name, flag, help_text in reversed((
@@ -483,9 +486,10 @@ def _inventory_options[F: Callable[..., object]](
              + (" [default: HOME/.weir/fingerprint.key; created only for a first inventory]."
                 if defaults else ". Never created.")),
         )):
+            kind = click.Path(dir_okay=False, path_type=Path) if checked else click.Path(
+                readable=False, path_type=Path)
             command = click.option(
-                flag, name, type=click.Path(dir_okay=False, path_type=Path), required=required,
-                help=help_text,
+                flag, name, type=kind, required=required, help=help_text,
             )(command)
         return command
 
@@ -554,6 +558,10 @@ _CACHE = click.option(
     "HOME/.weir/statusline when left out).",
 )
 _DRY_RUN = click.option("--dry-run", is_flag=True, help="Show the change and write nothing.")
+_MARKERS = click.option(
+    "--markers", type=click.Path(file_okay=False, path_type=Path), default=None,
+    help="The redaction hook's markers directory, given when the hook is installed.",
+)
 
 
 @main.group("statusline", invoke_without_command=True)
@@ -564,10 +572,12 @@ _DRY_RUN = click.option("--dry-run", is_flag=True, help="Show the change and wri
     "--budget-ms", type=click.IntRange(min=0), default=500, show_default=True,
     help="Reading time per run; a longer session is read over several runs.",
 )
+@_MARKERS
 @click.pass_context
 def statusline_group(
     ctx: click.Context, report_path: Path | None, store_path: Path | None,
     key_path: Path | None, cache: Path | None, inner: str | None, budget_ms: int,
+    markers: Path | None,
 ) -> None:
     """(experimental) A Claude Code status-line segment: counts the
     inventoried credentials that entered this session's context and those
@@ -594,7 +604,7 @@ def statusline_group(
             inputs = load_inputs(report_path, store_path, key_path)
             return read_session(
                 inputs, cache, transcript, session_id, folder, _claude_config_dirs(),
-                budget_ms / 1000, colour=colour,
+                budget_ms / 1000, colour=colour, markers=markers,
             )
         except Exception:  # a failing status line shows nothing: a word instead
             return note("error", colour=colour, pointer=True)
@@ -623,9 +633,10 @@ def _session_folder(session: dict[str, object]) -> str | None:
     " folder [default: HOME/.weir/statusline].",
 )
 @_CLAUDE_DIR
+@_MARKERS
 def statusline_report_command(
     report_path: Path, store_path: Path, key_path: Path, session_id: str,
-    cache: Path | None, claude_dir: Path | None,
+    cache: Path | None, claude_dir: Path | None, markers: Path | None,
 ) -> None:
     """(experimental) The /weir report: per credential that reached the
     session, its source, the turn and tool call, where it now sits, and
@@ -649,12 +660,60 @@ def statusline_report_command(
         lines = session_report_lines(
             inputs, str(found[0]), session_id, recorded_folder(inputs, paths.cache, session_id),
             here,
-            [report_path, store_path, key_path], _claude_config_dirs(),
+            [report_path, store_path, key_path], _claude_config_dirs(), markers,
         )
     except AuditInputError as exc:
         _fail(exc)
     for line in lines:
         click.echo(line)
+
+
+@statusline_group.command("hook")
+@_inventory_options(required=True, checked=False)  # a refusal must leave a marker
+@click.option(
+    "--markers", type=click.Path(file_okay=False, path_type=Path), required=True,
+    help="Where each call's marker is written, for the status line and /weir.",
+)
+def statusline_hook_command(
+    report_path: Path, store_path: Path, key_path: Path, markers: Path
+) -> None:
+    """(experimental) The redaction hook: a Claude Code PostToolUse hook
+    that replaces each inventoried credential in a tool result, the hook
+    input on stdin, with [weir: NAME removed] before the model sees it.
+    Never prints a value. Exit 1 when it cannot redact: Claude Code then
+    sends the result as it was, and the status line says so. A large
+    output's saved copy it cannot rewrite is flagged the same way, with
+    exit 0, as the result itself was replaced."""
+    stdin = click.get_binary_stream("stdin").read()
+    try:
+        call = redaction_hook.run(stdin, report_path, store_path, key_path, markers)
+        if call.output:
+            _hook_output(call.output)
+        redaction_hook.finish(call)
+    except redaction_hook.HookError as exc:
+        click.echo(f"weir: {NOT_REDACTED}: {exc}; this tool result reached the model as it was",
+                   err=True)
+        raise SystemExit(1) from exc
+    if call.problem is not None:  # exit 0: Claude Code takes the replaced result only then
+        click.echo(f"weir: {NOT_REDACTED}: {call.problem}; the tool result was replaced, its"
+                   " saved whole output was not", err=True)
+    if call.abandoned:  # a search thread would hold the process past Claude Code's timeout
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
+
+def _hook_output(out: str) -> None:
+    """Written and flushed, or HookError. What a failed write left buffered
+    goes to the null device: flushed again at exit, it would fail again and
+    turn exit 1 into 120."""
+    stdout = click.get_binary_stream("stdout")
+    try:
+        stdout.write(out.encode() + b"\n")
+        stdout.flush()
+    except OSError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), stdout.fileno())
+        raise redaction_hook.HookError("its output cannot be written to stdout") from None
 
 
 def _yes() -> bool:
@@ -868,18 +927,43 @@ def statusline_setup_command(
         )])
     if report_path is None and store_path is None and key_path is None:
         shown += _refresh(project)
+    try:
+        statusline_setup.plan_setup(paths, with_hook=True)
+        problem = None
+    except statusline_setup.SetupError as exc:  # shown before any question: nothing changed yet
+        problem = str(exc).removesuffix("; nothing changed")
     click.echo("weir statusline setup will make this change:")
-    for line in [*shown, *statusline_setup.describe(paths, plan, undo=False)]:
+    for line in [*shown, *statusline_setup.describe(
+        paths, plan, undo=False, hook_problem=problem
+    )]:
         click.echo(line)
     undo = statusline_setup.undo_command(claude_dir)
     click.echo(f"undo: {undo} puts the status line back")
     if dry_run:
         click.echo("dry run: nothing written")
         return
-    _apply_if_yes(
-        lambda: statusline_setup.apply(paths, plan, undo=False, first=first),
-        f"applied; to undo: {undo}",
-    )
+    click.echo("Type yes to apply: ", nl=False)
+    if not _yes():
+        click.echo("\nnot applied: nothing written")
+        return
+    click.echo(f"\n{statusline_setup.HOOK_QUESTION} Type yes to add it: ", nl=False)
+    try:
+        if _yes():
+            if problem is not None:
+                raise statusline_setup.SetupError(
+                    f"{problem}; nothing changed; {statusline_setup.ANSWER_NO}", 2
+                )
+            hooked = statusline_setup.plan_setup(paths, with_hook=True)
+            if hooked.before != plan.before:
+                raise statusline_setup.SetupError(
+                    f"{paths.settings} changed since the change was shown; nothing written"
+                )
+            plan = hooked
+        statusline_setup.apply(paths, plan, undo=False, first=first)
+    except statusline_setup.SetupError as exc:
+        _fail(exc)
+    hooked_words = " with the redaction hook" if plan.with_hook else ""
+    click.echo(f"\napplied{hooked_words}; to undo: {undo}")
 
 
 @statusline_group.command("undo")

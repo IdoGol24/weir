@@ -101,10 +101,12 @@ class Setup:
 
 def build(
     root: Path, *, seed: str = "", extra_env: str = "", bashrc: str | None = None,
+    project_env: str | None = None,
 ) -> Setup:
     """A fake home and launch environment, inventoried by `weir inventory`.
     `seed` gives other values in the same places; `extra_env` adds launch
-    environment lines and `bashrc` a shell startup file."""
+    environment lines, `bashrc` a shell startup file and `project_env` the
+    project's `.env`."""
     values = _values(seed)
     home = root / "home"
     project = home / "work" / "proj"
@@ -123,6 +125,8 @@ def build(
     )
     if bashrc is not None:
         cfx.write(home / ".bashrc", bashrc)
+    if project_env is not None:
+        cfx.write(project / ".env", project_env)
     out = root / "inventory"
     out.mkdir()
     setup = Setup(

@@ -18,6 +18,7 @@ records the session's project folder, which /weir reads.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import os
@@ -37,6 +38,7 @@ import msgspec
 
 from weir.audit import Format, Inputs, Kind, Report, audit_chunks
 from weir.canary.capture import compressed
+from weir.statusline import hook
 from weir.statusline.files import write_private
 
 CACHE_SCHEMA = "weir-statusline-cache/1"
@@ -66,18 +68,24 @@ _IMAGE_DATA = re.compile(rb'"media_type": ?"image/[^"]*", ?"data": ?"([A-Za-z0-9
 class Tally(msgspec.Struct):
     """The credential ids whose value entered the context, those sent in a
     tool call, whether anything read is unknown, and whether a long record
-    was skipped, not searched whole in LONG_RECORD_TRIES tries."""
+    was skipped, not searched whole in LONG_RECORD_TRIES tries. With the
+    redaction hook: the covered tool calls with no result read yet, and the
+    tool results read whose call has no `done` marker."""
 
     context: set[str] = msgspec.field(default_factory=set[str])
     sent: set[str] = msgspec.field(default_factory=set[str])
     unknown: bool = False
     partial: bool = False
+    waiting: set[str] = msgspec.field(default_factory=set[str])
+    unredacted: set[str] = msgspec.field(default_factory=set[str])
 
     def add(self, other: Tally) -> None:
         self.context |= other.context
         self.sent |= other.sent
         self.unknown = self.unknown or other.unknown
         self.partial = self.partial or other.partial
+        self.waiting |= other.waiting
+        self.unredacted |= other.unredacted
 
 
 def tally(report: Report) -> Tally:
@@ -103,7 +111,7 @@ def value_groups(inputs: Inputs) -> dict[str, str]:
 
 
 def counted(t: Tally, inputs: Inputs) -> tuple[int, int]:
-    """(in context, sent), counting values, not inventory records."""
+    """(entered, sent), counting values, not inventory records."""
     groups = value_groups(inputs)
     return len({groups[c] for c in t.context}), len({groups[c] for c in t.sent})
 
@@ -118,6 +126,8 @@ POINTER = "→ /weir"
 NOTHING_TO_CHECK = "nothing to check"
 # The words where a session outside the inventory's project would be green.
 NOT_INVENTORIED = "project not inventoried"
+# The words for a tool result the redaction hook did not finish.
+NOT_REDACTED = "possibly not redacted"
 
 
 def session_folder(given: object) -> str | None:
@@ -162,31 +172,41 @@ def note(words: str, *, colour: bool, pointer: bool = False) -> str:
 def segment_text(
     context: int, sent: int, *, unknown: bool, inventoried: bool, partial: bool = False,
     scanning: int | None = None, colour: bool = False, pointer: bool = True,
+    kept: int = 0, unredacted: bool = False,
 ) -> str:
     """The segment's line; without `pointer`, the /weir report's first line.
-    Outside the inventory's project (not `inventoried`), never green."""
-    if partial:
-        return note("partly checked", colour=colour, pointer=pointer)
+    Outside the inventory's project (not `inventoried`), never green.
+    `kept`: the names the redaction hook kept out; `unredacted`: a tool
+    result it did not finish, flagged after whatever the line says, which
+    is never green then."""
     counts = (
         f"{_paint('⚠', AMBER, colour)} "
-        f"{_paint(f'{context} in context', AMBER if context else DIM, colour)} · "
+        f"{_paint(f'{context} entered', AMBER if context else DIM, colour)} · "
         f"{_paint(f'{sent} sent', RED if sent else DIM, colour)}"
     )
+    kept_out = f" · {kept} kept out" if kept else ""
+    flag = f" · {_paint(NOT_REDACTED, AMBER, colour)}" if unredacted else ""
+    end = f" {POINTER}" if pointer else ""
+    if partial:
+        if not unredacted:
+            return note("partly checked", colour=colour, pointer=pointer)
+        return f"weir {_paint('partly checked', DIM, colour)}{flag}{end}"
     if scanning is not None:
         progress = _paint(f"{SCANNING} {scanning}%", DIM, colour)
-        return f"weir {counts} · {progress}" if context or sent else f"weir {progress}"
-    if not (context or sent):
+        found = f"weir {counts} · " if context or sent else "weir "
+        return f"{found}{progress}{flag}"
+    if not (context or sent) and unknown:
+        return note("unknown", colour=colour) + flag  # never a false zero
+    if not (context or sent or unredacted):
         # No known key seen only when every file was read and nothing is
         # unknown, in the inventory's project.
-        if unknown:
-            return note("unknown", colour=colour)
         if not inventoried:
-            return note(NOT_INVENTORIED, colour=colour)
-        return "weir " + _paint("✓ no known key seen", GREEN, colour)
-    line = f"weir {counts}"
+            return note(NOT_INVENTORIED, colour=colour) + kept_out
+        return "weir " + _paint("✓ no known key seen", GREEN, colour) + kept_out
+    line = f"weir {counts}{kept_out}"
     if unknown:
         line += " · " + _paint("part unknown", DIM, colour)
-    return f"{line} {POINTER}" if pointer else line
+    return f"{line}{flag}{end}"
 
 
 @dataclass
@@ -298,12 +318,14 @@ class Reader:
 
     def __init__(
         self, inputs: Inputs, cache: Path, session_key: str,
-        claude_config_dirs: Sequence[str], deadline: float,
+        claude_config_dirs: Sequence[str], deadline: float, markers: Path | None = None,
     ) -> None:
         self._inputs = inputs
         self._dirs = list(claude_config_dirs)
         self._deadline = deadline
         self._stepped = False
+        # The session's redaction markers, when the hook is installed.
+        self._markers = markers
         self._path = cache / f"{self._mac('session', session_key.encode())[:32]}.json"
         # A new inventory starts every checkpoint over.
         ids = "\0".join(sorted(c.id for c in inputs.credentials)).encode()
@@ -434,6 +456,7 @@ class Reader:
                 return self._again(path, st, entry, handle, fmt)
             entry.format = fmt
             entry.found.add(part)
+            self._hooked(chunk, entry.found)
             entry.offset += len(chunk)
             window = (window + chunk)[-_PREFIX_BYTES:]
             entry.prefix_mac = self._mac("prefix", window)
@@ -451,7 +474,16 @@ class Reader:
             if entry.format is None and fmt is not None and entry.offset:
                 return self._again(path, st, entry, handle, fmt)
             found.add(part)
+            self._hooked(bytes(pending), found)
         return found, size, size
+
+    def _hooked(self, data: bytes, found: Tally) -> None:
+        """The covered tool results in `data` with no `done` marker, when
+        the hook is installed. Claude Code records a result once the hook
+        has ended, so the marker is final by then."""
+        if self._markers is not None:
+            done = hook.done_in(self._markers)
+            found.unredacted |= hook.unredacted_results(data, found.waiting, done)
 
     def _again(
         self, path: str, st: os.stat_result, entry: _Entry, handle: BinaryIO, fmt: Format
@@ -541,20 +573,31 @@ def _image_bytes(line: bytes) -> int:
 def read_session(
     inputs: Inputs, cache: Path, transcript: str, session_id: str, folder: str | None,
     claude_config_dirs: Sequence[str], budget_s: float, *, colour: bool = False,
+    markers: Path | None = None,
 ) -> str:
     """The segment for one session, whose project folder is `folder`,
-    recorded for /weir (None: unknown, and the record removed)."""
+    recorded for /weir (None: unknown, and the record removed); `markers`:
+    the redaction hook's, when it is installed."""
     record_folder(inputs, cache, session_id, folder)
     if not inputs.by_fingerprint:
         return note(NOTHING_TO_CHECK, colour=colour)  # nothing to count: never a clean
     deadline = time.monotonic() + budget_s
-    reader = Reader(inputs, cache, transcript + "\0" + session_id, claude_config_dirs, deadline)
+    session = None if markers is None else markers / session_id
+    # With the hook, its own checkpoint: every result is checked from the start.
+    key = transcript + "\0" + session_id + ("" if session is None else "\0" + str(session))
+    reader = Reader(inputs, cache, key, claude_config_dirs, deadline, session)
     reader.load()
     found, done, total = reader.read(session_files(transcript, session_id))
     reader.save()
     context, sent = counted(found, inputs)
+    if markers is not None:
+        with contextlib.suppress(OSError):  # tidying never stops the line
+            hook.fold_old_markers(markers, time.time())
+    kept, failed = hook.session_marks(session, time.time()) if session else ({}, set[str]())
+    kept = {name for name in kept if name in {c.name for c in inputs.credentials}}
     scanning = done * 100 // total if done < total else None
     return segment_text(
         context, sent, unknown=found.unknown, inventoried=inventoried(inputs.project, folder),
-        partial=found.partial, scanning=scanning, colour=colour,
+        partial=found.partial, scanning=scanning, colour=colour, kept=len(kept),
+        unredacted=bool(found.unredacted | failed),
     )

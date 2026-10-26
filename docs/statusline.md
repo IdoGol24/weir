@@ -12,11 +12,13 @@ session's context and how many were sent out in a tool call, and a `/weir`
 command that lists each one. It is display only, local and offline, works
 from the keyed fingerprints of a [`weir inventory --store`](inventory.md)
 run, and never prints, caches or writes a credential value or any run of 6
-characters of one.
+characters of one. Setup can also add a [redaction hook](#the-redaction-hook)
+that replaces those credentials in tool results before the model sees them,
+and in the copy Claude Code saves of a large one.
 
-![Terminal recording: the status line under a fake Claude Code session counts up while it scans and settles on "weir ⚠ 2 in context · 1 sent → /weir", then /weir is typed and reports each of the two fake credentials: where it came from, the turn and tool call that moved it, where it now sits, and the advice to rotate it.](assets/statusline.svg)
+![Terminal recording: the status line under a fake Claude Code session counts up while it scans and settles on "weir ⚠ 2 entered · 1 sent → /weir", then /weir is typed and reports each of the two fake credentials: where it came from, the turn and tool call that moved it, where it now sits, and the advice to rotate it.](assets/statusline.svg)
 
-For example, `weir ⚠ 2 in context · 1 sent → /weir`, or `weir ✓ no known
+For example, `weir ⚠ 2 entered · 1 sent → /weir`, or `weir ✓ no known
 key seen` when none did. It reads the session's transcript and its subagent
 transcripts; a file it cannot read makes it say `unknown`, never a false
 zero.
@@ -24,7 +26,7 @@ zero.
 ## The segment
 
 ```sh
-weir statusline --inventory REPORT --store STORE --key KEY --cache DIR [--inner COMMAND] [--budget-ms N]
+weir statusline --inventory REPORT --store STORE --key KEY --cache DIR [--inner COMMAND] [--budget-ms N] [--markers DIR]
 ```
 
 Claude Code runs this after each assistant message with the session's
@@ -38,18 +40,22 @@ exits 0:
 | --- | --- |
 | `weir ✓ no known key seen` | the session's files are read to their end, nothing is unknown, no value entered the context or was sent, and the session is in the inventory's project (below) |
 | `weir project not inventoried` | as for `✓ no known key seen`, but the session is not in the inventory's project, the inventory has no project, or the JSON names no project folder |
-| `weir ⚠ C in context · S sent → /weir` | the session's files are read to their end, and C or S is not 0 |
-| `weir ⚠ C in context · S sent · part unknown → /weir` | some of it is unknown (below), and C or S is not 0 |
+| `weir ⚠ C entered · S sent → /weir` | the session's files are read to their end, and C or S is not 0 |
+| `weir ⚠ C entered · S sent · part unknown → /weir` | some of it is unknown (below), and C or S is not 0 |
+| `weir … · possibly not redacted` | with the redaction hook: a tool result went to the model without it, or its saved copy was not rewritten (below). The flag follows what the line says otherwise (`unknown`, `scanning… P%`, `partly checked` or the counts, so never a false zero), before any `→ /weir`, and where that would be `✓ no known key seen` or `project not inventoried`, the final counts `⚠ 0 entered · 0 sent` stand instead |
 | `weir unknown` | some of it is unknown and nothing was found: the counts would be a false zero |
-| `weir scanning… P%` | not read to its end yet; `⚠ C in context · S sent · ` in front once something is found |
+| `weir scanning… P%` | not read to its end yet; `⚠ C entered · S sent · ` in front once something is found |
 | `weir partly checked → /weir` | a long record was not searched whole in three tries, each within its own time bound (below); `weir audit` or `/weir` gives the full counts |
 | `weir nothing to check` | the inventory holds no credential weir can check: there is nothing to count, so never `✓ no known key seen` |
 | `weir no session` | stdin is not the status line JSON |
 | `weir error → /weir` | the inventory inputs cannot be used (a wrong key, say) |
 
-Only a session read to its end with nothing unknown and nothing found,
-in the inventory's project, against an inventory that holds a credential
-weir can check, says `✓ no known key seen`; one still scanning, partly
+With the redaction hook, ` · K kept out` follows the green words,
+`project not inventoried` or the counts once the hook has kept out keys
+of K inventory names. Only a session read to its end with nothing
+unknown, nothing found and no tool result the hook did not finish, in the
+inventory's project, against an inventory that holds a credential weir
+can check, says `✓ no known key seen`; one still scanning, partly
 checked, unknown or outside that project never does. The line names no
 credential and holds no value, so a shared screen gives nothing away.
 
@@ -61,10 +67,10 @@ renders:
 | part | colour |
 | --- | --- |
 | `✓ no known key seen` | green (32) |
-| `⚠`, and `C in context` when C is not 0 | amber (33, yellow in most terminal themes) |
+| `⚠`, `C entered` when C is not 0, and `possibly not redacted` | amber (33, yellow in most terminal themes) |
 | `S sent` when S is not 0 | red (31) |
 | a count of 0, `part unknown`, `scanning… P%`, `unknown`, `partly checked → /weir`, `project not inventoried`, `nothing to check`, `no session`, `error → /weir` | dim (2) |
-| `weir`, `·`, and `→ /weir` after the counts | the terminal's own |
+| `weir`, `·`, `K kept out`, and `→ /weir` after the counts | the terminal's own |
 
 Every coloured part ends with a reset (0), so the status line beside it
 (below) keeps its own colours. When `NO_COLOR` is set and not empty
@@ -88,10 +94,11 @@ passes absolute ones, and weir never resolves one against its own folder.
 
 ### What is counted
 
-The session is audited as `weir audit` audits it. **In context** (C)
-counts the values with a `context` or `tool_call` hit (the agent wrote the
-value, so it had it); **sent** (S) counts the values with a `tool_call`
-hit. Values are counted, not inventory records: records whose stored
+The session is audited as `weir audit` audits it. **Entered** (C)
+counts the values with a `context` or `tool_call` hit, the values the model
+saw (the agent wrote the value, so it had it); **sent** (S) counts the
+values with a `tool_call` hit; **kept out** (K) counts the inventory names
+the redaction hook's markers say it replaced. Values are counted, not inventory records: records whose stored
 fingerprints are equal hold one value. `stored` hits are not counted.
 
 Some of the session is **unknown** when the audit of a file read is
@@ -106,9 +113,12 @@ be read or listed.
 The transcript Claude Code names, and in the session's own directory
 beside it (`<transcript directory>/<session id>/`): the subagent
 transcripts (`subagents/*.jsonl`) and their sidecars
-(`subagents/*.meta.json`). Saved tool outputs (`tool-results/*`) hold a
-value only as stored text, so the segment skips them (a compressed one is
-unknown); the `/weir` report reads them.
+(`subagents/*.meta.json`). Saved tool outputs (`tool-results/*`), the
+whole copy Claude Code keeps of a large tool output and whose path it gives
+the model, hold a value only as stored text, so the segment skips them (a
+compressed one is unknown); the `/weir` report reads them. With the
+[redaction hook](#the-redaction-hook), the hook rewrites the one a covered
+call saved, and a call whose saved output it could not rewrite is flagged.
 
 ### Reading in steps
 
@@ -183,15 +193,145 @@ anything when the run is killed with SIGKILL. With colour on, a reset
 (`ESC[0m`) follows the command's output, so a colour it leaves on never
 tints the segment; with `NO_COLOR` its output is printed as it is.
 
+## The redaction hook
+
+```sh
+weir statusline hook --inventory REPORT --store STORE --key KEY --markers DIR
+```
+
+A Claude Code `PostToolUse` command hook for the Read, Bash, Grep, Glob and
+WebFetch tools, with a 10 second timeout, which setup adds when asked
+(below). It reads the hook input on stdin and, when the tool's result holds
+an inventoried value, prints `hookSpecificOutput.updatedToolOutput`: the
+result with each value replaced by `[weir: NAME removed]`, NAME its
+inventory name (the first record's, for a value several records hold). It
+finds values as `weir audit` does, by keyed fingerprint, in every form of
+[docs/audit.md](audit.md#forms), and holds no plaintext key. A raw value,
+and a JSON-escaped or URL-encoded one, is replaced exactly; a base64 or hex
+one with the whole run it was decoded from, as its edge characters mix bits
+of the value with bits of its neighbours. A value found whose place no form
+can tell (a JSON-escaped one holding a surrogate pair) takes its whole
+string. Every string in the result is searched but the binary payloads a
+Read returns (an image's or a PDF's `file.base64`, a notebook output's
+`image.image_data`), megabytes long; image data holds no value as text,
+while a PDF's data can hold text the hook does not search. Keys, their
+order, types, list lengths and every other value stay exactly as they came, because
+Claude Code sends the original when a built-in tool's replacement does not
+match its output schema. When nothing is found it prints nothing, and the
+result passes untouched.
+
+Claude Code also sends the original output whenever the hook fails, so each
+call leaves an owner-only marker, `DIR/<session id>/<tool use id>.json`
+(each folder it creates on the way is owner-only too):
+`pending` before anything else, then `done` with the count of each name it
+kept out once its output is written, or `failed`. A marker holds no value, fragment or decoded form.
+A status line refresh, at most once a day, folds each session's markers
+older than 7 days into one `.old.json` in its folder (the calls done, those
+failed or never finished, and the names kept out with their counts), written
+before those markers are removed; the segment and `/weir` read it as they
+read the markers, so no session reads differently after, and a marker
+younger than that, a call still running included, is never touched.
+When the hook cannot redact (an input that is not a PostToolUse input, an
+inventory, store or key it cannot use, any error), it marks the call
+failed when it can, prints one line on stderr and exits 1. When its output
+cannot be written, the marker stays `pending`, read as failed as below.
+
+Claude Code's [hooks reference](https://code.claude.com/docs/en/hooks)
+("PostToolUse decision control") says "`updatedToolOutput` only changes
+what Claude sees", and that telemetry "also captures the original output
+before the hook runs". For a Bash result past roughly 30,000 characters,
+its [tools reference](https://code.claude.com/docs/en/tools-reference)
+(Bash, "Output limits") says Claude gets "the path of a file saved to the
+session directory and truncated past 64 MiB, plus a preview of up to the
+first 2,000 characters, and Claude reads or searches the file when it
+needs the rest". That saved file, in the session's `tool-results` folder,
+holds the original output and is written before the hook runs, and the
+result the hook gets names it in `persistedOutputPath`. So the hook also
+rewrites that file with the same replacements, through a temporary file
+beside it, owner-only (mode 0600), before the call is `done`; a saved file
+with no known value is left as it is. It takes the file only at that exact
+path, and only as a regular file directly in `<transcript directory>/<session
+id>/tool-results/`, neither the file nor those two folders a symbolic link.
+A saved file over 256 KiB (262,144 bytes) is not rewritten: searching it
+could take longer than the hook's timeout, and Claude Code would then send
+the original result too. The hook checks the file's size before it reads
+it and leaves a larger file as it is. Nor is one whose search is not done
+6 seconds after the hook began: some content (very long tokens, dense
+URL-encoded text) takes far longer to search than its size suggests, so
+the search stops there: searching the saved file never holds the hook
+past the timeout. On Linux and macOS the search runs in a child process,
+killed at the deadline; where there is no fork (Windows) it runs in a
+thread, and the hook ends its own process as soon as the result is out.
+The path must be named exactly as it is, with nothing to normalise (no
+`..`, `.` or trailing slash), and the file must still be a regular file
+once opened; the hook opens it without waiting, so a FIFO never holds the
+hook up.
+That, a saved file that is missing, elsewhere, a link, unreadable or
+unwritable, or any other error in rewriting it, marks the call `failed`,
+so it shows as `possibly not redacted`; the result itself is still
+replaced, so the hook prints it, one line on stderr, and exits 0 (on
+exit 1 Claude Code would send the original). Each name kept out is
+counted once, as often as the saved file or the result held it,
+whichever held it more.
+
+With `--markers DIR`, which setup gives them along with the hook, the
+segment and the `/weir` report count what the session's calls kept out,
+and say `possibly not redacted`, never green, for each covered tool result
+that went to the model as the tool returned it, or whose saved output was
+not rewritten: a call marked failed, one still `pending` 10 seconds
+after it began (Claude Code killed it), and a
+result in the session's transcripts whose call has no `done` marker (the
+hook never ran or did not finish; Claude Code records a result once the
+hook has ended). A failed call (`is_error`) is not one: Claude Code runs
+`PostToolUse` after a success only. The report adds `kept out by the
+redaction hook:` with each name and count, and `possibly not redacted:`
+with the number of such results.
+
+Its limits:
+
+- It doesn't undo a command that already ran: it only changes what the
+  model reads afterwards.
+- It can't catch a value pasted into the chat; the segment counts it as
+  entered.
+- A hook failure sends the original output, which is flagged as above.
+- An agent that is taken over can switch hooks off.
+- Claude Code runs it only after a tool call succeeds: the output of a
+  failed call (a command that exits with an error, say) reaches the model
+  as it is, and a known value in it counts as entered; `/weir` says it
+  entered through a failed tool call and gives a deny rule (below).
+- Claude Code saves a large output whole before it runs the hook, which
+  then rewrites that saved file: the original is in it for a moment first.
+- A saved output over 256 KiB, or one not searched within 6 seconds of the
+  call, is not rewritten and keeps the original; the call is flagged as
+  above, while the result itself is still replaced.
+- A large result of dense URL-encoded text, such as a form body of tens of
+  thousands of characters, can take the hook past its timeout: the 6
+  second deadline covers the saved file only. Claude Code then sends the
+  original, and the call is flagged as above.
+- It finds what `weir audit` finds, whole values in the forms above, and
+  only in what Claude Code passes it: Claude Code's telemetry keeps the
+  original output. A key glued to other characters (`ab` and the key, say)
+  is not matched, by the hook or the status line. Nor is one inside the
+  binary payloads above.
+- A key inside a PDF that Claude reads is not removed. It shows as entered
+  when the audit can read it, as unknown when the PDF's text is compressed,
+  and not at all when it is written as a PDF hex string or split by
+  kerning.
+- A WebFetch result is the text Claude Code's own model wrote after reading
+  the fetched page with the fetch's prompt ("Prompt to run on the fetched
+  content", Claude Code hooks reference, WebFetch input): a key in the page
+  has been read by that model before the hook runs, and the hook replaces
+  it only where that text repeats it.
+
 ## The /weir report
 
 ```sh
-weir statusline report --inventory REPORT --store STORE --key KEY --session ID [--cache DIR] [--claude-dir DIR]
+weir statusline report --inventory REPORT --store STORE --key KEY --session ID [--cache DIR] [--claude-dir DIR] [--markers DIR]
 ```
 
 It audits the session's files in full (saved tool outputs included) and
-prints the segment's words, plain and without `→ /weir` (`weir ⚠ 2 in
-context · 1 sent`, say), the transcript read, and one block per value
+prints the segment's words, plain and without `→ /weir` (`weir ⚠ 2
+entered · 1 sent`, say), the transcript read, and one block per value
 that reached the session, most severe first:
 
 ```text
@@ -204,7 +344,10 @@ ACME_API_TOKEN (launch env)
 ```
 
 A value found in several places lists them all; one a shell startup file
-exports says so, and its advice is to take it out of that file. Turn N
+exports says so, and its advice is to take it out of that file. A value
+found only in a saved tool output (Claude Code's whole copy of a large
+output, `tool-results/*`) never entered the context, but the agent was
+given that file's path: its advice is to delete that file. Turn N
 starts at the Nth prompt the person typed: a `user` record that is not
 `isMeta`, `isCompactSummary` or `isVisibleInTranscriptOnly`, is not a
 tool result, holds text, an image or a document, and is not a local slash
@@ -274,6 +417,35 @@ command to run in the folder with a placeholder for each inventory path:
     weir inventory --home ~ --project . --process-env --json --store <the inventory's store> --key <the inventory's key> > <the inventory's report>
 ```
 
+A value that entered in the result of a failed tool call (one the
+transcript records with `is_error`), which runs no `PostToolUse` hook,
+gets a line `entered through a failed tool call:` with its count and first
+place, whatever the redaction hook. When the value lives in a file (not
+the environment), a `deny rule:` line follows with a settings snippet,
+`{"permissions": {"deny": ["Read(~/.aws/credentials)"]}}` say, its path
+anchored as Claude Code anchors one: `~/` for a file under the home, and
+`//` with the absolute path for any other, a project file included (the
+inventory's `./` is its project, but Claude Code would read `./` from the
+session's current directory). The rule is given only when the
+credential's printed place is not withheld and the exact path the rule
+names prints unchanged under the rule for the folders above (the audit's
+rule for a path, a credential shape looked for in each segment). The
+place itself may still be shown shortened, as a long home path's is,
+while the rule names the whole path. No rule is given for a path that
+holds a found value or a run of 6 characters of one, has a segment that
+looks like a key, or holds a character the report would escape. On
+Windows the absolute path takes the POSIX form Claude Code matches,
+`C:/Users/alice/proj/.env` as `Read(//c/Users/alice/proj/.env)`: "On
+Windows, paths are normalized to POSIX form before matching" (Claude Code
+permissions page, "How path patterns match"). It says what the
+[Claude Code permissions](https://code.claude.com/docs/en/permissions)
+page says such a rule covers: Claude's Read tool (and, best effort, Grep
+and Glob) reading that file, and the `cat`, `head`, `tail`, `sed` or `tee`
+of it, or a `<` redirect from it, that Claude Code recognizes in a Bash
+command. It does not stop a script or program that opens the file itself,
+or a command that reads it without naming it; only Claude Code's sandbox
+stops those. Nothing rewrites a command.
+
 Setup installs the report as the `/weir` command
 (`<Claude config dir>/commands/weir.md`), whose one `` !`…` `` line runs
 it with setup's `--cache` for `${CLAUDE_SESSION_ID}`, which Claude Code
@@ -284,8 +456,8 @@ Claude Code, and no folder name, is part of the command, and its
 `allowed-tools: Bash(<report> *)` rule matches that line. Claude Code
 puts text in for `$0` or `$ARGUMENTS` even inside quotes, so setup
 refuses (exit 2, nothing changed) when a path it would write into that
-line (the interpreter, `--claude-dir`, `--cache`, or the inventory, store
-or key) holds a `$`.
+line (the interpreter, `--claude-dir`, `--cache` and the hook's
+`--markers` under it, or the inventory, store or key) holds a `$`.
 
 ## Setup and undo
 
@@ -387,14 +559,38 @@ since it showed them.
 The undo it prints names `--claude-dir`, when given, as an absolute
 path, so it runs from any directory.
 
+**The redaction hook.** The preview also shows the hook: the
+`hooks.PostToolUse` entry (matcher `Read|Bash|Grep|Glob|WebFetch`, the
+hook command, `timeout` 10), and the `statusLine` command and the `/weir`
+command file's `allowed-tools` and `!` lines as they are with it, all with
+`--markers ~/.weir/statusline/hook-<id>` (under `--cache`). `<id>` is the
+first 16 hex characters of the SHA-256 of the Claude config dir's resolved
+path, so each config dir's hook keeps its own markers, and undo for one
+never removes another's markers. After the `yes` that applies the change,
+setup asks `Add the redaction hook too?` and adds the hook only on an
+exact `yes` to that; anything else, or no answer,
+applies the change without it. When `hooks` is not an object of lists, or
+already runs the redaction hook, the preview says the hook cannot be added
+and suggests answering no to that question, which installs the status
+line alone; a `yes` to it then refuses and changes nothing.
+
 **Undo** shows what it does and, on `yes`, puts back the `statusLine` the
 backup holds (or removes it when there was none) while the status line
 is still exactly the one setup wrote: the interpreter running `-m weir
 statusline` with setup's options, and `--inner` the command from before
-setup, when there was one. Every other setting is kept; when nothing
-else changed it writes the backup's bytes back (an empty file comes back
-empty), or removes the settings file when there was none before setup. It
-then removes `commands/weir.md` and the backup or marker. When the status
+setup, when there was one. It takes the redaction hook out of
+`hooks.PostToolUse`, and the `PostToolUse` and `hooks` keys when setup
+added them. Before it writes the settings it removes the hook's markers
+(while the settings still name their folder): the marker and `.old.json`
+files in the `--markers` folder its command names (or the status line's,
+when the hook was taken out by hand), the `.compacted` file there that
+dates the last daily fold, and each folder left empty, never another file.
+A weir redaction hook the settings already ran before setup (setup adds
+none then) is left as it is, and so are the markers it names. Every other
+setting is kept; when nothing else changed it writes the backup's bytes
+back (an empty file comes back empty), or removes the settings file when
+there was none before setup. It then removes `commands/weir.md` and the
+backup or marker. When the status
 line changed since setup, or the settings file was removed and there was
 one before setup (even an empty one), it refuses and writes and deletes
 nothing; its message names the backup, which holds the settings from
@@ -408,7 +604,7 @@ whole. An interrupted setup or undo leaves both usable: running
 undo again finishes it, and a first setup stopped before the report was
 written takes the inventory again when it is run again (an existing key is
 used). Undo leaves `~/.weir` in place: the inventory, store, key and the
-checkpoints in setup's `--cache` stay. Deleting the checkpoints is safe;
+checkpoints in setup's `--cache` stay (the hook's markers go, as above). Deleting the checkpoints is safe;
 the key, store and report are what `weir audit` and a later setup use.
 
 **The key.** `weir statusline`, `weir statusline report`, `weir inventory`
@@ -426,8 +622,9 @@ user owns, or that others can read or write, is refused, never repaired.
   only: a tool call that names a variable (`$TOKEN`) is not counted.
 - A rewrite inside the part of a file already read that keeps its end and
   its size is not seen.
-- A count is not a guard: nothing here stops a credential from reaching
-  the agent.
+- A count is not a guard. Only the redaction hook keeps a credential from
+  reaching the agent, and only in the tool results it covers, within its
+  limits (above).
 - A long record not searched whole within its time bound in three tries
   in a row, each cancelled or out of time, leaves the session partly
   checked rather than counted, where `weir audit` of the whole file counts

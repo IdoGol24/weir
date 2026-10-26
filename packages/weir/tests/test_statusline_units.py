@@ -71,7 +71,7 @@ def test_a_line_still_being_written_counts_as_unread_until_it_stops_changing(
     assert stopped.stdout == sx.segment_for(sx.expected_counts(claude.setup, stopped_audit)) + "\n"
     assert "unknown" in stopped.stdout
     assert complete.stdout == _expected(claude)
-    assert complete.stdout == "weir ⚠ 2 in context · 1 sent → /weir\n"
+    assert complete.stdout == "weir ⚠ 2 entered · 1 sent → /weir\n"
 
 
 @pytest.mark.parametrize("how", ["shrunk", "start changed", "replaced"])
@@ -80,7 +80,7 @@ def test_a_file_rewritten_under_the_reader_is_read_again_from_the_start(
 ) -> None:
     claude = sx.build(tmp_path)
     path = _session(claude).write(claude.transcript())
-    assert claude.statusline().stdout == "weir ⚠ 2 in context · 1 sent → /weir\n"
+    assert claude.statusline().stdout == "weir ⚠ 2 entered · 1 sent → /weir\n"
     other = fx.Session()
     other.prompt("a new start" if how != "shrunk" else "short")
     other.tool_use("Bash", {"command": "ls"}, "toolu_9")
@@ -178,7 +178,7 @@ def test_records_before_the_first_prompt_leave_the_format_open(
 
     assert before.stdout == sx.segment_for(sx.expected_counts(claude.setup, before_audit)) + "\n"
     assert run.stdout == _expected(claude)
-    assert run.stdout == "weir ⚠ 2 in context · 1 sent → /weir\n"
+    assert run.stdout == "weir ⚠ 2 entered · 1 sent → /weir\n"
 
 
 def test_a_last_line_that_stopped_mid_line_can_decide_the_format(
@@ -197,7 +197,7 @@ def test_a_last_line_that_stopped_mid_line_can_decide_the_format(
     run = claude.statusline()
 
     assert run.stdout == _expected(claude)
-    assert run.stdout == "weir ⚠ 1 in context · 0 sent → /weir\n"
+    assert run.stdout == "weir ⚠ 1 entered · 0 sent → /weir\n"
 
 
 @pytest.mark.parametrize("how", ["removed", "unreadable", "unreadable subagents directory"])
@@ -411,7 +411,7 @@ def test_a_long_record_searched_within_its_time_bound_is_counted_exactly(
     assert path.stat().st_size > 2 * segment.LONG_RECORD_BYTES
     assert len(shown) <= 4, shown
     assert shown[-1] == _expected(claude)
-    assert "1 in context" in shown[-1]
+    assert "1 entered" in shown[-1]
 
 
 @pytest.mark.parametrize(
@@ -487,7 +487,7 @@ def test_a_long_record_reached_late_in_a_run_waits_for_a_whole_run(
 
     assert len(shown) <= 3
     assert shown[-1] == _expected(claude)
-    assert "1 in context" in shown[-1]
+    assert "1 entered" in shown[-1]
 
 
 @pytest.mark.parametrize("record", ["a tool result and its copy", "a line of exactly 128 KiB"])
@@ -521,7 +521,7 @@ def test_a_subagents_long_record_is_counted_while_the_transcript_grows(
 
     assert agent.stat().st_size > segment.LONG_RECORD_BYTES
     assert shown[-1] == _expected(claude)
-    assert "1 in context" in shown[-1]
+    assert "1 entered" in shown[-1]
 
 
 def _record_of(session: fx.Session, size: int, text: str) -> None:
@@ -977,7 +977,7 @@ def test_one_value_found_in_two_places_is_one_block_with_startup_file_advice(
     assert "launch env" in source and "~/.bashrc" in source
     assert "take it out of ~/.bashrc" in advice
     shown = claude.statusline().stdout
-    assert shown == _expected(claude) == "weir ⚠ 1 in context · 0 sent → /weir\n"
+    assert shown == _expected(claude) == "weir ⚠ 1 entered · 0 sent → /weir\n"
 
 
 def test_only_what_the_person_typed_starts_a_turn(tmp_path: Path) -> None:

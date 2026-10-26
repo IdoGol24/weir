@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
@@ -30,14 +32,19 @@ from weir.audit import (
     audit_naming,
 )
 from weir.audit.formats import json_lines
+from weir.audit.inputs import Credential
 from weir.audit.text import label
+from weir.canary.text import WITHHELD
 from weir.canary.walk import Json
+from weir.statusline import hook
 from weir.statusline.segment import (
+    NOT_REDACTED,
     NOTHING_TO_CHECK,
     counted,
     inventoried,
     note,
     segment_text,
+    session_files,
     tally,
     value_groups,
 )
@@ -187,10 +194,18 @@ def _in_startup_file(c: CredentialResult) -> bool:
 
 def _advice(
     members: Sequence[CredentialResult], state: State, reached: bool, value_files: Sequence[str],
+    saved: Sequence[str] = (),
 ) -> str:
+    """`saved`: the files among `value_files` that hold a tool output
+    Claude Code saved whole, whose path it gives the agent."""
     if not reached:
         if state is State.UNKNOWN:
             return "open the place named above: the audit cannot tell whether the agent read it"
+        if saved:
+            files, paths = ("that file", "that file's path") if len(saved) == 1 else (
+                "those files", "those files' paths")
+            return ("it has not entered the context, but Claude Code saved a tool output holding"
+                    f" it and gave the agent {paths}: delete {files}")
         return "nothing reached the agent; Claude Code keeps it in the bookkeeping named above"
     parts = ["rotate it at its issuer"]
     for c in members:
@@ -227,8 +242,74 @@ def _heading_and_source(members: Sequence[CredentialResult]) -> tuple[str, str]:
     return heading, "; ".join(dict.fromkeys(sources))
 
 
+# The block of a hit's location in a record's `message.content`.
+_CONTENT_BLOCK = re.compile(r"message\.content\[(\d+)\]")
+# A Windows drive path as the inventory writes it, forward slashes.
+_DRIVE = re.compile(r"[A-Za-z]:/")
+# What a `Read` deny rule covers, as the Claude Code permissions page states it
+# (https://code.claude.com/docs/en/permissions, "What Read and Edit rules cover").
+_DENY_SCOPE = (
+    "; in a Claude Code settings file it stops Claude's Read tool (and, best effort, Grep and"
+    " Glob) reading that file, and the cat, head, tail, sed or tee of it, or a < redirect from"
+    " it, that Claude Code recognizes in a Bash command; it does not stop a script or program"
+    " that opens the file itself, or a command that reads it without naming it, which only"
+    " Claude Code's sandbox stops"
+)
+
+
+def failed_calls(paths: Sequence[str]) -> dict[tuple[str, int], set[int]]:
+    """The tool results Claude Code recorded as a failed call (`is_error`),
+    by file, line and `message.content` block. Claude Code runs no
+    PostToolUse hook for a failed call, so the redaction hook never saw them."""
+    out: dict[tuple[str, int], set[int]] = {}
+    for path in paths:
+        try:
+            data = Path(path).read_bytes()
+        except OSError:
+            continue  # the audit says unknown
+        for line in json_lines(data):
+            record = line.parsed
+            message = record.get("message") if record is not None else None
+            content = message.get("content") if isinstance(message, dict) else None
+            for index, block in enumerate(content if isinstance(content, list) else []):
+                if isinstance(block, dict) and block.get("type") == "tool_result" and (
+                    block.get("is_error") is True
+                ):
+                    out.setdefault((os.path.normpath(path), line.number), set()).add(index)
+    return out
+
+
+def _through_failed_call(hit: Hit, failed: dict[tuple[str, int], set[int]]) -> bool:
+    """A hit in a failed call's result: its block, or the record's copy of
+    the result (`toolUseResult`)."""
+    blocks = failed.get((os.path.normpath(hit.file), hit.line))
+    if not blocks or hit.location is None:
+        return False
+    found = _CONTENT_BLOCK.match(hit.location)
+    return found is None or int(found.group(1)) in blocks
+
+
+def _rule_path(c: Credential) -> str | None:
+    """The path a `Read` deny rule names for the file a credential lives
+    in, anchored as Claude Code reads one: `~/` the home, `//` the
+    filesystem root. A `./` display is the inventory's project, not the
+    session's current directory, so it takes the absolute path. On Windows
+    Claude Code matches a path in POSIX form, `C:/Users` as `/c/Users`.
+    None for one that lives in no file."""
+    if c.source == "environment" or c.path is None:
+        return None
+    if c.display.startswith("~/"):
+        return c.display
+    path = c.path
+    if _DRIVE.match(path):
+        path = f"/{path[0].lower()}{path[2:]}"
+    return f"/{path}" if path.startswith("/") else None
+
+
 def _block(
     members: Sequence[CredentialResult], state: State, all_hits: Sequence[Hit], turns: Turns,
+    failed: dict[tuple[str, int], set[int]], credentials: dict[str, Credential],
+    paths_shown: dict[str, str],
 ) -> Iterator[str]:
     # Records of one value match the same strings: one hit per place.
     hits = list({(h.kind, h.file, h.line, h.location, h.tool, h.argument): h
@@ -246,6 +327,19 @@ def _block(
     ):
         if found:
             yield f"  {what}: {count}, first at {_where(_first(found, turns), turns)}"
+    through = [h for h in entered if _through_failed_call(h, failed)]
+    if through:
+        yield (
+            f"  entered through a failed tool call: {plural(len(through), 'time')}, first at"
+            f" {_where(_first(through, turns), turns)}. Claude Code runs no PostToolUse hook"
+            " for a failed call, so the redaction hook cannot redact it"
+        )
+        rules = [f"Read({path})" for c in members if c.display != WITHHELD
+                 and (path := _rule_path(credentials[c.id])) is not None
+                 and paths_shown.get(path) == path]
+        if rules:
+            snippet = json.dumps({"permissions": {"deny": list(dict.fromkeys(rules))}})
+            yield f"  deny rule: {snippet}{_DENY_SCOPE}"
     value_files = list(dict.fromkeys(h.file for h in hits))
     sits = ", ".join(value_files)
     if entered:
@@ -254,7 +348,9 @@ def _block(
     if tools:
         sits += "; and wherever the " + ", ".join(tools) + " tool call sent it"
     yield f"  now sits in: {sits}"
-    yield f"  advice: {_advice(members, state, bool(entered or sent), value_files)}"
+    saved = list(dict.fromkeys(h.file for h in hits if h.format is Format.CLAUDE_CODE_TOOL_RESULTS))
+    advice = _advice(members, state, bool(entered or sent), value_files, saved)
+    yield f"  advice: {advice}"
 
 
 def _not_inventoried(
@@ -313,14 +409,33 @@ def _not_inventoried(
     ]
 
 
+def _hook_lines(
+    markers: Path | None, transcript: str, session_id: str
+) -> tuple[dict[str, int], set[str]]:
+    """The names the redaction hook kept out, with their counts, and the
+    tool calls it did not finish (docs/statusline.md, "The redaction hook")."""
+    if markers is None:
+        return {}, set()
+    session = markers / session_id
+    kept, failed = hook.session_marks(session, time.time())
+    for path in session_files(transcript, session_id).stepped:
+        try:
+            data = Path(path).read_bytes()
+        except OSError:
+            continue  # the audit says unknown
+        failed |= hook.unredacted_results(data, set(), hook.done_in(session))
+    return kept, failed
+
+
 def report_lines(
     inputs: Inputs, transcript: str, session_id: str, folder: str | None, here: str | None,
-    files: Sequence[Path], claude_config_dirs: Sequence[str],
+    files: Sequence[Path], claude_config_dirs: Sequence[str], markers: Path | None = None,
 ) -> list[str]:
     """The report for one session, whose project folder is `folder` (None:
     unknown), run in the folder `here` (None: it cannot be read) with the
-    inventory `files` (its report, store and key). Raises `AuditInputError` on a file the audit
-    refuses (a FIFO in the session's directory, say)."""
+    inventory `files` (its report, store and key); `markers`: the redaction
+    hook's, when it is installed. Raises `AuditInputError` on a file the
+    audit refuses (a FIFO in the session's directory, say)."""
     paths = [transcript]
     if os.path.isdir(os.path.join(os.path.dirname(transcript), session_id)):
         paths.append(os.path.join(os.path.dirname(transcript), session_id))
@@ -329,20 +444,40 @@ def report_lines(
     named = [] if inside else [
         n for n in (inputs.project, folder, here, *given) if n is not None
     ]
+    # A deny rule's path too: a rule is given only as the audit prints its path.
+    rules = [path for c in inputs.credentials if (path := _rule_path(c)) is not None]
     report, printed = audit_naming(
-        inputs.credentials, inputs.key, inputs.by_fingerprint, paths, claude_config_dirs, named
+        inputs.credentials, inputs.key, inputs.by_fingerprint, paths, claude_config_dirs,
+        [*named, *rules],
     )
-    shown_names = dict(zip(named, printed, strict=True))
+    shown_names = dict(zip([*named, *rules], printed, strict=True))
     found = tally(report)
     groups = value_groups(inputs)
     context, sent = counted(found, inputs)
+    kept, failed = _hook_lines(markers, transcript, session_id)
+    known = {c.name for c in inputs.credentials}  # a marker names nothing else
+    kept = {name: count for name, count in kept.items() if name in known}
     lines = [
-        segment_text(context, sent, unknown=found.unknown, inventoried=inside, pointer=False)
-        if inputs.by_fingerprint else note(NOTHING_TO_CHECK, colour=False)
+        segment_text(
+            context, sent, unknown=found.unknown, inventoried=inside, pointer=False,
+            kept=len(kept), unredacted=bool(failed),
+        ) if inputs.by_fingerprint else note(NOTHING_TO_CHECK, colour=False)
     ]
     shown = next((f.file for f in report.files if f.file == transcript), "[withheld]")
     lines.append(f"session: {shown} ({plural(report.coverage.files, 'file')} read)")
+    if kept:
+        lines.append("kept out by the redaction hook: " + ", ".join(
+            f"{name} ({plural(count, 'time')})" for name, count in sorted(kept.items())
+        ))
+    if failed:
+        lines.append(
+            f"{NOT_REDACTED}: {plural(len(failed), 'tool result')} the redaction hook did not"
+            f" finish; {'its' if len(failed) == 1 else 'their'} output, or"
+            f" {'its' if len(failed) == 1 else 'their'} saved copy, may hold a key"
+        )
     turns = read_turns(transcript)
+    errored = failed_calls(session_files(transcript, session_id).stepped)
+    by_id = {c.id: c for c in inputs.credentials}
     by_credential: dict[str, list[Hit]] = {}
     for hit in report.hits:
         by_credential.setdefault(hit.credential, []).append(hit)
@@ -359,7 +494,7 @@ def report_lines(
     for m, state in blocks:
         lines.append("")
         hits = [h for c in m for h in by_credential.get(c.id, [])]
-        lines.extend(_block(m, state, hits, turns))
+        lines.extend(_block(m, state, hits, turns, errored, by_id, shown_names))
     rest = [m for m in members.values() if m not in reached]
     not_checkable = sum(all(c.state is State.NOT_CHECKABLE for c in m) for m in rest)
     not_found = len(rest) - not_checkable

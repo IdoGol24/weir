@@ -51,7 +51,9 @@ Config, pytest fixture and the full workflow: [weir-run README](https://github.c
 
 A status-line segment counts how many of your real credentials entered the session's context, and how many were sent out in a tool call. `/weir` explains each one: where it came from, the turn that moved it, where it sits now, and what to do. It never shows a value.
 
-![The weir segment beside an existing status line: a green check and "no known key seen", then a warning sign with "2 in context" in amber and "1 sent" in red.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/statusline-states.svg)
+Setup can also add a redaction hook. When a Read, Bash, Grep, Glob or WebFetch result holds one of your inventoried keys as a whole value, in the forms `weir audit` matches, the hook replaces it with `[weir: NAME removed]` before the model sees it, and the status line counts it as kept out. Claude Code's [hooks reference](https://code.claude.com/docs/en/hooks) says this replacement "only changes what Claude sees". For a large output, such as a Bash output past about 30,000 characters, Claude Code also saves the whole output to a file in the session's folder and gives Claude its path ([tools reference](https://code.claude.com/docs/en/tools-reference)). That saved copy holds the original output, written before the hook runs, so the hook also rewrites it the same way, owner-only. If the hook fails, the status line says "possibly not redacted".
+
+![The weir segment beside an existing status line: a green check and "no known key seen", then a warning sign with "2 entered" in amber and "1 sent" in red.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/statusline-states.svg)
 
 ```sh
 uv tool install weir-scan     # or: pipx install weir-scan
@@ -79,6 +81,22 @@ weir statusline setup         # shows the change, applies it only when you type 
 - The inventory covers one project at a time.
 
 The full lists are in [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md) and [docs/statusline.md](https://github.com/IdoGol24/weir/blob/main/docs/statusline.md#what-it-does-not-claim).
+
+The redaction hook:
+
+- It doesn't undo a command that already ran. It only changes what the model reads afterwards.
+- It can't catch a value pasted into the chat.
+- If the hook fails, Claude Code sends the original output. The status line flags that as "possibly not redacted".
+- Claude Code saves a large output whole before the hook runs, and the hook rewrites that saved file afterwards. So the original is in that file for a moment first.
+- The hook does not rewrite a saved output over 256 KiB, or one it cannot search within about 6 seconds of the call: some content, such as very long tokens or dense URL-encoded text, takes far longer to search than its size suggests. That file keeps the original, and the status line flags the call as "possibly not redacted". The result the model sees is still replaced.
+- A large result of dense URL-encoded text, such as a form body of tens of thousands of characters, can take the hook past its timeout. Claude Code then sends the original, and the call is flagged as "possibly not redacted".
+- An agent that is taken over can switch hooks off.
+- It matches whole values only. A key glued to other characters is not matched, and the status line does not see it either.
+- A key inside a PDF that Claude reads is not removed. It shows as entered when the audit can read it, as unknown when the PDF's text is compressed, and not at all when it is written as a PDF hex string or split by kerning.
+- A WebFetch result is what Claude Code's own model wrote after reading the page, so a key in a fetched page has already been read by a model before the hook runs.
+- Claude Code runs the hook only after a tool call succeeds. The output of a failed call, such as a command that exits with an error, reaches the model as it is. A known value in it shows up as "entered", and `/weir` says so and suggests a Claude Code deny rule for the file it came from.
+
+The full list is in [docs/statusline.md](https://github.com/IdoGol24/weir/blob/main/docs/statusline.md#the-redaction-hook).
 
 ## Also in the box
 

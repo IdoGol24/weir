@@ -206,7 +206,7 @@ def test_a_first_scan_cancelled_again_and_again_still_completes(
     expected = sx.segment_for(counts) + "\n"
     shown = {expected, sx.PARTLY_CHECKED + "\n"} if partly else {expected}
     assert kills >= 3, "the scan should have been cancelled again and again"
-    assert expected == "weir ⚠ 2 in context · 1 sent → /weir\n"
+    assert expected == "weir ⚠ 2 entered · 1 sent → /weir\n"
     assert uninterrupted in shown
     assert finished in shown
     assert report.lines[0] == sx.segment_for(counts, pointer=False)

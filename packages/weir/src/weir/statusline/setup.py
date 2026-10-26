@@ -2,14 +2,15 @@
 
 Setup writes a first inventory's files when it took one, the backup (or,
 with no settings file, a marker that it creates one), the command file,
-then `statusLine`; undo writes
-`statusLine` back, removes the command file, then the backup or marker.
-So an interrupted run leaves both usable.
+then `statusLine` and, when chosen, the redaction hook; undo writes
+`statusLine` back and takes the hook out, removes the command file, then the
+backup or marker. So an interrupted run leaves both usable.
 """
 
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import shlex
@@ -20,7 +21,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from weir.statusline import hook
 from weir.statusline.files import write_atomic
+
+# The question setup asks before it adds the redaction hook, and what it
+# suggests when the hook cannot be added.
+HOOK_QUESTION = "Add the redaction hook too?"
+ANSWER_NO = f'answer no to "{HOOK_QUESTION}" to install the status line alone'
 
 
 class SetupError(Exception):
@@ -67,24 +74,43 @@ class Paths:
     def command_file(self) -> Path:
         return self.claude_dir / "commands" / "weir.md"
 
+    @property
+    def markers(self) -> Path:
+        """The redaction hook's markers, a folder per Claude config dir, so
+        undo for one never removes another's: `hook-` and the first 16 hex
+        characters of the SHA-256 of its resolved path. Not keyed: setup
+        with an existing inventory reads no key."""
+        resolved = os.fsencode(os.path.realpath(self.claude_dir))
+        return self.cache / f"hook-{hashlib.sha256(resolved).hexdigest()[:16]}"
+
     def command(self, *args: str) -> str:
         """`weir statusline ARGS` with the inventory files, run by this
         interpreter: it works whatever PATH Claude Code has."""
         inputs = f"--inventory {_q(self.report)} --store {_q(self.store)} --key {_q(self.key)}"
         return " ".join((shlex.quote(sys.executable), "-m weir statusline", *args, inputs))
 
-    def segment(self, inner: str | None) -> str:
-        command = self.command("--cache", _q(self.cache))
+    def _marked(self, with_hook: bool) -> tuple[str, ...]:
+        return ("--markers", _q(self.markers)) if with_hook else ()
+
+    def segment(self, inner: str | None, with_hook: bool = False) -> str:
+        command = self.command("--cache", _q(self.cache), *self._marked(with_hook))
         return command if inner is None else f"{command} --inner {shlex.quote(inner)}"
 
-    def command_file_text(self) -> str:
+    def hook_entry(self) -> dict[str, object]:
+        """The `hooks.PostToolUse` entry for the redaction hook."""
+        command = self.command("hook", *self._marked(True))
+        return {"matcher": "|".join(hook.COVERED), "hooks": [
+            {"type": "command", "command": command, "timeout": hook.TIMEOUT_S}]}
+
+    def command_file_text(self, with_hook: bool = False) -> str:
         """Claude Code runs the `!` line, with the session id put in
         (code.claude.com/docs/en/slash-commands, "Available string
         substitutions"), before the model sees the prompt. The report reads
         the session's project folder from the record the status line keeps
         in the cache, so no folder name is ever part of the command."""
         report = self.command(
-            "report", "--claude-dir", _q(self.claude_dir), "--cache", _q(self.cache))
+            "report", "--claude-dir", _q(self.claude_dir), "--cache", _q(self.cache),
+            *self._marked(with_hook))
         return (
             "---\n"
             "description: Weir session report - which of your credentials reached this session,"
@@ -161,8 +187,9 @@ def _runs_weir(line: object) -> bool:
 
 def _setups(line: object, inner: object) -> bool:
     """The status line setup writes: an interpreter running `-m weir
-    statusline` with the four options it gives, any values, and `--inner`
-    exactly `inner`, the command from before setup, when there was one."""
+    statusline` with the four options it gives (and `--markers` with the
+    hook), any values, and `--inner` exactly `inner`, the command from
+    before setup, when there was one."""
     command = _command(line)
     try:
         words = shlex.split(command) if isinstance(command, str) else []
@@ -172,9 +199,46 @@ def _setups(line: object, inner: object) -> bool:
         return False
     options = dict(zip(words[4::2], words[5::2], strict=True))
     names = {"--cache", "--inventory", "--store", "--key", *(["--inner"] if inner else [])}
-    return len(options) == len(words[4:]) // 2 and set(options) == names and (
-        not inner or options["--inner"] == inner
+    return len(options) == len(words[4:]) // 2 and set(options) - names <= {"--markers"} and (
+        names <= set(options) and (not inner or options["--inner"] == inner)
     )
+
+
+def _weir_hook(group: object) -> bool:
+    """A `hooks.PostToolUse` entry that runs the redaction hook."""
+    return " -m weir statusline hook " in json.dumps(group)
+
+
+def _hooks(path: Path, settings: dict[str, object]) -> tuple[dict[str, object], list[object]]:
+    hooks = settings.get("hooks", {})
+    post = cast("dict[str, object]", hooks).get("PostToolUse", []) if isinstance(
+        hooks, dict) else None
+    if not isinstance(post, list):
+        raise SetupError(f"{path}: hooks is not an object of lists; nothing changed", 2)
+    return cast("dict[str, object]", hooks), cast("list[object]", post)
+
+
+def _with_hook(path: Path, settings: dict[str, object], entry: object) -> dict[str, object]:
+    """`settings` with `entry` last in `hooks.PostToolUse`."""
+    hooks, post = _hooks(path, settings)
+    if any(_weir_hook(group) for group in post):
+        raise SetupError(f"{path}: hooks.PostToolUse already runs the weir redaction hook")
+    return {**settings, "hooks": {**hooks, "PostToolUse": [*post, entry]}}
+
+
+def _without_hook(
+    path: Path, settings: dict[str, object], was: dict[str, object]
+) -> dict[str, object]:
+    """`settings` with the redaction hook taken out, and the `hooks` and
+    `PostToolUse` setup added for it, when there were none before setup."""
+    hooks, post = _hooks(path, settings)
+    kept = [group for group in post if not _weir_hook(group)]
+    rest = {k: v for k, v in hooks.items() if k != "PostToolUse"}
+    if kept or "PostToolUse" in _hooks(path, was)[0]:
+        rest = {**hooks, "PostToolUse": kept}
+    if rest or "hooks" in was:
+        return {**settings, "hooks": rest}
+    return {k: v for k, v in settings.items() if k != "hooks"}
 
 
 @dataclass(frozen=True)
@@ -184,6 +248,8 @@ class Plan:
     remove: bool = False  # undo: remove the settings file, there was none before setup
     beside: bool = False  # an existing status line command runs beside the segment
     command_text: str | None = None
+    with_hook: bool = False  # setup adds the redaction hook; undo takes it out
+    markers: Path | None = None  # undo: the hook's markers, removed with it
 
 
 def refuse_windows() -> None:
@@ -196,7 +262,7 @@ def refuse_windows() -> None:
         )
 
 
-def plan_setup(paths: Paths) -> Plan:
+def plan_setup(paths: Paths, with_hook: bool = False) -> Plan:
     refuse_windows()
     for path in (Path(sys.executable), paths.claude_dir, paths.cache, paths.report, paths.store,
                  paths.key):
@@ -220,13 +286,18 @@ def plan_setup(paths: Paths) -> Plan:
     inner = old_line.get("command")
     if inner is not None and not isinstance(inner, str):
         raise SetupError(f"{paths.settings}: statusLine.command is not a string", 2)
-    text = paths.command_file_text()
+    text = paths.command_file_text(with_hook)
     existing = _read(paths.command_file)
     if existing is not None and existing != text.encode():
         raise SetupError(f"{paths.command_file} exists; setup does not overwrite it")
-    line = {**old_line, "type": "command", "command": paths.segment(inner or None)}
-    after = _json({**settings, "statusLine": line})
-    return Plan(before, after, beside=bool(inner), command_text=None if existing else text)
+    line = {**old_line, "type": "command", "command": paths.segment(inner or None, with_hook)}
+    after = {**settings, "statusLine": line}
+    if with_hook:
+        after = _with_hook(paths.settings, after, paths.hook_entry())
+    return Plan(
+        before, _json(after), beside=bool(inner), command_text=None if existing else text,
+        with_hook=with_hook,
+    )
 
 
 def plan_undo(paths: Paths) -> Plan | None:
@@ -237,7 +308,16 @@ def plan_undo(paths: Paths) -> Plan | None:
     current = _read(paths.settings)
     now, was = _settings(paths.settings, current), _settings(paths.backup, backup)
     line, old = now.get("statusLine"), was.get("statusLine")
-    if line == old and (current is not None or backup is None):
+    try:  # a `hooks` value setup could not have added the hook to holds none
+        entry = next((g for g in _hooks(paths.settings, now)[1] if _weir_hook(g)), None)
+    except SetupError:
+        entry = None
+    try:  # nor do settings that ran it before setup: that one is left as it is
+        if any(_weir_hook(g) for g in _hooks(paths.backup, was)[1]):
+            entry = None
+    except SetupError:
+        pass
+    if line == old and entry is None and (current is not None or backup is None):
         return Plan(current, None)  # setup never got to the settings, or undo already ran
     if not _setups(line, _command(old)):
         message = (
@@ -249,15 +329,39 @@ def plan_undo(paths: Paths) -> Plan | None:
             f"{paths.settings}: its status line is no longer the one setup wrote (changed or"
             f" removed since); nothing changed.{message} {marker} and {paths.command_file}"
         )
-    if current == _json({**was, "statusLine": line}):
+    hooked = entry is not None
+    handlers = cast("dict[str, list[object]]", entry or {}).get("hooks", [])
+    markers = _markers_of([*handlers, line])
+    written = {**was, "statusLine": line}
+    if current == _json(_with_hook(paths.settings, written, entry) if hooked else written):
         # Nothing else changed: the bytes before setup.
-        return Plan(current, backup, remove=backup is None)
-    if "statusLine" in was:
-        return Plan(current, _json({**now, "statusLine": old}))
-    return Plan(current, _json({k: v for k, v in now.items() if k != "statusLine"}))
+        return Plan(current, backup, remove=backup is None, with_hook=hooked, markers=markers)
+    restored = _without_hook(paths.settings, now, was) if hooked else now
+    if "statusLine" not in was:
+        restored = {k: v for k, v in restored.items() if k != "statusLine"}
+    else:
+        restored = {**restored, "statusLine": old}
+    return Plan(current, _json(restored), with_hook=hooked, markers=markers)
 
 
-def describe(paths: Paths, plan: Plan, *, undo: bool) -> list[str]:
+def _markers_of(handlers: list[object]) -> Path | None:
+    """The `--markers` folder the first of these commands names: the
+    redaction hook's, or the status line's when the hook was taken out by
+    hand."""
+    for handler in handlers:
+        command = _command(handler)
+        try:
+            words = shlex.split(command) if isinstance(command, str) else []
+        except ValueError:
+            continue
+        if "--markers" in words[:-1]:
+            return Path(words[words.index("--markers") + 1])
+    return None
+
+
+def describe(
+    paths: Paths, plan: Plan, *, undo: bool, hook_problem: str | None = None
+) -> list[str]:
     """Never the existing status line command: it may hold a credential."""
     new = not undo and plan.before is None
     lines = [f"settings: {paths.settings}" + (" (new file)" if new else "")]
@@ -275,11 +379,35 @@ def describe(paths: Paths, plan: Plan, *, undo: bool) -> list[str]:
         lines.append("  there is no settings file yet; setup creates it" if new else
                      f"  every other setting is kept; its bytes now are kept in {paths.backup}")
     if undo:
+        if plan.with_hook:
+            lines.append("  this takes the weir redaction hook out of hooks.PostToolUse")
         lines.append(f"remove {paths.command_file} and {paths.marker()}")
-    elif plan.command_text is not None:
+        if plan.markers is not None:
+            lines.append(f"remove the redaction hook's markers in {plan.markers}")
+        return lines
+    if plan.command_text is not None:
         lines.append(f"command file: {paths.command_file} (new), for /weir:")
         lines.extend("  | " + line for line in plan.command_text.splitlines())
-    return lines
+    if hook_problem is not None:
+        return [*lines, f"redaction hook: cannot be added: {hook_problem}",
+                f"  {ANSWER_NO}"]
+    entry = paths.hook_entry()
+    tools = ", ".join(hook.COVERED[:-1]) + " and " + hook.COVERED[-1]
+    hooked = paths.command_file_text(True).splitlines()
+    allowed = next(line for line in hooked if line.startswith("allowed-tools:"))
+    report = next(line for line in hooked if line.startswith("!"))
+    return [
+        *lines,
+        f'redaction hook, added only when you also answer yes to "{HOOK_QUESTION}":',
+        f"  hooks.PostToolUse, matcher {entry['matcher']}, timeout {hook.TIMEOUT_S} s:"
+        f" {_command(cast('list[object]', entry['hooks'])[0])}",
+        f"  it replaces each inventoried key in a {tools} result with [weir: NAME removed]"
+        " before the model sees it",
+        f"  with it, statusLine runs: {paths.segment(None, True)}"
+        + (" (and your existing command as --inner, not shown)" if plan.beside else ""),
+        f"  with it, {paths.command_file.name} has: {allowed}",
+        f"  and runs: {report}",
+    ]
 
 
 def apply(
@@ -302,6 +430,9 @@ def apply(
                 target = paths.command_file
                 target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 write_atomic(target, plan.command_text.encode(), 0o600)
+        if undo and plan.markers is not None:
+            target = plan.markers
+            hook.remove_markers(plan.markers)
         target = paths.settings
         if plan.remove:
             target.unlink()  # undo: there was none before setup
