@@ -6,7 +6,8 @@ put it in the context or sent it out, where it now sits, and what to do.
 Every string it prints came out of the audit report, which already applied
 the audit's printing rule, or is a number, a fixed word, a session line
 number, or a folder or inventory path it was given or the inventory
-names. It never prints a value.
+names, under the audit's printing rule for a path with a key's shape
+looked for in each segment. It never prints a value.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 
@@ -25,9 +26,8 @@ from weir.audit import (
     Hit,
     Inputs,
     Kind,
-    Report,
     State,
-    audit_files,
+    audit_naming,
 )
 from weir.audit.formats import json_lines
 from weir.audit.text import label
@@ -258,19 +258,23 @@ def _block(
 
 
 def _not_inventoried(
-    inputs: Inputs, folder: str | None, here: str | None, files: Sequence[Path]
+    inputs: Inputs, folder: str | None, here: str | None, files: Sequence[str],
+    shown: Mapping[str, str],
 ) -> list[str]:
     """Why a session outside the inventory's project, or whose project
     folder the status line has not recorded, is never green, and how to
-    switch the inventory (`files`: its report, store and key) to its
-    folder, else to `here`, the current folder (None: it cannot be read).
-    None when `here` is in the project already, and never a folder that
-    holds the home: its walk would read the whole home."""
-    project = "none" if inputs.project is None else inputs.project
+    switch the inventory (`files`: its report, store and key, absolute) to
+    its folder, else to `here`, the current folder (None: it cannot be
+    read). None when `here` is in the project already, and never a folder
+    that holds the home: its walk would read the whole home. Each folder
+    and file is printed as `shown` maps it; the command for a folder printed
+    otherwise is run in it, and one for a file printed otherwise is shown
+    with a placeholder for each inventory path."""
+    project = "none" if inputs.project is None else shown[inputs.project]
     target = here if folder is None else folder
     lines = [
         "",
-        f"project: {folder} is not the inventoried project ({project}),"
+        f"project: {shown[folder]} is not the inventoried project ({project}),"
         " so keys in its files are not known"
         if folder is not None else
         "project: the session's project folder is not known yet (the status line records it"
@@ -280,17 +284,30 @@ def _not_inventoried(
         return [*lines, "  no switch command: the current folder cannot be read"]
     if folder is None and inventoried(inputs.project, here):
         return lines
+    name = shown[target]
     if holds_home(target, Path.home()):
-        return [*lines, f"  no switch command: {target} is or holds your home, and walking it"
+        return [*lines, f"  no switch command: {name} is or holds your home, and walking it"
                         " as the project would read the whole home"]
-    report, store, key = (shlex.quote(str(path.absolute())) for path in files)
+    switch_to = "this folder" if folder is not None else f"the current folder, {name}"
+    if any(shown[path] != path for path in files):
+        report, store, key = (f"<the inventory's {part}>" for part in ("report", "store", "key"))
+        how = [
+            "  no switch command shown: a path in it holds part of a key, reads like one, or holds"
+            f" a character the report does not print. To switch the inventory to {switch_to}, run"
+            " this in it from the shell Claude Code starts from, with the inventory's own paths in"
+            " place of the <...> parts:",
+            f"    {inventory_command('.', report, store, key)}",
+        ]
+    else:
+        report, store, key = (shlex.quote(path) for path in files)
+        withheld = name != target
+        how = [
+            f"  to switch the inventory to {switch_to}, run{' in it' if withheld else ''} from"
+            " the shell Claude Code starts from:",
+            f"    {inventory_command('.' if withheld else target, report, store, key)}",
+        ]
     return [
-        *lines,
-        "  to switch the inventory to this folder, run from the shell Claude Code starts from:"
-        if folder is not None else
-        f"  to switch the inventory to the current folder, {target}, run from the shell"
-        " Claude Code starts from:",
-        f"    {inventory_command(target, report, store, key)}",
+        *lines, *how,
         *([] if inputs.project is None
           else ["  the earlier project's keys then stop being counted"]),
     ]
@@ -307,13 +324,18 @@ def report_lines(
     paths = [transcript]
     if os.path.isdir(os.path.join(os.path.dirname(transcript), session_id)):
         paths.append(os.path.join(os.path.dirname(transcript), session_id))
-    report: Report = audit_files(
-        inputs.credentials, inputs.key, inputs.by_fingerprint, paths, claude_config_dirs
+    inside = inventoried(inputs.project, folder)
+    given = [str(path.absolute()) for path in files]
+    named = [] if inside else [
+        n for n in (inputs.project, folder, here, *given) if n is not None
+    ]
+    report, printed = audit_naming(
+        inputs.credentials, inputs.key, inputs.by_fingerprint, paths, claude_config_dirs, named
     )
+    shown_names = dict(zip(named, printed, strict=True))
     found = tally(report)
     groups = value_groups(inputs)
     context, sent = counted(found, inputs)
-    inside = inventoried(inputs.project, folder)
     lines = [
         segment_text(context, sent, unknown=found.unknown, inventoried=inside, pointer=False)
         if inputs.by_fingerprint else note(NOTHING_TO_CHECK, colour=False)
@@ -350,5 +372,5 @@ def report_lines(
         subject = "" if unknown.subject is None else f" {unknown.subject}"
         lines.append(f"unknown: {unknown.reason.value}{subject}")
     if not inside:
-        lines.extend(_not_inventoried(inputs, folder, here, files))
+        lines.extend(_not_inventoried(inputs, folder, here, given, shown_names))
     return lines

@@ -11,6 +11,7 @@ the same report.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
@@ -179,10 +180,19 @@ class _Printer:
         return out
 
     def path(self, text: str) -> str:
+        return self._path(text, [text])
+
+    def named(self, text: str) -> str:
+        """`path` for a folder or file named beside the report, but a key's
+        shape is looked for in each segment: an ordinary folder's segments
+        joined can read as a long random run."""
+        return self._path(text, re.split(r"[\\/]", text))
+
+    def _path(self, text: str, parts: Sequence[str]) -> str:
         flat = flatten_untrusted(text)
         if self._display.holds_value(text) or self._display.holds_value(flat):
             return WITHHELD
-        return WITHHELD if looks_secret_shaped(text) else flat
+        return WITHHELD if any(looks_secret_shaped(part) for part in parts) else flat
 
 
 def _location(segments: Sequence[Segment], shown: Callable[[str], str]) -> str:
@@ -256,6 +266,21 @@ def audit_files(
     paths: Sequence[str],
     claude_config_dirs: Sequence[str] = (),
 ) -> Report:
+    return audit_naming(credentials, key, by_fingerprint, paths, claude_config_dirs)[0]
+
+
+def audit_naming(
+    credentials: Sequence[Credential],
+    key: bytes,
+    by_fingerprint: dict[bytes, tuple[str, ...]],
+    paths: Sequence[str],
+    claude_config_dirs: Sequence[str] = (),
+    named: Sequence[str] = (),
+) -> tuple[Report, list[str]]:
+    """`audit_files`, and each of `named`, paths the caller prints beside
+    the report, as the report prints a path but with a key's shape looked
+    for in each segment: checked against the store like every path, so a
+    value in one is withheld in the report too."""
     # A given path that does not exist was not read: it is not scanned, and
     # never an error, so a missing sessions directory reads as unknown.
     missing = [path for path in paths if not os.path.lexists(path)]
@@ -272,7 +297,9 @@ def audit_files(
         )
     except CaptureError as exc:
         raise AuditInputError(str(exc).replace("capture ", "file ", 1)) from None
-    return _report(credentials, by_fingerprint, matcher, capture, missing, claude_config_dirs)
+    return _report(
+        credentials, by_fingerprint, matcher, capture, missing, claude_config_dirs, named=named
+    )
 
 
 def audit_chunks(
@@ -289,7 +316,7 @@ def audit_chunks(
     return _report(
         inputs.credentials, inputs.by_fingerprint, matcher, capture, [], claude_config_dirs,
         as_format,
-    )
+    )[0]
 
 
 def _report(
@@ -300,7 +327,8 @@ def _report(
     missing: Sequence[str],
     claude_config_dirs: Sequence[str],
     as_format: Format | None = None,
-) -> Report:
+    named: Sequence[str] = (),
+) -> tuple[Report, list[str]]:
     projects_dirs = [PurePath(os.path.abspath(d), "projects") for d in claude_config_dirs]
     auditor = _Auditor(matcher, by_fingerprint)
     files: list[_File] = []
@@ -334,8 +362,8 @@ def _report(
 
     # Every path the report prints is checked against the store first, so a
     # value that is only in a file name is withheld like a found one.
-    for file in files:
-        matcher.path_holds_value(file.path)
+    for path in [*(file.path for file in files), *named]:
+        matcher.path_holds_value(path)
     shown = _Printer(auditor.matcher.found)
     labels = {
         c.id: (shown(c.name), shown(c.display), shown(c.scope) if c.scope else "", c.id)
@@ -424,7 +452,7 @@ def _report(
     return Report(
         schema=AUDIT_SCHEMA, result=result, exit_code=EXIT_CODES[result], credentials=rows,
         hits=hits, files=file_rows, unknown=unknown, coverage=coverage,
-    )
+    ), [shown.named(path) for path in named]
 
 
 def audit_paths(
