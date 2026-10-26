@@ -1,7 +1,7 @@
 """The README's two status lines are real CLI output, and cannot go stale.
 
 docs/assets/statusline-states.svg shows the segment in its two states
-beside a stand-in for an existing status line: nothing exposed, and
+beside a stand-in for an existing status line: no known key seen, and
 exposed with counts. Each line is a live `weir statusline --inner` run over
 a fake session (statusline_demo.py), so this test regenerates the image and
 compares bytes, and checks it shows exactly what those runs print, in the
@@ -38,7 +38,7 @@ def _root() -> ET.Element:
     return ET.fromstring(demo.STATES_ASSET.read_bytes())
 
 
-def test_the_two_states_are_nothing_exposed_and_exposed(live: list[demo.State]) -> None:
+def test_the_two_states_are_no_known_key_seen_and_exposed(live: list[demo.State]) -> None:
     # What each line should say comes from `weir audit` of its session,
     # through the counting rule, never from the segment's own output.
     clean, exposed = live

@@ -51,7 +51,7 @@ Config, pytest fixture and the full workflow: [weir-run README](https://github.c
 
 A status-line segment counts how many of your real credentials entered the session's context, and how many were sent out in a tool call. `/weir` explains each one: where it came from, the turn that moved it, where it sits now, and what to do. It never shows a value.
 
-![The weir segment beside an existing status line: a green check and "nothing exposed", then a warning sign with "2 in context" in amber and "1 sent" in red.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/statusline-states.svg)
+![The weir segment beside an existing status line: a green check and "no known key seen", then a warning sign with "2 in context" in amber and "1 sent" in red.](https://raw.githubusercontent.com/IdoGol24/weir/main/docs/assets/statusline-states.svg)
 
 ```sh
 uv tool install weir-scan     # or: pipx install weir-scan
@@ -64,7 +64,7 @@ weir statusline setup         # shows the change, applies it only when you type 
 
 - **It doesn't guess.** It looks for the exact values it planted, raw or encoded, so a hit is a real leak.
 - **It checks every way out:** spans, logs, metrics, console output, prompts sent to the model, and requests to any other service. On Linux, where unprivileged user namespaces are allowed, the agent runs with no outside network, so a direct connection is caught too.
-- **No false all-clear.** If something you marked required wasn't exercised, the result is "incomplete", never "clean". Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
+- **No false all-clear in the test rig.** In a `weir-run` test, if something you marked required wasn't exercised, the result is "incomplete", never "clean". Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
 - **Offline and deterministic.** No AI model decides anything, and Weir itself sends nothing anywhere. Tests enforce both.
 
 **Found with Weir:** [GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security/advisories/GHSA-j7qq-vr8c-xvw3), an MLflow advisory, fixed in 3.17.0.
@@ -75,8 +75,10 @@ weir statusline setup         # shows the change, applies it only when you type 
 - It sees only what the agent sends while the test runs.
 - Network isolation is Linux-only and needs unprivileged user namespaces. Elsewhere the report says the network wasn't isolated.
 - The fake model speaks the OpenAI-compatible and Anthropic Messages APIs.
+- The status line knows only the keys in your inventory, as whole values. A key that leaves inside a file or by its variable name isn't seen.
+- The inventory covers one project at a time.
 
-The full list is in [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
+The full lists are in [docs/canary.md](https://github.com/IdoGol24/weir/blob/main/docs/canary.md) and [docs/statusline.md](https://github.com/IdoGol24/weir/blob/main/docs/statusline.md#what-it-does-not-claim).
 
 ## Also in the box
 

@@ -15,6 +15,7 @@ of docs/statusline.md, never from the status line's own output.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -83,9 +84,17 @@ class Claude:
         s = self.setup
         return ["--inventory", str(s.report), "--store", str(s.store), "--key", str(s.key)]
 
+    def project(self) -> str:
+        """The project folder the inventory walked, as its report names it."""
+        project = json.loads(self.setup.report.read_text())["inputs"]["project"]
+        assert isinstance(project, str)
+        return project
+
     def env(self) -> dict[str, str]:
-        """The environment the commands run with: the fake home only."""
-        return {"HOME": str(self.setup.home), "CLAUDE_CONFIG_DIR": str(self.config)}
+        """The environment the commands run with: the fake home only, as
+        Path.home() reads it on POSIX (HOME) and on Windows (USERPROFILE)."""
+        home = str(self.setup.home)
+        return {"HOME": home, "USERPROFILE": home, "CLAUDE_CONFIG_DIR": str(self.config)}
 
     def invoke(
         self, args: Sequence[str], stdin: str | None = None,
@@ -97,13 +106,31 @@ class Claude:
         )
         return Run(result.exit_code, result.stdout, result.stderr)
 
+    def report(
+        self, session_id: str = fx.SESSION_ID, *, folder: str | None = None,
+        cwd: str | None = None,
+    ) -> Run:
+        """`weir statusline report` as /weir runs it, once the status line
+        ran for the session with its project folder `folder`, else the
+        inventory's project ("": the status line has not run), from the
+        session shell's folder `cwd`, else the inventory's project."""
+        if folder != "":
+            self.statusline(session_id, folder=folder, extra=["--budget-ms", "0"])
+        args = ["statusline", "report", *self.inputs(), "--session", session_id,
+                "--cache", str(self.state)]
+        with contextlib.chdir(cwd or self.project()):
+            return self.invoke(args)
+
     def statusline(
         self, session_id: str = fx.SESSION_ID, *, transcript: Path | None = None,
-        extra: Sequence[str] = (),
+        extra: Sequence[str] = (), folder: str | None = None,
     ) -> Run:
-        """`weir statusline` as Claude Code runs it: the session JSON on stdin.
-        Its words only, NO_COLOR set: test_statusline_look.py checks the colours."""
-        payload = status_json(transcript or self.transcript(session_id), session_id)
+        """`weir statusline` as Claude Code runs it: the session JSON on stdin,
+        its project folder `folder`, else the inventory's project. Its words
+        only, NO_COLOR set: test_statusline_look.py checks the colours."""
+        payload = status_json(
+            transcript or self.transcript(session_id), session_id, folder or self.project()
+        )
         args = ["statusline", *self.inputs(), "--cache", str(self.state), *extra]
         return self.invoke(args, stdin=payload, env=NO_COLOR)
 
@@ -129,7 +156,7 @@ class Claude:
         self, *, env: Mapping[str, str] | None = None, extra: Sequence[str] = ()
     ) -> Run:
         """`weir statusline` in a process of its own, the session JSON on stdin."""
-        payload = status_json(self.transcript(), fx.SESSION_ID)
+        payload = status_json(self.transcript(), fx.SESSION_ID, self.project())
         args = ["statusline", *self.inputs(), "--cache", str(self.state), *extra]
         return self.process(args, payload, env)
 
@@ -200,15 +227,17 @@ def without_credentials(claude: Claude, *, bashrc: str | None = None) -> None:
     claude.setup = dataclasses.replace(claude.setup, report=report, store=store, key=key, ids=ids)
 
 
-def status_json(transcript: Path, session_id: str) -> str:
+def status_json(transcript: Path, session_id: str, folder: str | None) -> str:
     """The JSON Claude Code passes a status line command on stdin (the
-    documented fields this command reads, plus a few it ignores)."""
+    documented fields this command reads, plus a few it ignores), the
+    session's project folder `folder`, or none."""
+    workspace = {} if folder is None else {"current_dir": folder, "project_dir": folder}
     return json.dumps({
         "session_id": session_id,
         "transcript_path": str(transcript),
-        "cwd": "/fake/home/work/proj",
+        **({} if folder is None else {"cwd": folder}),
         "model": {"id": "fake-model", "display_name": "Fake"},
-        "workspace": {"current_dir": "/fake/home/work/proj"},
+        "workspace": workspace,
         "context_window": {"used_percentage": 12},
     })
 
@@ -298,15 +327,19 @@ def counts_for(context: int, sent: int, *, colour: bool = False) -> str:
 
 
 def segment_for(
-    counts: tuple[int, int, bool], *, colour: bool = False, pointer: bool = True
+    counts: tuple[int, int, bool], *, colour: bool = False, pointer: bool = True,
+    inside: bool = True,
 ) -> str:
-    """The segment docs/statusline.md prints for finished counts; the
-    /weir report's first line without the pointer."""
+    """The segment docs/statusline.md prints for finished counts, in the
+    inventory's project or, not `inside`, outside it; the /weir report's
+    first line without the pointer."""
     context, sent, incomplete = counts
     if not (context or sent):
         if incomplete:
             return f"weir {paint('unknown', DIM, colour)}"
-        return f"weir {paint('✓ nothing exposed', GREEN, colour)}"
+        if not inside:
+            return f"weir {paint('project not inventoried', DIM, colour)}"
+        return f"weir {paint('✓ no known key seen', GREEN, colour)}"
     line = f"weir {counts_for(context, sent, colour=colour)}"
     if incomplete:
         line += f" · {paint('part unknown', DIM, colour)}"
@@ -320,14 +353,17 @@ SCANNING_LINE = re.compile(r"weir (⚠ \d+ in context · \d+ sent · )?scanning�
 # --- running a settings command the way Claude Code does ---------------------
 
 
-def run_shell(command: str, stdin: str, env: Mapping[str, str]) -> Run:
+def run_shell(
+    command: str, stdin: str, env: Mapping[str, str], cwd: str | None = None
+) -> Run:
     """Run a status line command in a shell, with the session JSON on stdin,
-    as Claude Code does. The environment holds the fake home and PATH.
-    Windows' "\r\n" line ends in the output read back as "\n"."""
+    as Claude Code does, from `cwd`, else this directory. The environment
+    holds the fake home and PATH. Windows' "\r\n" line ends in the output
+    read back as "\n"."""
     full = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env}
     proc = subprocess.run(
         ["sh", "-c", command], input=stdin.encode(), capture_output=True, env=full, timeout=120,
-        check=False,
+        cwd=cwd, check=False,
     )
 
     def text(data: bytes) -> str:

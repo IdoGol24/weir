@@ -260,7 +260,7 @@ def test_a_saved_output_that_holds_an_old_session_is_stored_not_sent(tmp_path: P
     formats = {f["format"] for f in audit["files"]}  # type: ignore[union-attr]
     assert "claude-code-tool-results" in formats
     assert sx.expected_counts(claude.setup, audit) == (0, 0, False)
-    assert run.stdout == "weir ✓ nothing exposed\n"
+    assert run.stdout == "weir ✓ no known key seen\n"
 
 
 @pytest.mark.parametrize("stdin", ["not json", "[]", '{"session_id": "x"}'])
@@ -448,7 +448,7 @@ def test_a_long_record_not_searched_within_the_time_bound_leaves_the_session_par
     while _offsets(claude) != [end]:  # read on past it
         assert len(shown) < 20, shown
         shown.append(claude.statusline(extra=["--budget-ms", "0"]).stdout)
-    report = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
+    report = claude.report(fx.SESSION_ID)
 
     assert path.stat().st_size > 2 * segment.LONG_RECORD_BYTES
     counts = sx.expected_counts(claude.setup, claude.audit())
@@ -683,7 +683,8 @@ def test_the_existing_commands_children_are_stopped_when_the_run_is_cancelled(
         env={**claude.env(), "PATH": os.environ.get("PATH", "")},
     )
     assert run.stdin is not None
-    run.stdin.write(sx.status_json(claude.transcript(), fx.SESSION_ID).encode())
+    payload = sx.status_json(claude.transcript(), fx.SESSION_ID, claude.project())
+    run.stdin.write(payload.encode())
     run.stdin.close()
     deadline = time.monotonic() + 10
     while not pid_file.exists():
@@ -940,7 +941,7 @@ def test_setup_refuses_on_windows_and_changes_nothing(
 
 
 def _report(claude: sx.Claude) -> dict[str, list[str]]:
-    run = claude.invoke(["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID])
+    run = claude.report(fx.SESSION_ID)
     assert run.exit_code == 0, run.stderr
     cfx.assert_value_free(run.stdout, claude.setup.values.values())
     blocks: dict[str, list[str]] = {}

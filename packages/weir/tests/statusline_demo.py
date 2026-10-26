@@ -76,9 +76,7 @@ def outputs() -> Outputs:
             run = claude.statusline_process(extra=["--budget-ms", "0"])
             assert run.exit_code == 0, run.stderr
             frames.append(run.stdout.rstrip("\n"))
-        report = claude.invoke(
-            ["statusline", "report", *claude.inputs(), "--session", fx.SESSION_ID]
-        )
+        report = claude.report(fx.SESSION_ID)
         assert report.exit_code == 0, report.stderr
         transcript = claude.transcript()
         shown = "~/" + transcript.relative_to(claude.setup.home).as_posix()

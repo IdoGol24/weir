@@ -30,9 +30,21 @@
   session, the inventoried credentials that entered the agent's context
   and those sent in a tool call (`weir ⚠ 2 in context · 1 sent → /weir`,
   the first count amber and the second red, a zero dim), says
-  `weir ✓ nothing exposed` in green only for a session read to its end
-  with nothing found, shows a dim `nothing to check` rather than the
-  check when the inventory holds no credential weir can check, shows a dim `unknown`
+  `weir ✓ no known key seen` in green only for a session read to its end
+  with nothing found in the inventory's project (it knows only the
+  inventory's keys, as whole values), shows a dim `weir project not
+  inventoried` in its place when the session's project folder
+  (`workspace.project_dir`, else `cwd`) is not that project or under it,
+  or the inventory has none (a folder that is not an absolute path, or
+  holds a NUL, counts as none), and `/weir`, which reads the same folder
+  from the record the segment keeps per session in its `--cache` (no
+  folder name is ever part of the command; a refresh with no folder
+  removes the record; setup refuses a path for `/weir` that holds a `$`),
+  then gives the command that switches its
+  inventory to this folder
+  (never the home or a folder that holds it),
+  shows a dim `nothing to check` rather than the check when the
+  inventory holds no credential weir can check, shows a dim `unknown`
   rather than a false zero, and reads a long session in checkpointed
   steps (a dim `scanning… P%`). Every
   coloured part resets after itself, so the status line beside it keeps
@@ -55,10 +67,14 @@
   setup takes one of the standard credential locations in the home, the
   shell startup files and the launch environment, with the shell it runs
   in taken as the environment Claude Code starts with, and shows it by
-  name, source and location only (never a value) before the `yes`. It
-  walks no project directory, whatever directory it runs in, and the
-  preview says so. Nothing is
-  written before the exact `yes`, `--dry-run` writes nothing, and on `yes`
+  name, source and location only (never a value) before the `yes`. Before
+  taking it, setup names the current folder and offers to include its
+  files as the project; only an exact `yes` includes it, and the preview
+  names the project folder, or says none is included, that the status
+  line then never shows `✓ no known key seen`, and the command that
+  includes one later. The home, or a folder that holds it, is never
+  offered: its walk would read the whole home. Nor is a current folder
+  that cannot be read. Nothing is written before the exact `yes`, `--dry-run` writes nothing, and on `yes`
   it writes the key (only when there is none: a key file others can read
   is refused, never repaired), the store, the unknown variable names and
   the report, all owner-only, then the settings. An inventory already at
@@ -66,9 +82,12 @@
   default store and key, the preview prints the command that refreshes
   the inventory, run from the shell Claude Code starts from:
   `weir inventory --home ~ --no-project --process-env --json --store
-  ~/.weir/store.json > ~/.weir/inventory.json` (replace `--no-project` by
-  `--project DIR` to include a project's files). The status line picks up
-  the new report on its next refresh, so no second setup is needed.
+  ~/.weir/store.json > ~/.weir/inventory.json`, with `--project DIR` in
+  place of `--no-project` when the inventory has a project. It holds one
+  project at a time: the same command with another `--project DIR`
+  switches the project, and any earlier project's keys then stop being
+  counted. The status line picks up the new report on its next refresh,
+  so no second setup is needed.
   `undo` leaves `~/.weir` in place.
 - **weir-scan: `weir statusline setup` and `undo` refuse plainly when they
   cannot write.** A read-only Claude config directory or `commands/`, or
@@ -77,9 +96,9 @@
   undo`). `settings.json` is never left half written.
 - **weir-scan: `weir inventory --no-project`.** It walks no project
   directory and reads no map; the report's `inputs.project` is null, as in
-  `weir statusline setup`'s first inventory. It is refused (exit 2) with
-  `--project`, `--gitleaks` or `--trufflehog`. Without it, `weir inventory`
-  behaves as before.
+  a `weir statusline setup` first inventory with no project folder. It is
+  refused (exit 2) with `--project`, `--gitleaks` or `--trufflehog`.
+  Without it, `weir inventory` behaves as before.
 - **weir-scan: a fingerprint key file others can read is refused.** This
   applies to `weir inventory`, `weir audit` and `weir statusline` alike: a
   key file another user owns, or that others can read or write, is exit 2.

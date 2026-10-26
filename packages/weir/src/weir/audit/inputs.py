@@ -54,6 +54,8 @@ class Inputs:
     credentials: list[Credential]
     # fingerprint -> the ids of every credential with that value
     by_fingerprint: dict[bytes, tuple[str, ...]]
+    # The project directory the inventory walked; None: none.
+    project: str | None
 
 
 def fingerprint(key: bytes, data: bytes) -> bytes:
@@ -152,4 +154,5 @@ def load_inputs(report_path: Path, store_path: Path, key_path: Path) -> Inputs:
     return Inputs(
         key=key, credentials=credentials,
         by_fingerprint={fp: tuple(sorted(ids)) for fp, ids in by_fingerprint.items()},
+        project=report.inputs.project,
     )
