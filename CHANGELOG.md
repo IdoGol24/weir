@@ -1,5 +1,63 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`weir statusline hook`: a redaction hook for Claude Code
+  (experimental).** A `PostToolUse` hook for Read, Bash, Grep, Glob and
+  WebFetch results, with a 10 second timeout, that replaces each
+  inventoried credential with `[weir: NAME removed]` before the model sees
+  it. It finds values by keyed fingerprint, in every form `weir audit`
+  matches, and holds no plaintext key; a base64 or hex value is replaced
+  with its whole run. The result keeps its exact shape, and one with no
+  known value passes untouched. Claude Code's hooks reference says
+  `updatedToolOutput` "only changes what Claude sees"; for a large output
+  Claude Code also saves the whole output, the original, in the session's
+  `tool-results` folder before the hook runs and gives Claude its path, so
+  the hook also rewrites that saved copy with the same replacements,
+  owner-only, taking it only at the exact path the result names, in that
+  session's folder, and only up to 256 KiB and 6 seconds of searching: a
+  larger saved file, or one not searched in time, is left as it is and the
+  call flagged, so searching the saved file never holds the hook past the
+  timeout.
+  Each call leaves a marker (pending, then done with counts by name once
+  its output is written and its saved file rewritten, or failed) that
+  holds no value. With the hook installed, the status line and `/weir`
+  count three kinds, entered, sent and kept out (`weir ✓ no known key
+  seen · 2 kept out`), and add `possibly not redacted` in amber after the
+  line's own words (`unknown`, `scanning… P%`, `partly checked` or the
+  counts), never green, for a covered tool result the hook did not finish:
+  a call marked failed (a saved file it could not rewrite included), one
+  still pending past the timeout, or a result with no marker. The binary
+  payloads a Read returns (image, PDF and notebook image data) are left
+  unsearched, and markers and their folders are owner-only. Markers older
+  than 7 days are folded into one summary per session on a status line
+  refresh, at most once a day, without changing what any session reads.
+  `weir statusline setup` shows the hook in its preview and adds it only
+  on an exact `yes` to its own question, `Add the redaction hook too?`,
+  asked after the `yes` that applies the change, and suggests answering no
+  to that question when the settings' `hooks` value cannot take it; `undo`
+  takes it out and removes its markers, kept in a folder per Claude config
+  dir. Limits: it doesn't undo a command that already ran, it can't catch
+  a value pasted into the chat, a hook failure sends the original output
+  (flagged), an agent that is taken over can switch hooks off, it matches
+  whole values only, a WebFetch result has already been through Claude
+  Code's own model, a large output's original is in its saved file for a
+  moment before the rewrite (and stays there over 256 KiB or 6 seconds of
+  searching), and the output
+  of a failed tool call reaches the model without it; `/weir` then says the
+  key entered through a failed tool call and, for a key that lives in a
+  file whose path may be printed, gives a Claude Code `Read` deny rule
+  snippet with what such a rule does and does not stop
+  ([docs/statusline.md](docs/statusline.md#the-redaction-hook)). For a key
+  found only in a saved tool output, `/weir` says the agent was given that
+  file's path and advises deleting it.
+
+### Changed
+- **The status line's first count says `entered`.** It was `in context`:
+  `weir ⚠ 2 entered · 1 sent → /weir`, in the segment and the first line
+  of `/weir`.
+
 ## [0.7.1] - 2026-10-26
 
 ### Fixed

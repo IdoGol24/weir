@@ -48,18 +48,18 @@ _STATES: list[tuple[dict[str, object], str, str]] = [
     ),
     (
         {"context": 2, "sent": 1, "unknown": False},
-        "weir ⚠ 2 in context · 1 sent → /weir",
-        f"weir {_p('⚠', A)} {_p('2 in context', A)} · {_p('1 sent', R)} → /weir",
+        "weir ⚠ 2 entered · 1 sent → /weir",
+        f"weir {_p('⚠', A)} {_p('2 entered', A)} · {_p('1 sent', R)} → /weir",
     ),
     (
         {"context": 1, "sent": 0, "unknown": False},
-        "weir ⚠ 1 in context · 0 sent → /weir",
-        f"weir {_p('⚠', A)} {_p('1 in context', A)} · {_p('0 sent', D)} → /weir",
+        "weir ⚠ 1 entered · 0 sent → /weir",
+        f"weir {_p('⚠', A)} {_p('1 entered', A)} · {_p('0 sent', D)} → /weir",
     ),
     (
         {"context": 2, "sent": 1, "unknown": True},
-        "weir ⚠ 2 in context · 1 sent · part unknown → /weir",
-        f"weir {_p('⚠', A)} {_p('2 in context', A)} · {_p('1 sent', R)} · "
+        "weir ⚠ 2 entered · 1 sent · part unknown → /weir",
+        f"weir {_p('⚠', A)} {_p('2 entered', A)} · {_p('1 sent', R)} · "
         f"{_p('part unknown', D)} → /weir",
     ),
     (
@@ -74,8 +74,8 @@ _STATES: list[tuple[dict[str, object], str, str]] = [
     ),
     (
         {"context": 2, "sent": 1, "unknown": False, "inventoried": False},
-        "weir ⚠ 2 in context · 1 sent → /weir",
-        f"weir {_p('⚠', A)} {_p('2 in context', A)} · {_p('1 sent', R)} → /weir",
+        "weir ⚠ 2 entered · 1 sent → /weir",
+        f"weir {_p('⚠', A)} {_p('2 entered', A)} · {_p('1 sent', R)} → /weir",
     ),
     (
         {"context": 0, "sent": 0, "unknown": False, "partial": True},
@@ -99,8 +99,8 @@ _STATES: list[tuple[dict[str, object], str, str]] = [
     ),
     (
         {"context": 1, "sent": 0, "unknown": False, "scanning": 55},
-        "weir ⚠ 1 in context · 0 sent · scanning… 55%",
-        f"weir {_p('⚠', A)} {_p('1 in context', A)} · {_p('0 sent', D)} · "
+        "weir ⚠ 1 entered · 0 sent · scanning… 55%",
+        f"weir {_p('⚠', A)} {_p('1 entered', A)} · {_p('0 sent', D)} · "
         f"{_p('scanning… 55%', D)}",
     ),
 ]
@@ -162,7 +162,7 @@ def test_only_a_clean_session_read_to_its_end_says_no_known_key_seen(
         assert words == "weir unknown"  # never a zero
     elif finished and not args["inventoried"]:
         assert words == "weir project not inventoried"  # outside its project: never green
-    assert not re.search(r"\d", words) or "in context" in words or "scanning" in words
+    assert not re.search(r"\d", words) or "entered" in words or "scanning" in words
 
 
 @pytest.mark.parametrize("args", _every_state())
@@ -237,7 +237,7 @@ def test_a_clean_session_is_green_and_an_exposed_one_amber_and_red(tmp_path: Pat
     assert green == f"weir \x1b[{G}m✓ no known key seen\x1b[0m\n"
     context, sent, _ = sx.expected_counts(exposed.setup, exposed.audit())
     assert (context, sent) == (2, 1)
-    assert f"\x1b[{A}m{context} in context\x1b[0m" in warned
+    assert f"\x1b[{A}m{context} entered\x1b[0m" in warned
     assert f"\x1b[{R}m{sent} sent\x1b[0m" in warned
     assert warned.endswith(" → /weir\n")
     assert "✓" not in warned and "no known key seen" not in warned

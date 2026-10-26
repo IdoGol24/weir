@@ -23,7 +23,9 @@ def write_atomic(path: Path, data: bytes, mode: int) -> None:
 
 
 def write_private(path: Path, data: bytes) -> None:
-    """Write atomically, readable by the owner only, creating the owner-only
-    directory it goes in."""
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    """Write atomically, readable by the owner only, creating each missing
+    directory on the way owner-only; an existing one keeps its mode."""
+    missing = [d for d in (path.parent, *path.parent.parents) if not d.exists()]
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700, exist_ok=True)
     write_atomic(path, data, 0o600)

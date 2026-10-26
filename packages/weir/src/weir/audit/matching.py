@@ -12,14 +12,18 @@ with its sub-spans between cut points. Tokens repeat endlessly in a session file
 (the same output read twice, the same path in every record), so a token's
 matches are memoised: the memo only ever saves work, it never changes a
 result.
+
+The matcher also tells where each value sits in a string (`Matcher.spans`),
+so the redaction hook can replace it, still from fingerprints only.
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import bisect
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 from weir.audit.inputs import fingerprint
 from weir.canary import Form
@@ -149,21 +153,22 @@ def candidates(text: str) -> Iterator[str]:
 # --- forms ----------------------------------------------------------------------
 
 
-def json_unescape(text: str) -> str:
-    def one(found: re.Match[str]) -> str:
-        short, code = found.group(1), found.group(2)
-        return _SHORT[short] if short is not None else chr(int(code, 16))
+def _unescape_one(found: re.Match[str]) -> str:
+    short, code = found.group(1), found.group(2)
+    return _SHORT[short] if short is not None else chr(int(code, 16))
 
-    unescaped = _JSON_ESCAPE.sub(one, text)
+
+def json_unescape(text: str) -> str:
+    unescaped = _JSON_ESCAPE.sub(_unescape_one, text)
     # `\uD83D\uDE00` decodes to two surrogates: join each pair as one character.
     return unescaped.encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass")
 
 
-def json_texts(text: str) -> list[tuple[str, bool]]:
-    """The texts the json form unescapes, each with whether it is also a
-    candidate whole: the string unescaped, and each JSON string literal whose
-    content holds a backslash."""
-    out = [(json_unescape(text), False)]
+def _json_regions(text: str) -> list[tuple[int, int, bool]]:
+    """Where the texts the json form unescapes sit, each with whether it is
+    also a candidate whole: the whole string, and the content of each JSON
+    string literal that holds a backslash."""
+    out = [(0, len(text), False)]
     at = text.find('"')
     while at >= 0:
         literal = _JSON_LITERAL.match(text, at)
@@ -171,11 +176,17 @@ def json_texts(text: str) -> list[tuple[str, bool]]:
             # No unescaped quote after this one: every later quote fails the
             # same way, so the scan stops here rather than trying each one.
             break
-        content = literal.group(1)
-        if "\\" in content:
-            out.append((json_unescape(content), True))
+        if "\\" in literal.group(1):
+            out.append((literal.start(1), literal.end(1), True))
         at = text.find('"', literal.end())
     return out
+
+
+def json_texts(text: str) -> list[tuple[str, bool]]:
+    """The texts the json form unescapes, each with whether it is also a
+    candidate whole: the string unescaped, and each JSON string literal whose
+    content holds a backslash."""
+    return [(json_unescape(text[start:end]), whole) for start, end, whole in _json_regions(text)]
 
 
 def _percent_decode(data: bytes) -> bytes:
@@ -191,7 +202,10 @@ def url_decodings(candidate: str) -> Iterator[str]:
         yield _text(_percent_decode(data.replace(b"+", b" ")))
 
 
-def _base64_decodings(text: str, run: re.Pattern[str], urlsafe: bool) -> Iterator[str]:
+def _base64_decodings(
+    text: str, run: re.Pattern[str], urlsafe: bool
+) -> Iterator[tuple[str, tuple[int, int]]]:
+    """Each decoding, with the run it was decoded from."""
     altchars = b"-_" if urlsafe else None
     for found in run.finditer(text):
         body = found.group(0).rstrip("=")
@@ -206,18 +220,97 @@ def _base64_decodings(text: str, run: re.Pattern[str], urlsafe: bool) -> Iterato
             if not part:
                 continue
             try:
-                yield _text(base64.b64decode(part, altchars=altchars, validate=True))
+                yield _text(base64.b64decode(part, altchars=altchars, validate=True)), found.span()
             except (binascii.Error, ValueError):
                 continue
 
 
-def _hex_decodings(text: str) -> Iterator[str]:
+def _hex_decodings(text: str) -> Iterator[tuple[str, tuple[int, int]]]:
+    """Each decoding, with the run it was decoded from."""
     for found in _HEX_RUN.finditer(text):
         run = found.group(0)
         for start in range(2):
             part = run[start:]
             part = part[: len(part) - len(part) % 2]
-            yield _text(bytes.fromhex(part))
+            yield _text(bytes.fromhex(part)), found.span()
+
+
+# --- where a match sits ---------------------------------------------------------
+
+_Span = tuple[int, int]
+
+
+class _Decoded:
+    """Where each character of a decoded text came from: every decoded part
+    (an escape, a `%XX`) as (from, to, start, end), [from, to) in the
+    encoded text and [start, end) in the decoded one, in order. Between
+    parts, the text was copied as it was."""
+
+    def __init__(self, parts: list[tuple[int, int, int, int]]) -> None:
+        self._parts = parts
+        self._starts = [part[2] for part in parts]
+
+    def start(self, at: int) -> int:
+        i = bisect.bisect_right(self._starts, at) - 1
+        if i < 0:
+            return at
+        start_from, to, _, end = self._parts[i]
+        return start_from if at < end else to + at - end
+
+    def end(self, at: int) -> int:
+        """A part is one unit long, so the last part before `at` ends at
+        or before it."""
+        i = bisect.bisect_left(self._starts, at) - 1
+        return at if i < 0 else self._parts[i][1] + at - self._parts[i][3]
+
+
+def _decoded[T: (str, bytes)](
+    text: T, escape: re.Pattern[T], one: Callable[[re.Match[T]], T]
+) -> tuple[T, _Decoded]:
+    """`text` with each `escape` replaced by its one-unit decoding, and
+    where each unit came from."""
+    parts: list[tuple[int, int, int, int]] = []
+    shrunk = 0
+    for found in escape.finditer(text):
+        at = found.start() - shrunk
+        parts.append((found.start(), found.end(), at, at + 1))
+        shrunk += found.end() - found.start() - 1
+    return escape.sub(one, text), _Decoded(parts)
+
+
+def _occurrences[T: (str, bytes)](text: T, part: T) -> Iterator[_Span]:
+    at = text.find(part)
+    while at >= 0:
+        yield at, at + len(part)
+        at = text.find(part, at + 1)
+
+
+def _escaped_spans(text: str, candidate: str, depth: int) -> Iterator[_Span]:
+    """Where `candidate` sits in `text` once its JSON escapes are undone
+    `depth` times: the exact run that unescapes to it. Surrogate pairs are
+    not joined here, so a value holding one is not placed by this form."""
+    for start, end, _ in _json_regions(text):
+        decoded, where = _decoded(text[start:end], _JSON_ESCAPE, _unescape_one)
+        inner = (
+            _occurrences(decoded, candidate) if depth == 1
+            else _escaped_spans(decoded, candidate, depth - 1)
+        )
+        for a, b in inner:
+            yield start + where.start(a), start + where.end(b)
+
+
+def _percent_spans(string: str, candidate: str) -> Iterator[_Span]:
+    """Where `candidate` sits in `string` once its `%XX` are decoded, `+`
+    kept and `+` read as a space: the exact run that decodes to it."""
+    data, value = _utf8(string), _utf8(candidate)
+    if data is None or value is None:
+        return
+    for variant in {data, data.replace(b"+", b" ")}:
+        decoded, where = _decoded(
+            variant, _PERCENT_RUN, lambda found: bytes([int(found.group(1), 16)])
+        )
+        for a, b in _occurrences(decoded, value):
+            yield len(_text(data[: where.start(a)])), len(_text(data[: where.end(b)]))
 
 
 # --- the matcher ----------------------------------------------------------------
@@ -329,34 +422,64 @@ class Matcher:
 
     def _find(self, string: str) -> dict[bytes, Form]:
         found: dict[bytes, Form] = {}
-
-        def take(form: Form, matched: dict[bytes, str]) -> None:
+        for form, matched, _ in self._forms(string):
             for fp, value in matched.items():
                 found.setdefault(fp, form)
                 self.found.add(value)
+        return found
 
-        take(Form.RAW, self.text(string))
+    def spans(self, string: str) -> list[tuple[int, int, bytes]]:
+        """Where each stored value the string holds sits in it, in every
+        form `find` searches: a raw value, and a JSON-escaped or URL-encoded
+        one, at the exact run that gives it; a base64 or hex one at the
+        whole run it was decoded from, whose edge characters mix bits of
+        the value with bits of its neighbours. A value found whose place no
+        form can tell spans the whole string. Overlapping spans are kept."""
+        out: set[tuple[int, int, bytes]] = set()
+        found: set[bytes] = set()
+        for _, matched, where in self._forms(string):
+            for fp, value in matched.items():
+                found.add(fp)
+                out |= {(a, b, fp) for a, b in where(value)}
+        out |= {(0, len(string), fp) for fp in found - {fp for _, _, fp in out}}
+        return sorted(out)
+
+    def _forms(
+        self, string: str
+    ) -> Iterator[tuple[Form, dict[bytes, str], Callable[[str], Iterable[_Span]]]]:
+        """Each form's matches, in the order of docs/audit.md, "Forms", and
+        where a matched candidate sits in `string`."""
+        yield Form.RAW, self.text(string), lambda value: _occurrences(string, value)
         if "\\" in string:
             once = json_texts(string)
             for text, whole in once:
-                take(Form.JSON, self.text(text, whole=whole))
+                yield Form.JSON, self.text(text, whole=whole), (
+                    lambda value: _escaped_spans(string, value, 1)
+                )
             for text, _ in once:
                 if "\\" in text:
                     for inner, whole in json_texts(text):
-                        take(Form.JSON2, self.text(inner, whole=whole))
+                        yield Form.JSON2, self.text(inner, whole=whole), (
+                            lambda value: _escaped_spans(string, value, 2)
+                        )
         if "+" in string or _PERCENT.search(string):
             for decoded in url_decodings(string):
-                take(Form.URL, self.text(decoded))
+                yield Form.URL, self.text(decoded), (
+                    lambda value: _percent_spans(string, value)
+                )
             for candidate in set(candidates(string)):
                 if "+" in candidate or _PERCENT.search(candidate):
                     for decoded in url_decodings(candidate):
                         out: dict[bytes, str] = {}
                         self._check(decoded, out)
-                        take(Form.URL, out)
-        for decoded in _base64_decodings(string, _BASE64_RUN, urlsafe=False):
-            take(Form.BASE64, self.text(decoded))
-        for decoded in _base64_decodings(string, _BASE64URL_RUN, urlsafe=True):
-            take(Form.BASE64URL, self.text(decoded))
-        for decoded in _hex_decodings(string):
-            take(Form.HEX, self.text(decoded))
-        return found
+                        yield Form.URL, out, (
+                            lambda _, encoded=candidate: _occurrences(string, encoded)
+                        )
+        runs = (
+            (Form.BASE64, _base64_decodings(string, _BASE64_RUN, urlsafe=False)),
+            (Form.BASE64URL, _base64_decodings(string, _BASE64URL_RUN, urlsafe=True)),
+            (Form.HEX, _hex_decodings(string)),
+        )
+        for form, decodings in runs:
+            for decoded, run in decodings:
+                yield form, self.text(decoded), lambda _, run=run: (run,)

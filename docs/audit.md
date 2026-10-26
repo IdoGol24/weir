@@ -206,7 +206,7 @@ Every hit has a **kind**:
 | --- | --- |
 | `context` | the value entered the agent's context: the agent read it |
 | `tool_call` | the value was sent out in a tool call: it is in the arguments of a tool the agent called |
-| `stored` | the value is stored locally, in the file, but neither entered the agent's context nor was sent out: bookkeeping the agent never reads (a `file-history-snapshot` record, say) |
+| `stored` | the value is stored locally, in the file, but neither entered the agent's context nor was sent out: bookkeeping the agent does not read (a `file-history-snapshot` record, say), or a large tool output Claude Code saved whole, whose path it gives the agent to read later |
 | `unknown` | the audit cannot tell whether the agent read it |
 
 A `tool_call` value was in the context as well, since the agent wrote it;
@@ -257,7 +257,9 @@ A value in an image is never matched.
 
 A `claude-code-tool-results` file is `stored`: Claude Code shows the agent
 a preview of a large tool output and saves the whole output there, and the
-preview's own copy is in the transcript's `tool_result`.
+preview's own copy is in the transcript's `tool_result`. Claude Code gives
+the agent that file's path, so the agent can open it later; what it then
+reads is a tool result of its own, audited as any other.
 
 A `claude-code-memory` file is `context`: Claude Code loads `CLAUDE.md` and
 its auto-memory files into the agent's context. Each line is a string, with

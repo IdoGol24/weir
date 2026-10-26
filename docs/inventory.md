@@ -266,8 +266,8 @@ its per-route effect:
   fingerprint means a rotated value.
 - The values themselves exist only in process memory, while the run
   fingerprints them. Nothing returns them: the Python API gives the report
-  and the store. An accessor for an in-process consumer arrives with the
-  redaction hook task that needs it.
+  and the store. The [redaction hook](statusline.md#the-redaction-hook)
+  needs no values either: it matches by these fingerprints.
 
 ## Python API
 

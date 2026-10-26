@@ -46,6 +46,9 @@ class Credential:
     scope: str | None
     value_state: str
     fingerprint: bytes | None
+    # The location's absolute path, forward slashes; None for the launch
+    # environment. In memory only: the audit report writes `display`.
+    path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -140,6 +143,7 @@ def load_inputs(report_path: Path, store_path: Path, key_path: Path) -> Inputs:
         credentials.append(Credential(
             id=c.id, name=c.name, source=c.source.value, display=c.location.display,
             scope=c.scope, value_state=c.value_state.value, fingerprint=stored.get(c.id),
+            path=c.location.path,
         ))
     if literal != set(stored):
         raise AuditInputError(

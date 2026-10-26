@@ -192,8 +192,10 @@ def tool_result_and_copy(session: fx.Session, tool_id: str, text: str) -> int:
     return session.record({**envelope, "toolUseResult": {"stdout": text, "stderr": ""}})
 
 
-def build(root: Path, *, bashrc: str | None = None, extra_env: str = "") -> Claude:
-    setup = fx.build(root, bashrc=bashrc, extra_env=extra_env)
+def build(
+    root: Path, *, bashrc: str | None = None, extra_env: str = "", project_env: str | None = None,
+) -> Claude:
+    setup = fx.build(root, bashrc=bashrc, extra_env=extra_env, project_env=project_env)
     config = setup.home / ".claude"
     (config / "projects" / PROJECT).mkdir(parents=True)
     return Claude(setup=setup, config=config, state=setup.home / ".weir" / "statusline")
@@ -321,7 +323,7 @@ def counts_for(context: int, sent: int, *, colour: bool = False) -> str:
     """The counts docs/statusline.md shows: amber, red, a zero dim."""
     return (
         f"{paint('⚠', AMBER, colour)} "
-        f"{paint(f'{context} in context', AMBER if context else DIM, colour)} · "
+        f"{paint(f'{context} entered', AMBER if context else DIM, colour)} · "
         f"{paint(f'{sent} sent', RED if sent else DIM, colour)}"
     )
 
@@ -347,7 +349,7 @@ def segment_for(
 
 
 # A refresh before the files are read to their end, its SGR codes taken out.
-SCANNING_LINE = re.compile(r"weir (⚠ \d+ in context · \d+ sent · )?scanning… \d+%")
+SCANNING_LINE = re.compile(r"weir (⚠ \d+ entered · \d+ sent · )?scanning… \d+%")
 
 
 # --- running a settings command the way Claude Code does ---------------------
