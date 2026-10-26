@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.0] - 2026-10-26
 
 ### Added
 - **`weir statusline hook`: a redaction hook for Claude Code
@@ -52,11 +52,19 @@
   ([docs/statusline.md](docs/statusline.md#the-redaction-hook)). For a key
   found only in a saved tool output, `/weir` says the agent was given that
   file's path and advises deleting it.
+  The README describes the hook with its three main limits and links the
+  full list.
 
 ### Changed
 - **The status line's first count says `entered`.** It was `in context`:
   `weir ⚠ 2 entered · 1 sent → /weir`, in the segment and the first line
   of `/weir`.
+
+### Corpus
+- The release commit regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.7.1 to
+  0.8.0. That diff is version-only; no flow fact, node count or finding
+  moved.
 
 ## [0.7.1] - 2026-10-26
 

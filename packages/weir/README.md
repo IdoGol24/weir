@@ -84,19 +84,11 @@ The full lists are in [docs/canary.md](https://github.com/IdoGol24/weir/blob/mai
 
 The redaction hook:
 
-- It doesn't undo a command that already ran. It only changes what the model reads afterwards.
-- It can't catch a value pasted into the chat.
-- If the hook fails, Claude Code sends the original output. The status line flags that as "possibly not redacted".
-- Claude Code saves a large output whole before the hook runs, and the hook rewrites that saved file afterwards. So the original is in that file for a moment first.
-- The hook does not rewrite a saved output over 256 KiB, or one it cannot search within about 6 seconds of the call: some content, such as very long tokens or dense URL-encoded text, takes far longer to search than its size suggests. That file keeps the original, and the status line flags the call as "possibly not redacted". The result the model sees is still replaced.
-- A large result of dense URL-encoded text, such as a form body of tens of thousands of characters, can take the hook past its timeout. Claude Code then sends the original, and the call is flagged as "possibly not redacted".
-- An agent that is taken over can switch hooks off.
-- It matches whole values only. A key glued to other characters is not matched, and the status line does not see it either.
-- A key inside a PDF that Claude reads is not removed. It shows as entered when the audit can read it, as unknown when the PDF's text is compressed, and not at all when it is written as a PDF hex string or split by kerning.
-- A WebFetch result is what Claude Code's own model wrote after reading the page, so a key in a fetched page has already been read by a model before the hook runs.
-- Claude Code runs the hook only after a tool call succeeds. The output of a failed call, such as a command that exits with an error, reaches the model as it is. A known value in it shows up as "entered", and `/weir` says so and suggests a Claude Code deny rule for the file it came from.
+- It only changes what the model reads after a tool call. It can't undo a command that already ran, or catch a key pasted into the chat.
+- It matches your inventoried keys as whole values only. A key glued to other text, or inside a PDF, isn't removed.
+- When the hook can't finish, or a tool call fails, Claude Code passes the original output on. The status line then shows "possibly not redacted" or "entered", never green.
 
-The full list is in [docs/statusline.md](https://github.com/IdoGol24/weir/blob/main/docs/statusline.md#the-redaction-hook).
+Full list: [docs/statusline.md#the-redaction-hook](https://github.com/IdoGol24/weir/blob/main/docs/statusline.md#the-redaction-hook)
 
 ## Also in the box
 
