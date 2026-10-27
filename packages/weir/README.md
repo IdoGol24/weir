@@ -2,7 +2,7 @@
 
 **Catch your AI agent leaking API keys.** Agent frameworks can copy keys into traces and logs, and coding agents can read them into the model's context. Weir finds each key by its exact value, names where it went, and never prints it.
 
-- **The agents you build:** plant fake keys where your real ones live, run the agent's own flows, and get a verdict for every place they reached: spans, logs, console output, the model, other services. Leak, clean or incomplete. It found [GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security/advisories/GHSA-j7qq-vr8c-xvw3) in MLflow.
+- **The agents you build:** plant fake keys where your real ones live, run the agent's own flows, and get a verdict for every place they reached: spans, logs, console output, the model, other services. Leak, clean or incomplete. It found [CVE-2026-116691](https://nvd.nist.gov/vuln/detail/cve-2026-116691) ([GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security/advisories/GHSA-j7qq-vr8c-xvw3)) in MLflow.
 - **The coding agent you use:** in Claude Code, a status line shows which of your real keys entered the session or left in a tool call, and an optional hook strips known keys from tool results before the model reads them.
 
 [![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/IdoGol24/weir/blob/main/LICENSE)
@@ -72,7 +72,7 @@ weir statusline setup         # shows the change, applies it only when you type 
 - **No false all-clear in the test rig.** In a `weir-run` test, if something you marked required wasn't exercised, the result is "incomplete", never "clean". Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
 - **Offline and deterministic.** No AI model decides anything, and Weir itself sends nothing anywhere. Tests enforce both.
 
-**Found with Weir:** [GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security/advisories/GHSA-j7qq-vr8c-xvw3), an MLflow advisory, fixed in 3.17.0.
+**Found with Weir:** [CVE-2026-116691](https://nvd.nist.gov/vuln/detail/cve-2026-116691) ([GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security/advisories/GHSA-j7qq-vr8c-xvw3)), an MLflow advisory, fixed in 3.17.0.
 
 ## Limits
 
