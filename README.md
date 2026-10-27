@@ -1,6 +1,9 @@
 # Weir
 
-**Leak tests for AI agents.** Plant fake credentials where your real ones live, run your agent, and find every place it exposed them: its telemetry, the model it calls, or any other service.
+**Catch your AI agent leaking API keys.** Agent frameworks can copy keys into traces and logs, and coding agents can read them into the model's context. Weir finds each key by its exact value, names where it went, and never prints it.
+
+- **The agents you build:** plant fake keys where your real ones live, run the agent's own flows, and get a verdict for every place they reached: spans, logs, console output, the model, other services. Leak, clean or incomplete. It found [GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security/advisories/GHSA-j7qq-vr8c-xvw3) in MLflow.
+- **The coding agent you use:** in Claude Code, a status line shows which of your real keys entered the session or left in a tool call, and an optional hook strips known keys from tool results before the model reads them.
 
 [![CI](https://github.com/IdoGol24/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/IdoGol24/weir/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/weir-scan)](https://pypi.org/project/weir-scan/) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/IdoGol24/weir/blob/main/LICENSE)
 
