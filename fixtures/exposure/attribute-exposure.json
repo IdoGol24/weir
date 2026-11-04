@@ -260,7 +260,7 @@
                 {
                   "key": "gen_ai.tool.call.arguments",
                   "value": {
-                    "stringValue": "{\"content\":\"# rotated keys\\nghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n\\tsk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\r\\nsk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nAKIAIOSFODNN7EXAMPLE\\nAIzaFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n\",\"file_path\":\"keys.txt\"}"
+                    "stringValue": "{\"content\":\"# rotated keys\\nghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n\\tsk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\r\\nsk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nAKIAIOSFODNN7EXAMPLE\\nAIzaFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nAuthorization: Bearer FAKEFAKEFAKEFAKEFAKEFAKE\\n\\tya29.FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n{\\\"api_key\\\": \\\"FAKE-CANARY-7Rk2Ls9Vn4Xb\\\"}\\n\",\"file_path\":\"keys.txt\"}"
                   }
                 },
                 {
@@ -288,7 +288,7 @@
                 {
                   "key": "gen_ai.tool.call.arguments",
                   "value": {
-                    "stringValue": "{\"content\":\"# not keys\\nxghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxsk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxsk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxAKIAIOSFODNN7EXAMPLE\\nxAIzaFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n\",\"file_path\":\"notes.txt\"}"
+                    "stringValue": "{\"content\":\"# not keys\\nxghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxsk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxsk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxAKIAIOSFODNN7EXAMPLE\\nxAIzaFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\nxAuthorization: Bearer FAKEFAKEFAKEFAKEFAKEFAKE\\nxya29.FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n\",\"file_path\":\"notes.txt\"}"
                   }
                 },
                 {

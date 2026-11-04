@@ -25,10 +25,27 @@ from weir.schema.exposure import ExposureSurface, ScannedString
 # trips this, record a degradation rather than raising the cap.
 _MAX_DEPTH = 64
 
+# The OpenTelemetry HTTP semantic conventions record request header `<name>`
+# as the attribute `http.request.header.<name>`, a string or string array.
+# Only the credential-carrying authorization headers are named on the
+# surface; every other header attribute is a plain string like any other.
+_REQUEST_HEADER = "http.request.header."
+_AUTHORIZATION_HEADERS = frozenset({"authorization", "proxy-authorization"})
 
-def _walk_value(value: object, location: str, out: list[tuple[str, str]], depth: int = 0) -> None:
+_Found = tuple[str, str, str | None]
+
+
+def _walk_value(
+    value: object,
+    location: str,
+    out: list[_Found],
+    depth: int = 0,
+    header: str | None = None,
+) -> None:
     """stringValue is collected; arrayValue and kvlistValue recurse with [i] /
-    .key appended; every other value type is skipped, never coerced."""
+    .key appended; every other value type is skipped, never coerced. An
+    array element keeps the header its attribute names; a kvlist entry does
+    not."""
     if depth > _MAX_DEPTH:
         return
     if not isinstance(value, dict):
@@ -36,14 +53,14 @@ def _walk_value(value: object, location: str, out: list[tuple[str, str]], depth:
     holder = cast("dict[str, object]", value)
     text = holder.get("stringValue")
     if isinstance(text, str):
-        out.append((location, text))
+        out.append((location, text, header))
         return
     array = holder.get("arrayValue")
     if isinstance(array, dict):
         items = cast("dict[str, object]", array).get("values")
         if isinstance(items, list):
             for index, item in enumerate(cast("list[object]", items)):
-                _walk_value(item, f"{location}[{index}]", out, depth + 1)
+                _walk_value(item, f"{location}[{index}]", out, depth + 1, header)
         return
     kvlist = holder.get("kvlistValue")
     if isinstance(kvlist, dict):
@@ -53,7 +70,7 @@ def _walk_value(value: object, location: str, out: list[tuple[str, str]], depth:
 
 
 def _walk_attributes(
-    attributes: object, location: str, out: list[tuple[str, str]], depth: int = 0
+    attributes: object, location: str, out: list[_Found], depth: int = 0
 ) -> None:
     if depth > _MAX_DEPTH:
         return
@@ -65,14 +82,21 @@ def _walk_attributes(
         entry = cast("dict[str, object]", raw)
         key = entry.get("key")
         if isinstance(key, str):
-            _walk_value(entry.get("value"), f"{location}.{key}", out, depth)
+            name = key[len(_REQUEST_HEADER):]
+            header = None
+            if (
+                key.lower().startswith(_REQUEST_HEADER)
+                and name.lower() in _AUTHORIZATION_HEADERS
+            ):
+                header = name
+            _walk_value(entry.get("value"), f"{location}.{key}", out, depth, header)
 
 
 def _span_surface(
     ctx: SpanInContext, *, first_of_resource: bool, first_of_scope: bool
-) -> list[tuple[str, str]]:
+) -> list[_Found]:
     """Every string location of one span, in the spec's declared order."""
-    out: list[tuple[str, str]] = []
+    out: list[_Found] = []
     _walk_attributes(ctx.span.attributes, "attributes", out)
     # `status` and `events` are raw pass-throughs on the wire struct - typing
     # them would quarantine spans that decode today - so every access here is
@@ -94,7 +118,7 @@ def _span_surface(
     if isinstance(status, dict):
         message = cast("dict[str, object]", status).get("message")
         if isinstance(message, str) and message:
-            out.append(("status.message", message))
+            out.append(("status.message", message, None))
     # Resource and scope attributes are visited ONCE, attributed to the first
     # span that arrived under them.
     if first_of_resource:
@@ -130,8 +154,9 @@ def scan_surface(wire: WireInput) -> ExposureSurface:
                 span_name=ctx.span.name,
                 location=location,
                 text=text,
+                header=header,
             )
-            for location, text in found
+            for location, text, header in found
         )
 
     return ExposureSurface(

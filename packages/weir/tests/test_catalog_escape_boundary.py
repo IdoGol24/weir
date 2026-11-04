@@ -34,6 +34,9 @@ _VALUES = {
     "aws_access_key_id": "AKIAIOSFODNN7EXAMPLE",
     "google_api_key": "AIza" + "FAKE" * 9,
     "credential_field": "API_KEY=FAKE-CANARY-7Rk2Ls9Vn4Xb",
+    "json_credential_field": "api_key': 'FAKE-CANARY-7Rk2Ls9Vn4Xb'",
+    "bearer_token": "Authorization: Bearer " + "FAKE" * 6,
+    "google_oauth_credential": "ya29." + "FAKE" * 10,
 }
 
 _ESCAPED_SEPARATORS = ("\n", "\t", "\r")

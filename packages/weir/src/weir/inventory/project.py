@@ -7,11 +7,12 @@ Detectors, all over the decoded text of one file:
 - the catalog's key-shaped classes (`github_token`, `openai_api_key`, ...),
   judged by each class's eligibility, so a documented placeholder such as
   AWS's example key is not a credential;
-- the catalog's `credential_field` assignment class, including the 0.4.1
-  escape-boundary fix, so a value after a JSON `\\n` escape is found;
+- the catalog's `credential_field` and `json_credential_field` assignment
+  classes, including the 0.4.1 escape-boundary fix, so a value after a JSON
+  `\\n` escape is found;
 - an assignment detector for `key = value`, `key: value` and JSON
   `"key": "value"` whose key name suggests a secret, which reaches the
-  quoted-key forms `credential_field` cannot;
+  forms neither catalog field class reads;
 - standalone shapes: a JWT, a URL with a password, a PEM private key.
 
 Hits that cover the same bytes merge into one credential; the same value
@@ -26,7 +27,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from weir.catalog import DEFAULT_CATALOG, Catalog, is_verbatim_eligible
+from weir.catalog import DEFAULT_CATALOG, Catalog, assignment_prefix, is_verbatim_eligible
 from weir.inventory._scan import Hit, line_of
 from weir.inventory._types import NotScannedReason, Reason
 from weir.inventory.classify import (
@@ -203,28 +204,33 @@ def _catalog_hits(text: str, catalog: Catalog, *, code: bool) -> Iterator[Hit]:
         if not spec.exposure:
             continue
         pattern = re.compile(spec.content_pattern)
+        group = 1 if pattern.groups else 0
         for match in pattern.finditer(text):
-            if pattern.groups:
-                # credential_field: an assignment, the value in group 1. It
-                # has no eligibility floor (triage only), so the inventory
-                # applies the assignment detector's value checks instead.
-                value = match.group(1) or ""
+            value = match.group(group) or ""
+            if group and spec.eligibility.pattern is None:
+                # credential_field or json_credential_field: an assignment, the
+                # value in group 1. It has no eligibility floor (triage only),
+                # so the inventory applies the assignment detector's value
+                # checks instead.
                 if any(re.fullmatch(p, value) for p in spec.eligibility.reject_patterns):
                     continue
                 quoted = match.start(1) > 0 and text[match.start(1) - 1] in "'\""
                 if not _acceptable(value, quoted=quoted, code=code):
                     continue
-                key = match.group(0)[: match.start(1) - match.start(0)].rstrip("'\"=: \t\r\n")
+                key = assignment_prefix(match.group(0)[: match.start(1) - match.start(0)])
                 yield Hit(
-                    name=key.split()[-1] if key.split() else spec.name, reason=Reason.NAME,
+                    name=key or spec.name, reason=Reason.NAME,
                     detectors={f"catalog:{spec.name}"}, value=value, spans=[match.span(1)],
                     line=line_of(text, match.start(1)), name_rank=20,
                 )
-            elif is_verbatim_eligible(match.group(0), spec):
+            elif is_verbatim_eligible(value, spec):
+                # A key-shaped class, or an assignment class with a floor
+                # (bearer_token): the floor judges the value, so a token in a
+                # code file is not mistaken for an identifier.
                 yield Hit(
                     name=spec.name, reason=Reason.SHAPE, detectors={f"catalog:{spec.name}"},
-                    value=match.group(0), spans=[match.span()],
-                    line=line_of(text, match.start()), name_rank=30,
+                    value=value, spans=[match.span(group)],
+                    line=line_of(text, match.start(group)), name_rank=30,
                 )
 
 

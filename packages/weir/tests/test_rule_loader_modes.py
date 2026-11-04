@@ -80,7 +80,7 @@ def test_an_unknown_stage_is_rejected(tmp_path):
         load_rules(_write(tmp_path, stage="draft"))
 
 
-def test_bundled_rules_are_the_expected_eight():
+def test_bundled_rules_are_the_expected_eleven():
     rules = load_rules()
     assert {r.id for r in rules} == {
         "injection-exfil-to-outbound-sink",
@@ -91,5 +91,8 @@ def test_bundled_rules_are_the_expected_eight():
         "google-api-key-in-telemetry",
         "github-token-in-telemetry",
         "credential-field-in-telemetry",
+        "json-credential-field-in-telemetry",
+        "bearer-token-in-telemetry",
+        "google-oauth-credential-in-telemetry",
     }
     assert all(r.severity == "high" for r in rules)

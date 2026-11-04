@@ -15,7 +15,13 @@ from typing import NamedTuple
 
 import msgspec
 
-from weir.catalog import Catalog, SourceSpec, class_prefix, is_verbatim_eligible
+from weir.catalog import (
+    Catalog,
+    SourceSpec,
+    assignment_prefix,
+    class_prefix,
+    is_verbatim_eligible,
+)
 from weir.exposure._types import ExposureHit, ExposureScan
 from weir.schema.exposure import ExposureSurface, ScannedString
 
@@ -125,9 +131,10 @@ def _raw_hits_for(
     # `(?i)`-prefixed `credential_field`) falls back to catalog list order -
     # no bundled pair collides at one offset, so this is untested by design,
     # not unhandled.
+    text = scanned.text if scanned.header is None else f"{scanned.header}: {scanned.text}"
     best: dict[int, tuple[int, SourceSpec, re.Match[str]]] = {}
     for spec, pattern, prefix_len in classes:
-        for match in pattern.finditer(scanned.text):
+        for match in pattern.finditer(text):
             incumbent = best.get(match.start())
             if incumbent is None or prefix_len > incumbent[0]:
                 best[match.start()] = (prefix_len, spec, match)
@@ -140,7 +147,7 @@ def _raw_hits_for(
             # An assignment-shaped class captures the SECRET in group 1; the
             # text before it is the key name, which is the display prefix.
             value = match.group(1) or ""
-            prefix = match.group(0)[: match.start(1) - match.start(0)].rstrip("'\"=: \t\r\n")
+            prefix = assignment_prefix(match.group(0)[: match.start(1) - match.start(0)])
             value_start, value_end = match.span(1)
         else:
             value = match.group(0)

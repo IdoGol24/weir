@@ -91,9 +91,13 @@ _PEM_PRIVATE_KEY = re.compile(
 def value_shape(value: str, catalog: Catalog = DEFAULT_CATALOG) -> str | None:
     """The credential shape the WHOLE value has, or None. Catalog key shapes
     are judged by their eligibility pattern (fullmatch), so a documented
-    placeholder such as AWS's example key is not a shape match."""
+    placeholder such as AWS's example key is not a shape match. An
+    assignment-shaped class (a capturing group, like `bearer_token`) is
+    skipped: its floor judges a value only beside its key, and on a bare
+    value would read any long opaque string as a token."""
     for spec in catalog.sources:
-        if spec.exposure and spec.eligibility.pattern is not None:
+        if (spec.exposure and spec.eligibility.pattern is not None
+                and not re.compile(spec.content_pattern).groups):
             if is_verbatim_eligible(value, spec):
                 return spec.name
     if _JWT.fullmatch(value):

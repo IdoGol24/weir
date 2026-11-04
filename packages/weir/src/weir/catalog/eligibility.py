@@ -43,6 +43,24 @@ def class_prefix(value: str) -> str:
     return head.group(0) if head is not None else value[:_FALLBACK_HEAD_LEN]
 
 
+# An escaped line break (the two characters `\n`, as after `[` in indented,
+# escaped JSON) is a separator too, so its letter never shows as a word.
+_KEY_SEPARATORS = re.compile(r"""(?:[\s"'=:,\[]|\\+[ntr]?)+""")
+
+
+def assignment_prefix(key_text: str) -> str:
+    """The display name of an assignment-shaped match: the text before its
+    value group with quotes, backslash escapes (escaped line breaks
+    included), operators, list punctuation and a bytes-literal `b` dropped,
+    words joined by ': '. Every quoting of one key shows the same name, so
+    `"api_key": "` and `\\"api_key\\":\\"` are both `api_key`, and the
+    header is shown as written, with quotes, escapes and operators normalized
+    (for example `Authorization: Bearer`, also for `(b'authorization',
+    b'Bearer `). Never a byte of the value."""
+    words = _KEY_SEPARATORS.split(key_text)
+    return ": ".join(word for word in words if word and word.lower() != "b")
+
+
 def _floor_prefix(value: str) -> str:
     """The head `min_distinct_chars` strips before counting: everything
     through the last separator in the first 16 characters, or the first 4
