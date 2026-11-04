@@ -1,0 +1,103 @@
+# Signs a `weir-run verify` evidence record as an in-toto test result, in a
+# job separate from the one that ran verify (docs/verify.md, "The signed result").
+name: Sign a weir-run verify result
+
+on:
+  workflow_call:
+    inputs:
+      evidence-artifact:
+        description: The artifact that holds weir-verify-evidence.json.
+        type: string
+        required: true
+      subject-name:
+        description: The image the record is for, as registry/repository, with no tag or digest.
+        type: string
+        required: true
+      push-to-registry:
+        description: Also store the attestation beside the image in its registry (ghcr.io).
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out weir
+      id-token: write # the signing certificate
+      attestations: write # store the attestation with GitHub
+      packages: write # push-to-registry, on ghcr.io only
+    steps:
+      # The token's claims name this workflow's repository and commit, so
+      # the code that reads the record is the code this workflow pins.
+      - name: Find this workflow's own commit
+        id: self
+        run: |
+          curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=weir-verify-attest" | python3 -c '
+          import base64, json, sys
+          body = json.load(sys.stdin)["value"].split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+          print("repository=" + claims["job_workflow_ref"].split("/.github/")[0])
+          print("sha=" + claims["job_workflow_sha"])
+          ' >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.self.outputs.repository }}
+          ref: ${{ steps.self.outputs.sha }}
+          path: weir
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.evidence-artifact }}
+          path: evidence
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.0"
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Check the record and make the predicate
+        id: predicate
+        working-directory: weir
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          record="$GITHUB_WORKSPACE/evidence/weir-verify-evidence.json"
+          uv run --frozen --no-dev --package weir-run weir-run predicate \
+            --evidence "$record" --url "$RUN_URL" > "$RUNNER_TEMP/predicate.json"
+          digest=$(jq -r '.image_digest // empty' "$record")
+          if [ -z "$digest" ]; then
+            echo "::error::the evidence record names no image digest"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # The token goes to ghcr.io only, never to a host the caller names.
+      - name: Log in to ghcr.io
+        if: inputs.push-to-registry
+        env:
+          SUBJECT: ${{ inputs.subject-name }}
+          TOKEN: ${{ github.token }}
+        run: |
+          case "$SUBJECT" in
+            ghcr.io/?*) ;;
+            *)
+              echo "::error::push-to-registry needs a subject-name on ghcr.io (ghcr.io/owner/image)"
+              exit 1
+              ;;
+          esac
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ inputs.subject-name }}
+          subject-digest: ${{ steps.predicate.outputs.digest }}
+          predicate-type: https://in-toto.io/attestation/test-result/v0.1
+          predicate-path: ${{ runner.temp }}/predicate.json
+          push-to-registry: ${{ inputs.push-to-registry }}
+          create-storage-record: false

@@ -15,12 +15,10 @@ from __future__ import annotations
 
 import ipaddress
 import json
-import os
 import socket
 import struct
 import sys
 import time
-from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -30,31 +28,6 @@ from weir_run import cli, flows, isolation
 from weir_run import judge as judge_cli
 from weir_run.pytest_plugin import CanaryCheck
 from weir_run.spec import FlowSpec
-
-
-def _jail() -> isolation.Jail:
-    try:
-        return isolation.jail()
-    except isolation.Unavailable as exc:
-        if os.environ.get("WEIR_TEST_REQUIRE_NETNS"):
-            pytest.fail(f"isolation is required here but was unavailable: {exc}")
-        pytest.skip(f"network isolation is not available here: {exc}")
-
-
-@pytest.fixture
-def jail() -> Generator[isolation.Jail]:
-    made = _jail()
-    try:
-        yield made
-    finally:
-        made.close()
-
-
-@pytest.fixture
-def isolated() -> None:
-    """Skip a whole run that needs isolation where there is none."""
-    _jail().close()
-
 
 # -- the packet parser -----------------------------------------------------
 

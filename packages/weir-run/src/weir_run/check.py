@@ -160,8 +160,9 @@ class CheckRun:
         """Program-derived text, printed only if it holds no trace of a value."""
         return "[withheld]" if self.ledger.withheld(text) else text
 
-    def relay(self, out: TextIO) -> None:
-        """Each flow's own output, every needle replaced by `<canary:ID>`."""
+    def relay(self, out: TextIO, *, withhold: bool = False) -> None:
+        """Each flow's own output, every needle replaced by `<canary:ID>`;
+        with withhold, also every line `safe` would withhold."""
         for o in self.outcomes:
             out.write(f"flow {o.id}: {o.status}\n")
             for name, path in (("stdout", o.stdout), ("stderr", o.stderr)):
@@ -170,6 +171,8 @@ class CheckRun:
                     continue
                 out.write(f"--- flow {o.id} {name} (canaries redacted) ---\n")
                 text = self.ledger.redact(data).decode("utf-8", "replace")
+                if withhold:
+                    text = "\n".join(self.safe(line) for line in text.split("\n"))
                 out.write(text if text.endswith("\n") else text + "\n")
                 out.write(f"--- end of flow {o.id} {name} ---\n")
         if self.jail is not None:

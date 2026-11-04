@@ -14,6 +14,7 @@ synthetic scripts that talk only to the mock.
 
 from __future__ import annotations
 
+import os
 import socket
 from collections.abc import Generator
 from typing import Any
@@ -21,6 +22,7 @@ from typing import Any
 import pytest
 from _network import LoopbackOnly, NetworkLog
 
+from weir_run import isolation
 from weir_run.judge import resolve
 
 LOOPBACK = {"127.0.0.1", "localhost"}
@@ -81,3 +83,27 @@ def judge() -> list[str]:
     """The real judge, `weir canary judge` from the workspace's weir-scan,
     found the way the runner finds it: beside this interpreter."""
     return resolve()
+
+
+def _jail() -> isolation.Jail:
+    try:
+        return isolation.jail()
+    except isolation.Unavailable as exc:
+        if os.environ.get("WEIR_TEST_REQUIRE_NETNS"):
+            pytest.fail(f"isolation is required here but was unavailable: {exc}")
+        pytest.skip(f"network isolation is not available here: {exc}")
+
+
+@pytest.fixture
+def jail() -> Generator[isolation.Jail]:
+    made = _jail()
+    try:
+        yield made
+    finally:
+        made.close()
+
+
+@pytest.fixture
+def isolated() -> None:
+    """Skip a whole run that needs isolation where there is none."""
+    _jail().close()
