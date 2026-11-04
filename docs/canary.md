@@ -96,7 +96,6 @@ to, and which flows to run:
 id = "env.OPENAI_API_KEY"
 kind = "env"
 shape = "openai"
-required = true
 provider = "model"   # its own provider: the mock's model API
 
 [[flow]]
@@ -418,7 +417,7 @@ one line each.
 | `placement` | `id` | string | an id |
 | | `kind` | string | one of the kinds above |
 | | `value` | string | the fake value, at least 16 characters, unique in the ledger |
-| | `required` | boolean | optional, default `false`: the run is incomplete unless this placement is exercised or leaked |
+| | `required` | boolean | optional, default `false`: the run is incomplete unless this placement is exercised or leaked. `weir-run` writes `true` for every placement unless it opts out (`required = false` in TOML, `required=False` in the pytest helpers) |
 | | `providers` | array of strings | optional, default empty: the endpoint ids of the placement's [own provider](#a-placements-own-provider), each 1 to 40 characters from `[A-Za-z0-9_-]` |
 | | `provider_host` | string | optional: the host name of the placement's own provider, 1 to 253 characters from `[A-Za-z0-9._:-]`, matched without regard to letter case |
 | `exercised` | `placement` | string | a placement id defined in this ledger, on any line |

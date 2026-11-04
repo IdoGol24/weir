@@ -107,7 +107,6 @@ capture = false                   # true: keep request bodies as capture files
 id = "env.SEARCH_API_KEY"         # the variable is the id after "env."
 kind = "env"                      # env | code
 shape = "generic"                 # see Shapes
-required = true                   # incomplete unless exercised or leaked
 provider = "search"               # the mocked endpoint it belongs to: model, oauth, otlp or an endpoint id
 provider_host = "api.search.example"   # its real host: a refused attempt to reach it is evidence
 
@@ -116,6 +115,12 @@ id = "code.client.api_key"
 kind = "code"
 variable = "MY_VARIABLE"          # the flow reads this; omit it for CANARY_CODE_CLIENT_API_KEY
 provider = "model"                # passed to the model client, so it belongs to the model API
+
+[[placement]]
+id = "env.BACKUP_API_KEY"
+kind = "env"
+provider = "search"
+required = false                  # a fallback only some flows read: not exercised does not make the run incomplete
 
 [[flow]]
 id = "quickstart"
@@ -325,7 +330,8 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
 A clean result is evidence about the flows that ran and the placements
 planted, not a statement that the program is safe. Read the coverage line:
-a placement no flow exercised is printed as `not exercised`.
+a placement no flow exercised is printed as `not exercised`, and makes the
+run incomplete unless it sets `required = false`.
 
 ## The pytest plugin
 
@@ -335,7 +341,7 @@ Installing the runner registers a `canary_check` fixture (subprocess mode):
 def test_quickstart_exports_no_credentials(canary_check):
     canary_check.mock(oauth=True)
     search = canary_check.endpoint("search", credential_fields=["header:x-api-key"])
-    canary_check.env("SEARCH_API_KEY", required=True, provider="search")
+    canary_check.env("SEARCH_API_KEY", provider="search")
     variable = canary_check.code("code.client.api_key", provider="oauth")
     canary_check.run(["{python}", "examples/quickstart.py"], env={"SEARCH_BASE_URL": search})
     # teardown judges; the test fails on a leak or an incomplete run

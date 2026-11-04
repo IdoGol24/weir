@@ -44,6 +44,17 @@
 
 ### Changed
 - **AGENTS.md heading set to Weir.**
+- **weir-run: every placement is required by default.** A placement with
+  no `required` setting now makes the run incomplete (exit 3,
+  `incomplete: required_not_exercised <id>`) when no flow exercised or
+  leaked it; before, it was only reported as `not exercised` and the run
+  could still be clean. This covers `[[placement]]` in a `weir-run run`
+  config and `canary_check.env` and `canary_check.code` in the pytest
+  plugin. Checks that already set `required = true` are unchanged. To keep
+  the old behaviour for a placement, set `required = false` in TOML or pass
+  `required=False`. The pytest helpers now refuse a `required` value that
+  is not `True` or `False` (such as `None` or `0`), as TOML already did,
+  so only `False` opts out.
 
 ### Corpus
 - The diffspec baselines were regenerated for the new catalog digest
