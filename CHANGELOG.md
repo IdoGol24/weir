@@ -1,5 +1,58 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **The exposure scan finds `Authorization: Bearer` tokens** (class
+  `bearer_token`, rule `bearer-token-in-telemetry`) in plain, lower-case,
+  JSON, JSON-escaped and Python-repr form, as a JSON array value
+  (`{"Authorization": ["Bearer ..."]}`, the shape Go's `json.Marshal`
+  gives an `http.Header`, compact or indented), in a Python or ASGI header
+  tuple list
+  (`[(b'authorization', b'Bearer ...')]`), and in the OpenTelemetry span
+  attributes `http.request.header.authorization` and
+  `http.request.header.proxy-authorization` (string or array, any case),
+  which the scan reads as the header line `<name>: <value>`. Every other
+  request header attribute is scanned as before. A sentence period
+  after the token is not part of it. A token of 20 or more characters
+  is verdict-grade; a placeholder (`<token>`, `${TOKEN}`,
+  `YOUR_ACCESS_TOKEN`, filler) never is. The display prefix is the header
+  as written, with quotes, escapes and operators normalized (for example
+  `Authorization: Bearer`).
+- **The exposure scan finds Google OAuth credentials** (class
+  `google_oauth_credential`, rule `google-oauth-credential-in-telemetry`):
+  access tokens (`ya29.`), refresh tokens (`1//`, a digit, then 39 to 511
+  characters of `A-Z`, `a-z`, `0-9`, `_` or `-`) and client secrets
+  (`GOCSPX-`). The display prefix is 4 characters of the class head, so no
+  output prints 6 or more characters of a value. `weir inventory` finds both
+  in project files, code files included.
+- **JSON written with escaped slashes (`\/`) does not hide a token**: a
+  bearer token or a Google refresh token keeps its hit when an encoder
+  writes each `/` as `\/`.
+- **The exposure scan finds JSON-quoted credential fields** (class
+  `json_credential_field`, rule `json-credential-field-in-telemetry`,
+  review queue only): `"api_key": "..."`, `'password': '...'` and the same
+  field inside escaped JSON. The value runs to its closing quote, spaces
+  included, and the 8-character floor and the masked/None/null/REDACTED
+  rules judge the whole value. Under the key `token` exactly (any case) the
+  value counts only when it has a letter and a digit, and a character
+  inside an escape sequence (`\n`, `\u0041`, `\xe4`) counts as neither, so
+  the `"token"` of an LLM logprobs response (`"Certainly"`, or `"\u4f60"`
+  as an ASCII-only encoder writes a non-English token) is not a match.
+  `"tokenizer"`, `"password_hint"` and `"max_tokens"` do not match. `credential_field`
+  keeps the unquoted `key=value` form, value ending at the first space.
+
+### Changed
+- **AGENTS.md heading set to Weir.**
+
+### Corpus
+- The diffspec baselines were regenerated for the new catalog digest
+  (digest-only diff); the attribute-exposure capture gained one escaped
+  placeholder line per new class, which reaches the review queue only.
+- The bundled canary sample (`canary-sample/otlp.jsonl`) now shows one
+  `json_credential_field` review-queue match: its fake `api_key` field inside
+  escaped JSON. The scan's exit code is unchanged.
+
 ## [0.8.0] - 2026-10-26
 
 ### Added

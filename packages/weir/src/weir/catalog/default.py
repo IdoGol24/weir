@@ -40,19 +40,26 @@ Adding a source class needs three things, not one:
    text before it as the display prefix; a stray capturing group would make it
    record the wrong bytes. `aws_access_key_id` uses `(?:AKIA|ASIA)` for
    exactly this reason. The loader rejects an exposure class whose
-   `content_pattern` has more than one capturing group. Five of the six
-   bundled exposure classes have no capturing group at all - not
-   assignment-shaped - so the scan records group(0), the whole match, as the
-   value for those instead.
+   `content_pattern` has more than one capturing group. Three of the nine
+   bundled exposure classes are assignment-shaped (`credential_field`,
+   `json_credential_field`, `bearer_token`); the other six have no capturing
+   group at all, so the scan records group(0), the whole match, as the value
+   for those instead. One group is also why a key=value field and a
+   JSON-quoted field are two classes: their values end differently (at the
+   first space, at the closing quote), and the group cannot tell which key
+   form came before it. An
+   assignment-shaped class may declare an eligibility floor, which then judges
+   its group(1) value, as `bearer_token` does.
 
-   `credential_field`'s `eligibility.reject_patterns` (masked/None/null/
-   REDACTED values) never reaches `is_verbatim_eligible`'s own reject-pattern
-   check, because a class with no floor to clear (no `pattern`,
-   `structure_class`, or `min_length`) is never verbatim-eligible by
-   construction. `weir.exposure.classify` reads `spec.eligibility.reject_patterns`
-   directly instead: for a floorless class like this one, a value matching a
-   reject pattern is dropped outright rather than parked in the review queue,
-   since there is no weaker state to demote it to.
+   `credential_field`'s and `json_credential_field`'s
+   `eligibility.reject_patterns` (masked/None/null/REDACTED values) never
+   reaches `is_verbatim_eligible`'s own reject-pattern check, because a class
+   with no floor to clear (no `pattern`, `structure_class`, or `min_length`)
+   is never verbatim-eligible by construction. `weir.exposure.classify` reads
+   `spec.eligibility.reject_patterns` directly instead: for a floorless class
+   like these, a value matching a reject pattern is dropped outright rather
+   than parked in the review queue, since there is no weaker state to demote
+   it to.
 
 Three false-positive classes are worth knowing. A structural near-miss is what
 (3) catches. A structurally valid but non-secret value is not - weir's own demo

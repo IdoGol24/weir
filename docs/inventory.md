@@ -65,8 +65,10 @@ read from it.
    whole-file credential (`value_state: absent`) plus a `not_scanned` entry.
 2. **Project files** (`project_scan`). Imported gitleaks and trufflehog
    results, plus Weir's own detectors over every project file: the catalog's
-   key-shaped classes judged by their eligibility patterns, the catalog's
-   `credential_field` assignment class (with the 0.4.1 escape-boundary fix),
+   key-shaped classes judged by their eligibility patterns, the token of an
+   `Authorization: Bearer` header judged by its floor, the catalog's
+   `credential_field` and `json_credential_field` assignment classes (with
+   the 0.4.1 escape-boundary fix),
    an assignment detector for `key = value`, `key: value` and JSON
    `"key": "value"` whose key name suggests a secret, and standalone shapes
    (JWT, URL with a password, PEM private key). Hits covering the same bytes
@@ -193,7 +195,8 @@ counts only when its value has a credential shape (step 1). The
 [location list](inventory-locations.md) shows both field lists per entry.
 
 1. **Shape**: the value has a credential shape (a catalog key shape such as
-   `ghp_...` or `AKIA...` that clears its eligibility pattern, a JWT, a URL
+   `ghp_...`, `AKIA...` or a Google OAuth `ya29....` that clears its
+   eligibility pattern, a JWT, a URL
    with a password, a PEM private key) -> secret, reason `shape`.
 2. **Not a secret**: the value is empty, a number, a boolean
    (`true/false/yes/no/on/off`), a path (absolute, `~`, `./`, `../`, a drive

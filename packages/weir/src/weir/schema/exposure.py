@@ -24,6 +24,11 @@ class ScannedString(msgspec.Struct, frozen=True):
     span_name: str
     location: str
     text: str
+    # The authorization request header `text` is the value of, when the
+    # attribute key names one (`http.request.header.authorization` or
+    # `http.request.header.proxy-authorization`, any case); the classifier
+    # then reads the string as the header line `<name>: <text>`.
+    header: str | None = None
 
 
 class ExposureSurface(msgspec.Struct, frozen=True):

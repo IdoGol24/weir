@@ -1,4 +1,4 @@
-# Ralis
+# Weir
 # global agent instructions
 
 - These rules bind human and agent contributors alike.

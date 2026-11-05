@@ -78,12 +78,50 @@
     },
     {
       "name": "credential_field",
-      "content_pattern": "(?i)(?:(?<![A-Za-z0-9])|(?<=\\\\(?-i:[ntr])))(?:(?:private|secret|access|client|refresh)[_-]?(?:key|secret|token)|api[_-]?key|apikey|secret|token|password|passwd)\\s*[=:]\\s*['\"]?((?:(?!\\\\(?-i:[ntr]))[^'\"\\s,;)}\\]]){8,256})",
+      "content_pattern": "(?i)(?:(?<![A-Za-z0-9])|(?<=\\\\(?-i:[ntr])))(?:(?:private|secret|access|client|refresh)[_-]?(?:key|secret|token)|api[_-]?key|apikey|secret|token|password|passwd)\\s*[=:]\\s*(?:\\\\*['\"])?((?:(?!\\\\+(?:['\"]|(?-i:[ntr])))[^'\"\\s,;)}\\]]){8,256})",
       "exposure": true,
       "eligibility": {
         "reject_patterns": [
           "[*xX#]+",
           "(?i)(None|null|REDACTED)"
+        ]
+      }
+    },
+    {
+      "name": "json_credential_field",
+      "content_pattern": "(?i)(?:(?<![A-Za-z0-9])|(?<=\\\\(?-i:[ntr])))(?:(?:private|secret|access|client|refresh)[_-]?(?:key|secret|token)|api[_-]?key|apikey|secret|password|passwd|(?<!['\"])token|(?<=['\"])token(?=\\\\*['\"]\\s*[=:]\\s*\\\\*['\"](?:(?<=\")(?=(?:\\\\+(?:(?-i:U)[0-9A-Fa-f]{8}|(?-i:u)[0-9A-Fa-f]{4}|(?-i:x)[0-9A-Fa-f]{2}|(?!(?-i:[ntruxU]))[^\\\\\"\\r\\n])|[^\"\\\\\\r\\n]){0,255}?(?-i:[A-Za-z]))(?=(?:\\\\+(?:(?-i:U)[0-9A-Fa-f]{8}|(?-i:u)[0-9A-Fa-f]{4}|(?-i:x)[0-9A-Fa-f]{2}|(?!(?-i:[ntruxU]))[^\\\\\"\\r\\n])|[^\"\\\\\\r\\n]){0,255}?[0-9])|(?<=')(?=(?:\\\\+(?:(?-i:U)[0-9A-Fa-f]{8}|(?-i:u)[0-9A-Fa-f]{4}|(?-i:x)[0-9A-Fa-f]{2}|(?!(?-i:[ntruxU]))[^\\\\'\\r\\n])|[^'\\\\\\r\\n]){0,255}?(?-i:[A-Za-z]))(?=(?:\\\\+(?:(?-i:U)[0-9A-Fa-f]{8}|(?-i:u)[0-9A-Fa-f]{4}|(?-i:x)[0-9A-Fa-f]{2}|(?!(?-i:[ntruxU]))[^\\\\'\\r\\n])|[^'\\\\\\r\\n]){0,255}?[0-9]))))\\\\*['\"]\\s*[=:]\\s*\\\\*['\"]((?<=\")(?:(?!\\\\+(?:\"|(?-i:[ntr])))[^\"\\r\\n]){8,256}|(?<=')(?:(?!\\\\+(?:'|(?-i:[ntr])))[^'\\r\\n]){8,256})",
+      "exposure": true,
+      "eligibility": {
+        "reject_patterns": [
+          "[*xX#]+",
+          "(?i)(None|null|REDACTED)"
+        ]
+      }
+    },
+    {
+      "name": "bearer_token",
+      "content_pattern": "(?i)(?:(?<![A-Za-z0-9])|(?<=\\\\(?-i:[ntr])))authorization(?:\\\\*['\"][ \\t]*,(?:\\s|\\\\+(?-i:[ntr]))*|(?:\\\\*['\"])?[ \\t]*[:=][ \\t]*)(?:\\[(?:\\s|\\\\+(?-i:[ntr]))*)?b?(?:\\\\*['\"])?bearer[ \\t]+((?:[A-Za-z0-9._~+-]|\\\\*/){7,4095}(?:[A-Za-z0-9_~+-]|\\\\*/)=*)",
+      "exposure": true,
+      "eligibility": {
+        "pattern": "(?:[A-Za-z0-9._~+-]|\\\\*/){19,4095}(?:[A-Za-z0-9_~+-]|\\\\*/)=*",
+        "min_distinct_chars": 8,
+        "reject_patterns": [
+          "[A-Z_]+",
+          "(?i)(x|0|#)+",
+          "(?i)(YOUR|EXAMPLE|TEST|FAKE|DEMO|PLACEHOLDER|REDACTED).*"
+        ]
+      }
+    },
+    {
+      "name": "google_oauth_credential",
+      "content_pattern": "(?:\\b|(?<=\\\\[ntr]))(?:(?:ya29\\.|GOCSPX-)[A-Za-z0-9._-]{15,2047}[A-Za-z0-9_-]|1(?:\\\\*/){2}[0-9][A-Za-z0-9_-]{39,511})",
+      "exposure": true,
+      "eligibility": {
+        "pattern": "ya29\\.[A-Za-z0-9._-]{39,2047}[A-Za-z0-9_-]|1(?:\\\\*/){2}[0-9][A-Za-z0-9_-]{39,511}|GOCSPX-[A-Za-z0-9_-]{28}",
+        "min_distinct_chars": 8,
+        "reject_patterns": [
+          "(?i)(ya29\\.|1(?:\\\\*/){2}[0-9]|GOCSPX-)(x|0|#)+",
+          "(?i)(ya29\\.|1(?:\\\\*/){2}[0-9]|GOCSPX-)(EXAMPLE|TEST|FAKE|DEMO|PLACEHOLDER|REDACTED).*"
         ]
       }
     }

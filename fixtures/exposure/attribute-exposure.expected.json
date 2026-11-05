@@ -271,6 +271,60 @@
       "span_name": "execute_tool Write",
       "span_ref": "8888888888888888",
       "value_len": 40
+    },
+    {
+      "demotion_reasons": [
+        "value shape not eligible for bearer_token"
+      ],
+      "fingerprint": null,
+      "fingerprint_v": 1,
+      "is_verdict_grade": false,
+      "last4": null,
+      "location": "attributes.gen_ai.tool.call.arguments",
+      "prefix": "Authorization: Bearer",
+      "rule_id": "bearer-token-in-telemetry",
+      "rule_version": "1.0.0",
+      "severity": "high",
+      "source_class": "bearer_token",
+      "span_name": "execute_tool Write",
+      "span_ref": "8888888888888888",
+      "value_len": 24
+    },
+    {
+      "demotion_reasons": [
+        "value shape not eligible for google_oauth_credential"
+      ],
+      "fingerprint": null,
+      "fingerprint_v": 1,
+      "is_verdict_grade": false,
+      "last4": null,
+      "location": "attributes.gen_ai.tool.call.arguments",
+      "prefix": "ya29",
+      "rule_id": "google-oauth-credential-in-telemetry",
+      "rule_version": "1.0.0",
+      "severity": "high",
+      "source_class": "google_oauth_credential",
+      "span_name": "execute_tool Write",
+      "span_ref": "8888888888888888",
+      "value_len": 45
+    },
+    {
+      "demotion_reasons": [
+        "value shape not eligible for json_credential_field"
+      ],
+      "fingerprint": null,
+      "fingerprint_v": 1,
+      "is_verdict_grade": false,
+      "last4": null,
+      "location": "attributes.gen_ai.tool.call.arguments",
+      "prefix": "api_key",
+      "rule_id": "json-credential-field-in-telemetry",
+      "rule_version": "1.0.0",
+      "severity": "high",
+      "source_class": "json_credential_field",
+      "span_name": "execute_tool Write",
+      "span_ref": "8888888888888888",
+      "value_len": 24
     }
   ],
   "scan": {
@@ -467,6 +521,42 @@
         "span_name": "execute_tool Write",
         "span_ref": "8888888888888888",
         "value_len": 40
+      },
+      {
+        "eligible": false,
+        "fingerprint": null,
+        "fingerprint_v": 1,
+        "last4": null,
+        "location": "attributes.gen_ai.tool.call.arguments",
+        "prefix": "Authorization: Bearer",
+        "source_class": "bearer_token",
+        "span_name": "execute_tool Write",
+        "span_ref": "8888888888888888",
+        "value_len": 24
+      },
+      {
+        "eligible": false,
+        "fingerprint": null,
+        "fingerprint_v": 1,
+        "last4": null,
+        "location": "attributes.gen_ai.tool.call.arguments",
+        "prefix": "ya29",
+        "source_class": "google_oauth_credential",
+        "span_name": "execute_tool Write",
+        "span_ref": "8888888888888888",
+        "value_len": 45
+      },
+      {
+        "eligible": false,
+        "fingerprint": null,
+        "fingerprint_v": 1,
+        "last4": null,
+        "location": "attributes.gen_ai.tool.call.arguments",
+        "prefix": "api_key",
+        "source_class": "json_credential_field",
+        "span_name": "execute_tool Write",
+        "span_ref": "8888888888888888",
+        "value_len": 24
       }
     ],
     "spans_scanned": 9,

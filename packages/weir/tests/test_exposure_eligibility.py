@@ -70,9 +70,10 @@ def test_reject_patterns_are_case_insensitive_where_declared() -> None:
     )
 
 
-def test_credential_field_can_never_be_eligible() -> None:
+@pytest.mark.parametrize("name", ["credential_field", "json_credential_field"])
+def test_credential_field_can_never_be_eligible(name: str) -> None:
     # No structure_class, no pattern, no min_length: triage by construction.
-    assert not is_verbatim_eligible("hunter2hunter2", _source("credential_field"))
+    assert not is_verbatim_eligible("hunter2hunter2", _source(name))
 
 
 def test_aws_key_id_needs_the_exact_width() -> None:
@@ -84,7 +85,7 @@ def test_the_documented_aws_example_key_is_rejected() -> None:
     assert not is_verbatim_eligible("AKIAIOSFODNN7EXAMPLE", _source("aws_access_key_id"))
 
 
-def test_exposure_classes_are_exactly_the_declared_six() -> None:
+def test_exposure_classes_are_exactly_the_declared_nine() -> None:
     assert {s.name for s in DEFAULT_CATALOG.sources if s.exposure} == {
         "openai_api_key",
         "anthropic_api_key",
@@ -92,6 +93,9 @@ def test_exposure_classes_are_exactly_the_declared_six() -> None:
         "google_api_key",
         "github_token",
         "credential_field",
+        "json_credential_field",
+        "bearer_token",
+        "google_oauth_credential",
     }
 
 

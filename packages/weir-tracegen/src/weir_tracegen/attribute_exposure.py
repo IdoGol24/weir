@@ -125,16 +125,20 @@ def render_document() -> dict[str, Any]:
     # the script's second line is an identifier that merely ends in a key name -
     # the near-miss that must stay silent. The key file puts one value of each
     # key-shaped class after a \n, \t or \r escape; the notes file glues the
-    # same values to a plain letter - the near-miss for those. The values are
+    # same values to a plain letter - the near-miss for those (a bearer header
+    # rides along with the key shapes, and the key file ends with a JSON-quoted
+    # field, whose quotes are its boundary). The values are
     # placeholders the reject lists demote (FAKE padding, AWS's documented
     # example id), so they reach the review queue, never a verdict.
     keys = ["ghp_" + "FAKE" * 9, "sk-proj-" + "FAKE" * 9, "sk-ant-api03-" + "FAKE" * 16,
-            "AKIAIOSFODNN7EXAMPLE", "AIza" + "FAKE" * 9]
+            "AKIAIOSFODNN7EXAMPLE", "AIza" + "FAKE" * 9,
+            "Authorization: Bearer " + "FAKE" * 6, "ya29." + "FAKE" * 10]
     for index, (span_id, content, file_path) in enumerate([
         ("6666666666666666", "DEBUG=1\nAPI_KEY=FAKE-CANARY-7Rk2Ls9Vn4Xb\n", ".env"),
         ("7777777777777777", "import os\nmytoken = os.environ[\"TOKEN\"]\n", "send.py"),
         ("8888888888888888",
-         "# rotated keys\n{}\n\t{}\r\n{}\n{}\n{}\n".format(*keys), "keys.txt"),
+         "# rotated keys\n{}\n\t{}\r\n{}\n{}\n{}\n{}\n\t{}\n".format(*keys)
+         + '{"api_key": "FAKE-CANARY-7Rk2Ls9Vn4Xb"}\n', "keys.txt"),
         ("9999999999999999",
          "# not keys\n" + "".join(f"x{key}\n" for key in keys), "notes.txt"),
     ], start=5):

@@ -1,0 +1,10 @@
+{
+  "id": "bearer-token-in-telemetry",
+  "version": "1.0.0",
+  "stage": "active",
+  "description": "An Authorization: Bearer token is present in exported telemetry: the instrumentation wrote a request header's credential into a span it exported.",
+  "source_class": "bearer_token",
+  "sink_tool_name": null,
+  "mode": "exposure",
+  "severity": "high"
+}
