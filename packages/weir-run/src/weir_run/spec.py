@@ -132,7 +132,8 @@ class PlacementSpec:
     kind: str
     variable: str
     shape: str = "generic"
-    required: bool = False
+    # Unexercised and not leaked makes the run incomplete unless False.
+    required: bool = True
     provider_host: str | None = None
     # The mocked endpoint this placement belongs to: `model`, `oauth`,
     # `otlp` or a configured endpoint's id (docs/canary.md, "A placement's
@@ -197,6 +198,9 @@ def validate(spec: RunSpec, *, require_flows: bool = True) -> None:
             )
         if p.shape not in SHAPES:
             raise SpecError(f"placement {p.id}: unknown shape {p.shape!r}")
+        # Only False opts out; None or 0 would read as not required.
+        if not isinstance(p.required, bool):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise SpecError(f"placement {p.id}: required must be True or False")
         if not VARIABLE_RE.fullmatch(p.variable):
             raise SpecError(f"placement {p.id}: {p.variable!r} is not a variable name")
         if p.variable in RUNNER_VARIABLES or p.variable in variables:

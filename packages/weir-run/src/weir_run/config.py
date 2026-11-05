@@ -127,7 +127,7 @@ def _placement(t: dict[str, object]) -> PlacementSpec:
         kind=kind,
         variable=variable,
         shape=_str(t, "shape", where, "generic"),
-        required=_bool(t, "required", where, False),
+        required=_bool(t, "required", where, True),
         provider_host=_opt_str(t, "provider_host", where),
         provider=_opt_str(t, "provider", where),
     )

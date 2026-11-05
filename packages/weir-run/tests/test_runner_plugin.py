@@ -39,6 +39,18 @@ def test_crashing(canary_check, tmp_path):
     canary_check.env("APP_KEY", provider="model")
     canary_check.run(["{{python}}", PROBE], id="crashy", env=_env(tmp_path, "crash"))
 
+def test_unexercised_by_default(canary_check, tmp_path):
+    canary_check.env("APP_KEY", provider="model")
+    canary_check.env("UNUSED_KEY")
+    canary_check.code("code.unused")
+    canary_check.run(["{{python}}", PROBE], env=_env(tmp_path, ""))
+
+def test_unexercised_opted_out(canary_check, tmp_path):
+    canary_check.env("APP_KEY", provider="model")
+    canary_check.env("UNUSED_KEY", required=False)
+    canary_check.code("code.unused", required=False)
+    canary_check.run(["{{python}}", PROBE], env=_env(tmp_path, ""))
+
 def test_explicit_judge(canary_check, tmp_path):
     canary_check.env("APP_KEY", provider="model")
     canary_check.run(["{{python}}", PROBE], env=_env(tmp_path, "leak"))
@@ -107,6 +119,16 @@ def test_an_incomplete_run_fails_the_test(inner: subprocess.CompletedProcess[str
     assert "canary check exited 3" in inner.stdout
 
 
+def test_placements_are_required_unless_they_opt_out(
+    inner: subprocess.CompletedProcess[str],
+) -> None:
+    assert "ERROR test_inner.py::test_unexercised_by_default" in inner.stdout, inner.stdout
+    for pid in ("env.UNUSED_KEY", "code.unused"):
+        assert f"incomplete: required_not_exercised {pid}" in inner.stdout, inner.stdout
+    assert "PASSED test_inner.py::test_unexercised_opted_out" in inner.stdout, inner.stdout
+    assert "ERROR test_inner.py::test_unexercised_opted_out" not in inner.stdout, inner.stdout
+
+
 def test_judge_can_be_called_to_assert_on_the_result(
     inner: subprocess.CompletedProcess[str],
 ) -> None:
@@ -151,6 +173,21 @@ def test_a_bad_declaration_is_refused_at_once(tmp_path: Path, judge: list[str]) 
         check.env("APP_KEY", id="env.SECOND")
     with pytest.raises(Exception, match="set by the runner|already taken"):
         check.env("PATH")
+
+
+@pytest.mark.parametrize("value", [None, 0, "false"], ids=["none", "zero", "string"])
+@pytest.mark.parametrize("kind", ["env", "code"])
+def test_a_required_flag_that_is_not_a_bool_is_refused(
+    tmp_path: Path, judge: list[str], kind: str, value: object
+) -> None:
+    # Only `required=False` opts out: anything else that is not a bool would
+    # be read as not required and could turn an unexercised placement clean.
+    check = CanaryCheck(judge, tmp_path)
+    declare = check.env if kind == "env" else check.code
+    name = "APP_KEY" if kind == "env" else "code.app"
+    with pytest.raises(SpecError, match="required must be True or False"):
+        declare(name, required=value)  # pyright: ignore[reportArgumentType]
+    assert check._placements == []  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_repeated_flow_id_is_refused_before_the_flow_starts(

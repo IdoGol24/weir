@@ -2,7 +2,7 @@
 
     def test_quickstart_exports_no_credentials(canary_check):
         search = canary_check.endpoint("search", reply='{"results": []}')
-        canary_check.env("SEARCH_API_KEY", required=True, provider="search")
+        canary_check.env("SEARCH_API_KEY", provider="search")
         canary_check.run(["{python}", "examples/quickstart.py"], env={"SEARCH_BASE_URL": search})
         # teardown judges; the test fails on a leak or an incomplete run
 
@@ -91,13 +91,14 @@ class CanaryCheck:
         *,
         id: str | None = None,  # noqa: A002 - the contract's word
         shape: str = "generic",
-        required: bool = False,
+        required: bool = True,
         provider: str | None = None,
         provider_host: str | None = None,
     ) -> str:
         """Plant a canary in each flow's environment as `variable`. Returns
         the placement id. `provider` is the mocked endpoint it belongs to
-        (declare a configured endpoint first)."""
+        (declare a configured endpoint first). The run is incomplete unless
+        it is exercised or leaked; `required=False` opts out."""
         pid = id or f"env.{variable}"
         self._declare(PlacementSpec(pid, "env", variable, shape, required, provider_host, provider))
         return pid
@@ -108,12 +109,13 @@ class CanaryCheck:
         *,
         variable: str | None = None,
         shape: str = "generic",
-        required: bool = False,
+        required: bool = True,
         provider: str | None = None,
         provider_host: str | None = None,
     ) -> str:
         """A canary the flow passes explicitly; it reads it from the returned
-        variable name. `provider` is the mocked endpoint it belongs to."""
+        variable name. `provider` is the mocked endpoint it belongs to.
+        Required unless `required=False`, as for `env`."""
         name = variable or default_variable(id, "code")
         self._declare(PlacementSpec(id, "code", name, shape, required, provider_host, provider))
         return name

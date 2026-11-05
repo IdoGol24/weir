@@ -100,8 +100,8 @@ def test_a_placement_without_a_provider_is_named_before_any_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
 ) -> None:
     extra = (
-        '\n[[placement]]\nid = "env.LOOSE_KEY"\nkind = "env"\n'
-        '\n[[placement]]\nid = "env.HOSTED_KEY"\nkind = "env"\n'
+        '\n[[placement]]\nid = "env.LOOSE_KEY"\nkind = "env"\nrequired = false\n'
+        '\n[[placement]]\nid = "env.HOSTED_KEY"\nkind = "env"\nrequired = false\n'
         'provider_host = "search.invalid"\n'
     )
     config, side = _setup(tmp_path, extra=extra)
@@ -122,14 +122,30 @@ def test_a_crashed_flow_makes_the_run_incomplete(
     assert "incomplete: flow_not_ok main=failed" in result.stdout
 
 
-def test_a_required_placement_never_sent_is_incomplete(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+@pytest.mark.parametrize(
+    ("setting", "required"),
+    [("", True), ("required = true\n", True), ("required = false\n", False)],
+    ids=["default", "explicit-true", "opt-out"],
+)
+def test_an_unexercised_placement_is_incomplete_unless_it_opts_out(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    judge: list[str],
+    setting: str,
+    required: bool,
 ) -> None:
-    extra = '\n[[placement]]\nid = "env.UNUSED_KEY"\nkind = "env"\nrequired = true\n'
+    extra = f'\n[[placement]]\nid = "env.UNUSED_KEY"\nkind = "env"\n{setting}'
     config, _ = _setup(tmp_path, extra=extra)
-    result = _run(monkeypatch, judge, config)
-    assert result.exit_code == 3
-    assert "incomplete: required_not_exercised env.UNUSED_KEY" in result.stdout
+    report = tmp_path / "report.json"
+    result = _run(monkeypatch, judge, config, "--report", str(report))
+    doc = json.loads(report.read_text(encoding="utf-8"))
+    (unused,) = (p for p in doc["placements"] if p["id"] == "env.UNUSED_KEY")
+    # The ledger the runner wrote carries the flag the judge read back.
+    assert (unused["state"], unused["required"]) == ("not_exercised", required)
+    reason = "incomplete: required_not_exercised env.UNUSED_KEY"
+    assert (reason in result.stdout) is required, result.stdout
+    assert doc["result"] == ("incomplete" if required else "clean")
+    assert result.exit_code == (3 if required else 0), result.output
 
 
 def test_the_ledger_and_the_capture_are_deleted(
@@ -198,6 +214,11 @@ def test_two_runs_print_the_same_report(
             "[[flow]]\nid = 'a'\ncommand = ['x']\n"
             "[[placement]]\nid = 'env.A'\nkind = 'env'\nprovider_host = 'a b'\n",
             "is not a host",
+        ),
+        (
+            "[[flow]]\nid = 'a'\ncommand = ['x']\n"
+            "[[placement]]\nid = 'env.A'\nkind = 'env'\nrequired = 'false'\n",
+            "placement env.A: required must be true or false",
         ),
         (
             "[[flow]]\nid = 'a'\ncommand = ['x']\n[[mock.endpoint]]\nid = 'unmocked'\n",
