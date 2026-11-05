@@ -49,6 +49,8 @@ In a pull request, one step runs it and posts the verdict as a comment:
 
 Config, pytest fixture and the full workflow: [weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run) · [action README](https://github.com/IdoGol24/weir/tree/main/action).
 
+To check a credential swap or sandbox instead of your agent, `weir-run verify --target iron-proxy` runs a planted key through it and writes a record you can sign and check before a deployment: [docs/verify.md](https://github.com/IdoGol24/weir/blob/main/docs/verify.md).
+
 ### 2. Watch your own Claude Code sessions
 
 A status-line segment counts how many of your real credentials entered the session's context, and how many were sent out in a tool call. `/weir` explains each one: where it came from, the turn that moved it, where it sits now, and what to do. It never shows a value.

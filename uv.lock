@@ -614,6 +614,7 @@ version = "0.2.1"
 source = { editable = "packages/weir-run" }
 dependencies = [
     { name = "click" },
+    { name = "msgspec" },
     { name = "opentelemetry-proto" },
     { name = "weir-scan" },
 ]
@@ -621,6 +622,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
+    { name = "msgspec", specifier = ">=0.18" },
     { name = "opentelemetry-proto", specifier = ">=1.44" },
     { name = "weir-scan", editable = "packages/weir" },
 ]

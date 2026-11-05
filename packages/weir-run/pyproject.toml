@@ -10,6 +10,8 @@ dependencies = [
     # (`weir canary judge`, docs/canary.md), never by import.
     "weir-scan>=0.6.0",
     "click>=8.1",
+    # The evidence record's structs and schema (already weir-scan's).
+    "msgspec>=0.18",
     "opentelemetry-proto>=1.44",
 ]
 classifiers = [

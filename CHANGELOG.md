@@ -41,6 +41,14 @@
   as an ASCII-only encoder writes a non-English token) is not a match.
   `"tokenizer"`, `"password_hint"` and `"max_tokens"` do not match. `credential_field`
   keeps the unquoted `key=value` form, value ending at the first space.
+- **`weir-run verify` and a signed result.** Checks that a credential swap
+  or sandbox keeps a planted fake key out of the model request, telemetry,
+  console output and outbound requests; the first target is `--target
+  iron-proxy`. Exit 0 clean, 1 leak, 3 incomplete: what the run could not
+  check is incomplete, never clean. `--evidence` writes a value-free record
+  with a JSON Schema; `weir-run predicate` makes an in-toto test-result
+  predicate from it (PASSED only for clean), and the reusable workflow
+  `.github/workflows/verify-attest.yml` signs it. See docs/verify.md.
 
 ### Changed
 - **AGENTS.md heading set to Weir.**

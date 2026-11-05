@@ -1,4 +1,5 @@
-"""`weir-run run`: one check run from a maintainer's config.
+"""`weir-run run`: one check run from a maintainer's config; `weir-run
+verify` and `weir-run predicate` (docs/verify.md).
 
 Exit codes are the judge's (0 clean, 1 leak, 3 incomplete), and 2 for a
 usage, configuration or input error, the runner's own or the judge's, and
@@ -8,15 +9,19 @@ fault never exits 1, which would read as a leak.
 
 from __future__ import annotations
 
+import json
+import re
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import FrameType
+from typing import NoReturn
 
 import click
 
-from weir_run import config
+from weir_run import config, evidence, verify
 from weir_run import judge as judge_cli
 from weir_run.check import run_spec
 from weir_run.ledger import LedgerError
@@ -74,16 +79,14 @@ def run_command(
     On Linux, flows run in a network namespace whose only network is
     loopback, so a client that ignores the proxy settings reaches nothing,
     and its attempt is reported."""
-    # A CI cancel or timeout sends SIGTERM: stop the same way as Ctrl-C, so
-    # the flow's processes are stopped and the ledger and capture deleted.
-    previous = signal.signal(signal.SIGTERM, _terminate)
-    try:
+
+    def work() -> int:
         if report is not None and not report.parent.is_dir():
             raise SpecError(f"--report {report}: no such directory {report.parent}")
         spec = config.load(config_path)
         command = judge_cli.resolve(weir_path)
         judge_cli.check_available(command)
-        code = run_spec(
+        return run_spec(
             spec,
             command,
             out=sys.stdout,
@@ -92,6 +95,17 @@ def run_command(
             json_report=report,
             require_isolation=require_isolation,
         )
+
+    _guarded(work)
+
+
+def _guarded(work: Callable[[], int]) -> NoReturn:
+    """Exit with work's code; any failure of the run exits 2, never 1."""
+    # A CI cancel or timeout sends SIGTERM: stop the same way as Ctrl-C, so
+    # the flow's processes are stopped and the ledger and capture deleted.
+    previous = signal.signal(signal.SIGTERM, _terminate)
+    try:
+        code = work()
     except (SpecError, LedgerError, OSError, subprocess.SubprocessError, RuntimeError) as exc:
         click.echo(f"weir-run: {exc}", err=True)
         sys.exit(USAGE_ERROR)
@@ -104,6 +118,88 @@ def run_command(
     finally:
         signal.signal(signal.SIGTERM, previous)
     sys.exit(code)
+
+
+@main.command("verify")
+@click.option(
+    "--target",
+    required=True,
+    type=click.Choice(sorted(verify.TARGETS)),
+    help="The credential swap or sandbox to check.",
+)
+@click.option(
+    "--target-command",
+    help="The target's executable. Default: the target's own command on PATH.",
+)
+@click.option(
+    "--evidence",
+    "evidence_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    help="Write the evidence record (weir-verify-evidence/1) here.",
+)
+@click.option(
+    "--image-digest",
+    help="The digest of the image this result is for (sha256:<64 hex>), kept in the record.",
+)
+@click.option(
+    "--weir",
+    "weir_path",
+    help="The weir executable to judge with. Default: the one beside this Python, else PATH.",
+)
+def verify_command(
+    target: str,
+    target_command: str | None,
+    evidence_path: Path | None,
+    image_digest: str | None,
+    weir_path: str | None,
+) -> None:
+    """Check that a credential swap or sandbox keeps a planted key out of the
+    model, telemetry, console output and outbound requests.
+
+    Exit 0 clean, 1 leak, 3 incomplete: anything the run could not check,
+    isolation included, is incomplete."""
+
+    def work() -> int:
+        if image_digest is not None and not re.fullmatch("sha256:[0-9a-f]{64}", image_digest):
+            raise SpecError(f"--image-digest {image_digest}: not an image digest (sha256:<64 hex>)")
+        if evidence_path is not None and not evidence_path.parent.is_dir():
+            raise SpecError(f"--evidence {evidence_path}: no such directory")
+        command = judge_cli.resolve(weir_path)
+        judge_cli.check_available(command)
+        code, record = verify.verify(
+            target,
+            command,
+            out=sys.stdout,
+            err=sys.stderr,
+            target_command=target_command,
+            image_digest=image_digest,
+        )
+        if evidence_path is not None:
+            evidence_path.write_bytes(record)
+        return code
+
+    _guarded(work)
+
+
+@main.command("predicate")
+@click.option(
+    "--evidence",
+    "evidence_path",
+    required=True,
+    type=click.Path(path_type=Path, dir_okay=False),
+    help="The evidence record `weir-run verify --evidence` wrote.",
+)
+@click.option("--url", help="A link to the run that made the record, kept in the predicate.")
+def predicate_command(evidence_path: Path, url: str | None) -> None:
+    """Print the in-toto test-result predicate for an evidence record: PASSED
+    for clean, FAILED for leak or incomplete. A record that breaks its
+    schema, or whose verdict its fields do not support, is refused (exit 2)."""
+    try:
+        doc = evidence.predicate(evidence_path.read_bytes(), url)
+    except (evidence.EvidenceError, OSError):
+        click.echo(f"weir-run: {evidence_path}: not a valid {evidence.SCHEMA} record", err=True)
+        sys.exit(USAGE_ERROR)
+    click.echo(json.dumps(doc, indent=2))
 
 
 def _terminate(signum: int, frame: FrameType | None) -> None:
