@@ -4,7 +4,7 @@
 
 Report suspected vulnerabilities privately - do not open a public issue.
 The primary channel is GitHub's private vulnerability reporting at
-https://github.com/IdoGol24/weir/security/advisories/new; if that is not
+https://github.com/ralis-ai/weir/security/advisories/new; if that is not
 available to you, email idogol24@gmail.com as a fallback. You should hear
 back within a few days; there is no bounty program.
 

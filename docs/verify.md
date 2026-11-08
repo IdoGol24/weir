@@ -167,7 +167,7 @@ jobs:
       id-token: write
       attestations: write
       packages: write # asked for by the signing job, with or without push-to-registry
-    uses: IdoGol24/weir/.github/workflows/verify-attest.yml@<full commit SHA>
+    uses: ralis-ai/weir/.github/workflows/verify-attest.yml@<full commit SHA>
     with:
       evidence-artifact: weir-verify-evidence
       subject-name: ghcr.io/example-org/agent
@@ -225,7 +225,7 @@ spec:
         keyless:
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: '^https://github\.com/IdoGol24/weir/\.github/workflows/verify-attest\.yml@[0-9a-f]{40}$'
+              subjectRegExp: '^https://github\.com/ralis-ai/weir/\.github/workflows/verify-attest\.yml@[0-9a-f]{40}$'
         ctlog:
           url: https://rekor.sigstore.dev
   attestations:
@@ -269,7 +269,7 @@ from sigstore.models import Bundle
 from sigstore.verify import Verifier, policy
 
 # The owner/repo whose workflow ran verify, and the signing workflow, as
-# https://github.com/IdoGol24/weir/.github/workflows/verify-attest.yml@<sha>
+# https://github.com/ralis-ai/weir/.github/workflows/verify-attest.yml@<sha>
 REPO = os.environ["CALLER_REPOSITORY"]
 SIGNER = os.environ["SIGNER_WORKFLOW"]
 TOKEN = os.environ.get("GITHUB_TOKEN")  # a public repository needs none

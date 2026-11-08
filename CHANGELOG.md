@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- Project links point to github.com/ralis-ai/weir.
+
 ## [0.9.0] - 2026-11-08
 
 ### Added
@@ -264,7 +269,7 @@ Released beside weir-scan 0.9.0, still requiring `weir-scan>=0.6.0`.
   key, so a reader can tell whether a store was made with its key.
   `weir audit` refuses a store without it: run `weir inventory --store`
   again.
-- **A GitHub Action: `uses: IdoGol24/weir@<ref>`.** One step in a pull
+- **A GitHub Action: `uses: ralis-ai/weir@<ref>`.** One step in a pull
   request job installs weir-scan and weir-run at exact versions (by
   default the versions recorded at the action's ref, wheels only), runs
   `weir-run run --config` (`canary.toml` by default, `require-isolation`

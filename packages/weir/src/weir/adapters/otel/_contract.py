@@ -117,7 +117,7 @@ REMEDIATION: dict[DegradationReason, str] = {
         "the trace matched no registered dialect; it was mapped under the "
         "default profile with every node degraded - tell us which "
         "instrumentation produced it at "
-        "https://github.com/IdoGol24/weir/issues"
+        "https://github.com/ralis-ai/weir/issues"
     ),
 }
 
