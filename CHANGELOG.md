@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.0] - 2026-11-08
 
 ### Added
 - **The exposure scan finds `Authorization: Bearer` tokens** (class
@@ -41,6 +41,24 @@
   as an ASCII-only encoder writes a non-English token) is not a match.
   `"tokenizer"`, `"password_hint"` and `"max_tokens"` do not match. `credential_field`
   keeps the unquoted `key=value` form, value ending at the first space.
+
+### Corpus
+- The diffspec baselines were regenerated for the new catalog digest
+  (digest-only diff); the attribute-exposure capture gained one escaped
+  placeholder line per new class, which reaches the review queue only.
+- The bundled canary sample (`canary-sample/otlp.jsonl`) now shows one
+  `json_credential_field` review-queue match: its fake `api_key` field inside
+  escaped JSON. The scan's exit code is unchanged.
+- The release commit regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.8.0 to
+  0.9.0. That diff is version-only; no flow fact, node count or finding
+  moved.
+
+## [weir-run 0.3.0] - 2026-11-08
+
+Released beside weir-scan 0.9.0, still requiring `weir-scan>=0.6.0`.
+
+### Added
 - **`weir-run verify` and a signed result.** Checks that a credential swap
   or sandbox keeps a planted fake key out of the model request, telemetry,
   console output and outbound requests; the first target is `--target
@@ -51,8 +69,7 @@
   `.github/workflows/verify-attest.yml` signs it. See docs/verify.md.
 
 ### Changed
-- **AGENTS.md heading set to Weir.**
-- **weir-run: every placement is required by default.** A placement with
+- **Every placement is required by default.** A placement with
   no `required` setting now makes the run incomplete (exit 3,
   `incomplete: required_not_exercised <id>`) when no flow exercised or
   leaked it; before, it was only reported as `not exercised` and the run
@@ -63,14 +80,6 @@
   `required=False`. The pytest helpers now refuse a `required` value that
   is not `True` or `False` (such as `None` or `0`), as TOML already did,
   so only `False` opts out.
-
-### Corpus
-- The diffspec baselines were regenerated for the new catalog digest
-  (digest-only diff); the attribute-exposure capture gained one escaped
-  placeholder line per new class, which reaches the review queue only.
-- The bundled canary sample (`canary-sample/otlp.jsonl`) now shows one
-  `json_credential_field` review-queue match: its fake `api_key` field inside
-  escaped JSON. The scan's exit code is unchanged.
 
 ## [0.8.0] - 2026-10-26
 

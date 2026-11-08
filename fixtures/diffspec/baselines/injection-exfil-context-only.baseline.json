@@ -59,7 +59,7 @@
     }
   ],
   "metadata": {
-    "weir_version": "0.8.0",
+    "weir_version": "0.9.0",
     "catalog_digest": "2ce94cf6d2dd983c872e6dae26f2bdf877f12f55527218de7dbe723bd891fb02",
     "dialect_profile_id": "native-seam1/1",
     "dialect_profile_digest": "591e4e1827e11f1079b08b1b06e778fe75d90c5317cab888831c17b603d3e08e",
