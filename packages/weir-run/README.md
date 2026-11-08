@@ -12,7 +12,7 @@ planted, the answer is an exact match in seven encoded forms, not a
 pattern guess.
 
 Its contract, and the judge's, is weir's
-[`docs/canary.md`](https://github.com/IdoGol24/weir/blob/main/docs/canary.md).
+[`docs/canary.md`](https://github.com/ralis-ai/weir/blob/main/docs/canary.md).
 This page is for the maintainer who adds the check to a project's CI.
 
 ## The pieces
@@ -55,7 +55,7 @@ exit 0 clean and complete | 1 a canary leaked | 2 usage, input or runner error |
 sandbox that holds a key on an agent's behalf, instead of your own flows,
 and writes an evidence record that can be signed and checked before a
 deployment. See
-[`docs/verify.md`](https://github.com/IdoGol24/weir/blob/main/docs/verify.md).
+[`docs/verify.md`](https://github.com/ralis-ai/weir/blob/main/docs/verify.md).
 
 ## Fake data only
 
@@ -379,5 +379,5 @@ pytest option (see [Network isolation](#network-isolation)).
   flows in a container with no route out, and use `--require-isolation`
   where a run must not pass unisolated.
 - No in-process pytest mode yet. In GitHub Actions, the
-  [Weir action](https://github.com/IdoGol24/weir/tree/main/action) runs a
+  [Weir action](https://github.com/ralis-ai/weir/tree/main/action) runs a
   config and posts the verdict on the pull request.

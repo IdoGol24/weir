@@ -1,6 +1,6 @@
 # The Weir GitHub Action
 
-Runs a [weir-run](https://github.com/IdoGol24/weir/tree/main/packages/weir-run)
+Runs a [weir-run](https://github.com/ralis-ai/weir/tree/main/packages/weir-run)
 config in a pull request job and posts the verdict on the pull request: one
 comment, updated in place on every re-run. The job fails on a leak or an
 incomplete run and passes on a clean one.
@@ -10,7 +10,7 @@ incomplete run and passes on a clean one.
 One step, after the steps that check out your code and install your project:
 
 ```yaml
-- uses: IdoGol24/weir@<ref>   # a release tag, or better its full commit SHA
+- uses: ralis-ai/weir@<ref>   # a release tag, or better its full commit SHA
 ```
 
 A whole workflow:
@@ -40,14 +40,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e .          # your project, so its flows can import it
-      - uses: IdoGol24/weir@<ref>
+      - uses: ralis-ai/weir@<ref>
         with:
           config: canary.toml
           require-isolation: true
 ```
 
 The config is the one `weir-run run --config` takes; the
-[weir-run README](https://github.com/IdoGol24/weir/tree/main/packages/weir-run#the-config)
+[weir-run README](https://github.com/ralis-ai/weir/tree/main/packages/weir-run#the-config)
 describes it. Use `on: pull_request`, never `pull_request_target` with the
 pull request's code: that would run untrusted code in a job whose token can
 write.

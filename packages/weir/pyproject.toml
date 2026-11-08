@@ -32,8 +32,8 @@ packages = ["src/weir"]
 weir = "weir.cli.main:main"
 
 [project.urls]
-Homepage = "https://github.com/IdoGol24/weir"
-Repository = "https://github.com/IdoGol24/weir"
-Issues = "https://github.com/IdoGol24/weir/issues"
-Changelog = "https://github.com/IdoGol24/weir/blob/main/CHANGELOG.md"
-Security = "https://github.com/IdoGol24/weir/blob/main/SECURITY.md"
+Homepage = "https://github.com/ralis-ai/weir"
+Repository = "https://github.com/ralis-ai/weir"
+Issues = "https://github.com/ralis-ai/weir/issues"
+Changelog = "https://github.com/ralis-ai/weir/blob/main/CHANGELOG.md"
+Security = "https://github.com/ralis-ai/weir/blob/main/SECURITY.md"
