@@ -26,7 +26,7 @@ def test_span_attributes_are_enumerated_with_a_location_path() -> None:
                          "attributes": [_attr("acme.agent.llm", "value-here")]}])
     assert surface.applicable
     assert surface.spans_scanned == 1
-    assert [(s.span_index, s.span_ref, s.span_name, s.location, s.text)
+    assert [(s.record_index, s.span_ref, s.span_name, s.location, s.text)
             for s in surface.strings] == [
         (0, "aa" * 8, "agent", "attributes.acme.agent.llm", "value-here")]
 
@@ -82,7 +82,7 @@ def test_strings_arrive_in_wire_span_order() -> None:
         {"spanId": "bb" * 8, "attributes": [_attr("z", "1"), _attr("a", "2")]},
         {"spanId": "aa" * 8, "attributes": [_attr("m", "3")]},
     ])
-    assert [(s.span_index, s.location) for s in surface.strings] == [
+    assert [(s.record_index, s.location) for s in surface.strings] == [
         (0, "attributes.z"), (0, "attributes.a"), (1, "attributes.m")]
 
 

@@ -28,7 +28,13 @@ import click
 import msgspec
 
 from weir._text_safety import plural
-from weir.adapters.otel import REMEDIATION, OtlpRejectError, decode_input, map_wire
+from weir.adapters.otel import (
+    REMEDIATION,
+    DegradationReason,
+    OtlpRejectError,
+    decode_input,
+    map_wire,
+)
 from weir.adapters.otel.exposure import scan_surface
 from weir.audit import AuditInputError, audit_paths, load_inputs
 from weir.audit import encode_report as encode_audit_report
@@ -50,7 +56,7 @@ from weir.evaluate import evaluate
 from weir.evaluate.exposure import evaluate_exposure
 from weir.exposure import ExposureScan, classify_exposure
 from weir.gauge import compute_gauge_report
-from weir.gauge.exposure import exposure_gauge_lines
+from weir.gauge.exposure import exposure_gauge_lines, not_scanned_lines
 from weir.gauge.ladder import capability_ladder_lines
 from weir.gauge.provenance import provenance_gauge_lines
 from weir.graph import build_session_graph
@@ -88,6 +94,13 @@ from weir.statusline.segment import (
 from weir.taint import build_tainted_graph
 
 _BOM = b"\xef\xbb\xbf"
+
+# What a logs-only gauge still owes the reader: input the decoder could not
+# read at all. The flow-side remediations describe a trace that does not exist.
+_INPUT_REMEDIATIONS = frozenset(
+    REMEDIATION[reason]
+    for reason in (DegradationReason.INVALID_ENCODING, DegradationReason.UNDECODABLE_BATCH)
+)
 
 # --fail-on is real for every finding family now (spec section 3): a finding
 # counts toward exit 1 when it is verdict-grade AND its rule's severity is at
@@ -131,7 +144,10 @@ def _looks_like_otlp(data: bytes) -> bool:
                 continue
             break
     if isinstance(parsed, dict):
-        return "resourceSpans" in parsed or "resource_spans" in parsed
+        return any(
+            key in parsed
+            for key in ("resourceSpans", "resource_spans", "resourceLogs", "resource_logs")
+        )
     return False
 
 
@@ -141,10 +157,11 @@ _NO_EXPOSURE = classify_exposure(_NO_SURFACE, DEFAULT_CATALOG)
 
 def _load_input_or_exit(
     trace_path: str | None, input_format: str, *, data: bytes | None = None
-) -> tuple[CanonicalTrace, list[str], ExposureScan]:
+) -> tuple[CanonicalTrace, list[str], ExposureScan, bool]:
     """Returns (trace, remediation strings from the adapter ledger, exposure
-    scan). The scan reads the WIRE batch, before the GenAI span filter, which
-    is why this decodes in two steps rather than calling adapt_otlp."""
+    scan, whether the input holds traces at all). The scan reads the WIRE
+    batch, before the GenAI span filter, which is why this decodes in two
+    steps rather than calling adapt_otlp."""
     if data is None:
         assert trace_path is not None
         try:
@@ -162,9 +179,9 @@ def _load_input_or_exit(
         result = map_wire(wire)
         remediations = list(dict.fromkeys(REMEDIATION[d.reason] for d in result.degradations))
         exposure = classify_exposure(scan_surface(wire), DEFAULT_CATALOG)
-        return result.trace, remediations, exposure
+        return result.trace, remediations, exposure, wire.has_traces
     try:
-        return decode_canonical_trace(data), [], _NO_EXPOSURE
+        return decode_canonical_trace(data), [], _NO_EXPOSURE, True
     except (msgspec.ValidationError, msgspec.DecodeError) as exc:
         click.echo(f"error: invalid trace: {exc}", err=True)
         raise SystemExit(2) from exc
@@ -190,7 +207,7 @@ def _load_input_or_exit(
     type=click.Choice(["auto", "native", "otlp"]),
     default="auto",
     show_default=True,
-    help="Input format; auto sniffs for a resourceSpans key.",
+    help="Input format; auto sniffs for a resourceSpans or resourceLogs key.",
 )
 def gauge_command(
     trace_path: str | None,
@@ -204,9 +221,11 @@ def gauge_command(
         sample_bytes = (
             importlib.resources.files("weir.data").joinpath("sample-export.json").read_bytes()
         )
-        trace, remediations, exposure = _load_input_or_exit(None, input_format, data=sample_bytes)
+        trace, remediations, exposure, has_traces = _load_input_or_exit(
+            None, input_format, data=sample_bytes
+        )
     elif trace_path:
-        trace, remediations, exposure = _load_input_or_exit(trace_path, input_format)
+        trace, remediations, exposure, has_traces = _load_input_or_exit(trace_path, input_format)
     else:
         raise click.UsageError("provide a trace file or --sample")
     graph = build_session_graph(trace)
@@ -219,6 +238,15 @@ def gauge_command(
 
     if as_json:
         click.echo(msgspec.json.encode(report).decode())
+    elif not has_traces:
+        # A logs-only export: coverage, the ladder and provenance would all
+        # describe a trace that does not exist.
+        click.echo("flow scan: the input held no spans, so no flow trace was built")
+        for line in remediations:
+            if line in _INPUT_REMEDIATIONS:
+                click.echo(line)
+        for line in exposure_gauge_lines(exposure):
+            click.echo(line)
     else:
         click.echo(f"evidentiary coverage: {report.evidentiary_coverage_bp // 100}%")
         click.echo(f"argument capture: {report.inspectable_args_bp // 100}%")
@@ -272,7 +300,7 @@ def gauge_command(
     type=click.Choice(["auto", "native", "otlp"]),
     default="auto",
     show_default=True,
-    help="Input format; auto sniffs for a resourceSpans key.",
+    help="Input format; auto sniffs for a resourceSpans or resourceLogs key.",
 )
 def scan_command(
     trace_path: str,
@@ -281,7 +309,7 @@ def scan_command(
     detected_framework: str,
     input_format: str,
 ) -> None:
-    trace, remediations, exposure = _load_input_or_exit(trace_path, input_format)
+    trace, remediations, exposure, _ = _load_input_or_exit(trace_path, input_format)
     graph = build_session_graph(trace)
     labeled = label_graph(graph, DEFAULT_CATALOG)
     tainted = build_tainted_graph(labeled, DEFAULT_CATALOG)
@@ -317,13 +345,14 @@ def scan_command(
             rules=rules,
             ladder_lines=ladder,
             exposure_findings=exposure_findings,
+            not_scanned=not_scanned_lines(exposure),
         )
         Path(report_path).write_text(html, encoding="utf-8")
 
     # Exposure renders ABOVE the flow findings, and only when there is
     # something to say: `weir scan` on a native trace, which carries no
     # attributes, prints no exposure section at all.
-    for line in exposure_lines(exposure_findings):
+    for line in [*exposure_lines(exposure_findings), *not_scanned_lines(exposure)]:
         click.echo(line)
 
     if verdict_grade_findings:

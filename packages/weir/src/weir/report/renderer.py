@@ -53,6 +53,12 @@ def _masked_value(prefix: str, last4: str | None) -> str:
     return f"{prefix}…{last4}" if last4 else prefix
 
 
+def _record(finding: ExposureFinding) -> str:
+    if finding.log_record is None:
+        return f"span {finding.span_name}"
+    return f"log record {finding.log_record}"
+
+
 def _finding_sentence(finding: Finding, graph: SessionGraph, untrusted: list[str]) -> str:
     sink_node = graph.nodes[finding.sink_node_index]
     sink_tool = (
@@ -77,6 +83,7 @@ def render_html_report(
     rules: list[RuleSpec],
     ladder_lines: Sequence[str] = (),
     exposure_findings: Sequence[ExposureFinding] = (),
+    not_scanned: Sequence[str] = (),
 ) -> str:
     rules_by_id = {rule.id: rule for rule in rules}
     verdict_grade = [f for f in findings if f.is_verdict_grade]
@@ -113,8 +120,8 @@ def render_html_report(
         masked_value = _masked_value(f.prefix, f.last4)
         untrusted_values.extend([f.source_class, f.location, f.span_name, masked_value])
         exposure_verdict.append({
-            "headline": f"{f.source_class} present in {f.location} of span "
-                        f"{f.span_name} ({masked_value})",
+            "headline": f"{f.source_class} present in {f.location} of "
+                        f"{_record(f)} ({masked_value})",
             "rule_caption": f"rule: {f.rule_id} v{f.rule_version} - "
                             f'to demote: set "stage": "shadow" in {f.rule_id}.json',
         })
@@ -125,8 +132,8 @@ def render_html_report(
             continue
         untrusted_values.extend([f.source_class, f.location, f.span_name, f.prefix])
         exposure_triage.append({
-            "headline": f"{f.source_class} shape in {f.location} of span "
-                        f"{f.span_name} ({f.prefix})",
+            "headline": f"{f.source_class} shape in {f.location} of "
+                        f"{_record(f)} ({f.prefix})",
             "reasons": list(f.demotion_reasons),
         })
 
@@ -142,6 +149,7 @@ def render_html_report(
         review_queue=[_render(f) for f in review_queue],
         exposure_verdict=exposure_verdict,
         exposure_triage=exposure_triage,
+        not_scanned=list(not_scanned),
     )
 
     scrubbed = html
