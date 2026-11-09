@@ -27,8 +27,9 @@ weir-run verify --target iron-proxy --evidence weir-verify-evidence.json \
 | `--image-digest` | the digest of the image whose target binary was checked, kept in the record; it only names the image |
 | `--weir` | the `weir` executable to judge with |
 
-Exit `0` clean, `1` leak, `3` incomplete, `2` for a usage error or a failure
-of the run itself, as for `weir-run run` ([canary.md](canary.md#exit-codes)).
+Exit `0` clean, `1` a finding (a leak or an unmediated tool call), `3`
+incomplete, `2` for a usage error or a failure of the run itself, as for
+`weir-run run` ([canary.md](canary.md#exit-codes)).
 It needs Linux with unprivileged user namespaces: the run is always
 [isolated](canary.md#network-isolation), and a run that cannot be is
 incomplete. Values are fresh fake keys; no real key is read or sent.
@@ -56,6 +57,12 @@ characters in a row of the key.
 
 A sink's verdict is `leak` when it holds a hit, `not_reached` when nothing
 reached it, and `clean` otherwise. The run is `leak` when any sink leaks,
+otherwise `unmediated-tool-call` when the run's mock saw a tool execute
+that no model request asked for ([canary.md](canary.md#tool-calls)); both
+are findings and fail the run. verify's own probe runs no tool and its
+mock declares no tool endpoint, so the current target never reaches this
+verdict; the record carries it so that the mock's own check, the one
+`weir-run run` makes, fails any verify run that does. The run is
 `clean` only when every sink was reached and is clean, the key was
 exercised, the run was isolated with no direct connection attempt and no
 reason below holds, and `incomplete` otherwise. Never a false clean: what the run could not check is
@@ -81,30 +88,38 @@ A target is a name, its command, and the flow that runs the probe through
 it, so other credential swaps and sandboxes can be added. weir's own tests
 drive the target against a small local fake, so they need no real tool.
 
-## The evidence record (`weir-verify-evidence/1`)
+## The evidence record (`weir-verify-evidence/2`)
 
 A stable contract for other tools: fields are never removed or changed
-within `weir-verify-evidence/1`; a change makes a new schema version. A
+within a schema version; a change makes a new one. A
 target, tool or placement name is a pattern, not a list, so adding a target
-or a tool does not change `weir-verify-evidence/1`; verify writes only the
+or a tool does not change the schema version; verify writes only the
 names it knows. The
 JSON Schema is
-[`packages/weir-run/schema_artifacts/weir-verify-evidence.v1.schema.json`](../packages/weir-run/schema_artifacts/weir-verify-evidence.v1.schema.json),
+[`packages/weir-run/schema_artifacts/weir-verify-evidence.v2.schema.json`](../packages/weir-run/schema_artifacts/weir-verify-evidence.v2.schema.json),
 generated from the record's structs and drift-tested, with
 `additionalProperties: false` on every object.
 
 | field | type | meaning |
 | --- | --- | --- |
-| `schema` | string | `"weir-verify-evidence/1"` |
+| `schema` | string | `"weir-verify-evidence/2"` |
 | `target` | string | the target's name, such as `iron-proxy`: `^[a-z0-9][a-z0-9.-]{0,39}$` |
 | `tools` | array | `{name, version}` for `weir-run`, `weir-scan` and the target, when its version was read; `name` as `target` |
 | `manifest_sha256` | string | SHA-256 of what was checked: the target, the placement, the sinks and the probe's code |
 | `image_digest` | string or null | `sha256:<64 hex>` from `--image-digest` |
-| `verdict` | string | `clean`, `leak` or `incomplete` |
+| `verdict` | string | `clean`, `leak`, `unmediated-tool-call` or `incomplete` |
+| `findings` | array | `{type, reason, count}`, sorted by `type` and `reason`: one `leak` entry when any sink holds a hit, `reason` null and `count` the sinks' hits; one `unmediated-tool-call` entry per reason, `not_issued` or `tool_mismatch` ([canary.md](canary.md#tool-calls)), `count` the tool calls. Empty when the verdict is `clean` or `incomplete` |
 | `placements` | array | `{id, state, hits}`; `id` is `env.<VARIABLE>`, such as `env.ANTHROPIC_API_KEY`; `state` is `leaked`, `exercised` or `not_exercised` |
 | `sinks` | array | `{name, verdict, received, hits}` for `console`, `model`, `outbound` and `telemetry`, in that order; `received` counts the requests the mock served for a request sink and the non-empty output streams for `console` |
 | `incomplete` | array | `{reason, count}`, by reason, from a fixed list |
 | `network` | object | `isolated`, and `direct_attempts`, the connections the isolation blocked |
+
+weir-run 0.3.0 wrote `weir-verify-evidence/1`: the same record
+with `schema` `"weir-verify-evidence/1"`, no `findings`, and the verdict
+`clean`, `leak` or `incomplete`. Its JSON Schema is
+[`weir-verify-evidence.v1.schema.json`](../packages/weir-run/schema_artifacts/weir-verify-evidence.v1.schema.json),
+also drift-tested and unchanged. `weir-run predicate` still accepts a v1
+record and makes the same predicate for it as weir-run 0.3.0 did.
 
 verify writes only fixed names, verdicts, counts, digests and versions,
 never a value, a fragment of one, a prompt or a program's output. A name
@@ -119,15 +134,23 @@ over (see [The signed result](#the-signed-result)).
 [in-toto test-result](https://github.com/in-toto/attestation/blob/main/spec/predicates/test-result.md)
 predicate (`https://in-toto.io/attestation/test-result/v0.1`) for a record:
 
-- `result`: `PASSED` for `clean`; `FAILED` for `leak` and for `incomplete`.
-  Never `WARNED`.
+- `result`: `PASSED` for `clean`; `FAILED` for a finding (`leak`,
+  `unmediated-tool-call`) and for `incomplete`. Never `WARNED`.
 - `configuration`: the manifest by its digest, then the record by the
   SHA-256 of its bytes, with the record itself as its `annotations`.
-- `passedTests` and `failedTests`: `sink:<name>` per sink, and
-  `incomplete:<reason>` per reason in `failedTests`.
+- `passedTests` and `failedTests`: `sink:<name>` per sink, and in
+  `failedTests` `finding:<type>` per finding type, such as
+  `finding:unmediated-tool-call`, and `incomplete:<reason>` per reason. The
+  finding's reason is a field of the record in `annotations`.
 
 It refuses (exit 2) a record that breaks the schema, whose sink verdicts do
-not match their counts, or whose verdict its fields do not support.
+not match their counts, whose findings do not match its sinks, or whose
+verdict its fields do not support.
+
+A run with an unmediated tool call can never produce a `PASSED` result, so
+it never satisfies a deployment check that requires `PASSED`. Its `FAILED`
+result is still signed by the workflow below, exactly as a leak's is: a
+signature records what the run found, failures included.
 
 The reusable workflow
 [`.github/workflows/verify-attest.yml`](../.github/workflows/verify-attest.yml)

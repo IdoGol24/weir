@@ -1,7 +1,8 @@
 name: Weir leak check
 description: >-
   Run a weir-run config (fake credentials, a loopback mock, your agent's
-  flows) and post the verdict, leak, clean or incomplete, on the pull request.
+  flows) and post the verdict, leak, unmediated tool call, clean or
+  incomplete, on the pull request.
 author: IdoGol24
 branding:
   icon: shield
@@ -40,13 +41,13 @@ inputs:
 
 outputs:
   result:
-    description: clean, leak, incomplete or error.
+    description: clean, leak, unmediated-tool-call, incomplete or error.
     value: ${{ steps.check.outputs.result }}
   exit-code:
     description: weir-run's exit code.
     value: ${{ steps.check.outputs.exit-code }}
   report:
-    description: Path of the judge's JSON report (canary-report/1), when the run reached a verdict.
+    description: Path of weir-run's JSON report (canary-report/2), when the run reached a verdict.
     value: ${{ steps.check.outputs.report }}
 
 runs:

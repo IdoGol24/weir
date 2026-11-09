@@ -20,9 +20,11 @@ from weir_run.pytest_plugin import CanaryCheck
 from weir_run.spec import SpecError
 
 PROBE = Path(__file__).parent / "_probe_flow.py"
+TOOL_FLOW = Path(__file__).parent / "_tool_flow.py"
 
 INNER_TESTS = f"""
 PROBE = {json.dumps(PROBE.as_posix())}
+TOOL_FLOW = {json.dumps(TOOL_FLOW.as_posix())}
 
 def _env(tmp_path, mode):
     return {{"SIDE_FILE": str(tmp_path / "side"), "MODE": mode}}
@@ -57,6 +59,19 @@ def test_explicit_judge(canary_check, tmp_path):
     result = canary_check.judge()
     assert result.code == 1
     assert "LEAK env.APP_KEY" in result.report
+
+def _tools(canary_check, tmp_path, mode):
+    files = canary_check.endpoint("files", reply='{{"ok": true}}', tool="send_file")
+    canary_check.env("MODEL_KEY", provider="model")
+    canary_check.env("FILES_KEY", provider="files")
+    env = {{"SIDE_FILE": str(tmp_path / "side"), "MODE": mode, "API": "chat"}}
+    canary_check.run(["{{python}}", TOOL_FLOW], env={{**env, "FILES_BASE_URL": files}})
+
+def test_tool_run_asked(canary_check, tmp_path):
+    _tools(canary_check, tmp_path, "model")
+
+def test_tool_run_unasked(canary_check, tmp_path):
+    _tools(canary_check, tmp_path, "injected")
 """
 
 # An inner conftest that makes isolation unavailable, as on a host without
@@ -127,6 +142,18 @@ def test_placements_are_required_unless_they_opt_out(
         assert f"incomplete: required_not_exercised {pid}" in inner.stdout, inner.stdout
     assert "PASSED test_inner.py::test_unexercised_opted_out" in inner.stdout, inner.stdout
     assert "ERROR test_inner.py::test_unexercised_opted_out" not in inner.stdout, inner.stdout
+
+
+def test_a_tool_run_no_model_request_asked_for_fails_the_test(
+    inner: subprocess.CompletedProcess[str],
+) -> None:
+    """`endpoint(..., tool=...)` names the tool, as `tool` does in a config."""
+    assert "PASSED test_inner.py::test_tool_run_asked" in inner.stdout, inner.stdout
+    assert "ERROR test_inner.py::test_tool_run_asked" not in inner.stdout, inner.stdout
+    assert "ERROR test_inner.py::test_tool_run_unasked" in inner.stdout, inner.stdout
+    line = "unmediated tool call: send_file (executed without a model request)"
+    assert line in inner.stdout.splitlines(), inner.stdout
+    assert "result: unmediated-tool-call" in inner.stdout.splitlines()
 
 
 def test_judge_can_be_called_to_assert_on_the_result(

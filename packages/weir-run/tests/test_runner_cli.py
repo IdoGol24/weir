@@ -40,6 +40,13 @@ env = {{ {env} }}
 """
 
 PROBE = Path(__file__).parent / "_probe_flow.py"
+CANARY_REPORT_SCHEMA = (
+    Path(__file__).resolve().parents[3]
+    / "packages"
+    / "weir"
+    / "schema_artifacts"
+    / "canary-report.v1.schema.json"
+)
 
 
 def _setup(tmp_path: Path, mode: str = "", extra: str = "") -> tuple[Path, Path]:
@@ -138,7 +145,7 @@ def test_an_unexercised_placement_is_incomplete_unless_it_opts_out(
     config, _ = _setup(tmp_path, extra=extra)
     report = tmp_path / "report.json"
     result = _run(monkeypatch, judge, config, "--report", str(report))
-    doc = json.loads(report.read_text(encoding="utf-8"))
+    doc = json.loads(report.read_text(encoding="utf-8"))["judge"]
     (unused,) = (p for p in doc["placements"] if p["id"] == "env.UNUSED_KEY")
     # The ledger the runner wrote carries the flag the judge read back.
     assert (unused["state"], unused["required"]) == ("not_exercised", required)
@@ -172,7 +179,22 @@ def test_the_json_report_is_written(
     report = tmp_path / "report.json"
     assert _run(monkeypatch, judge, config, "--report", str(report)).exit_code == 1
     doc = json.loads(report.read_text())
-    assert doc["schema"] == "canary-report/1" and doc["result"] == "leak"
+    # The run's verdict at the top, as a 0.3.0 reader of `result` and
+    # `exit_code` reads it.
+    assert (doc["schema"], doc["result"], doc["exit_code"]) == ("canary-report/2", "leak", 1)
+    assert doc["findings"] == ["leak"] and doc["unmediated"] == []
+    # The judge's own canary-report/1, every field its committed schema names.
+    judged = doc["judge"]
+    schema = json.loads(CANARY_REPORT_SCHEMA.read_text(encoding="utf-8"))
+    assert list(judged) == schema["$defs"]["Report"]["required"]
+    assert (judged["schema"], judged["result"], judged["exit_code"]) == (
+        "canary-report/1",
+        "leak",
+        1,
+    )
+    assert judged["hits"] and {h["placement"] for h in judged["hits"]} <= {
+        p["id"] for p in judged["placements"] if p["state"] == "leaked"
+    }
 
 
 def test_two_runs_print_the_same_report(

@@ -1,10 +1,11 @@
 """`weir-run run`: one check run from a maintainer's config; `weir-run
 verify` and `weir-run predicate` (docs/verify.md).
 
-Exit codes are the judge's (0 clean, 1 leak, 3 incomplete), and 2 for a
+Exit codes are the run's verdict (0 clean, 1 a finding: a leak or an
+unmediated tool call, 3 incomplete; `weir_run.verdict`), and 2 for a
 usage, configuration or input error, the runner's own or the judge's, and
 for any other failure of the run (docs/canary.md, "Exit codes"). A runner
-fault never exits 1, which would read as a leak.
+fault never exits 1, which would read as a finding.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ def main() -> None:
 @click.option(
     "--report",
     type=click.Path(path_type=Path, dir_okay=False),
-    help="Also write the judge's JSON report (canary-report/1) here.",
+    help="Also write the run's JSON report (canary-report/2) here.",
 )
 @click.option(
     "--seed",
@@ -135,7 +136,7 @@ def _guarded(work: Callable[[], int]) -> NoReturn:
     "--evidence",
     "evidence_path",
     type=click.Path(path_type=Path, dir_okay=False),
-    help="Write the evidence record (weir-verify-evidence/1) here.",
+    help="Write the evidence record (weir-verify-evidence/2) here.",
 )
 @click.option(
     "--image-digest",
@@ -156,8 +157,9 @@ def verify_command(
     """Check that a credential swap or sandbox keeps a planted key out of the
     model, telemetry, console output and outbound requests.
 
-    Exit 0 clean, 1 leak, 3 incomplete: anything the run could not check,
-    isolation included, is incomplete."""
+    Exit 0 clean, 1 a finding (a leak or an unmediated tool call), 3
+    incomplete: anything the run could not check, isolation included, is
+    incomplete."""
 
     def work() -> int:
         if image_digest is not None and not re.fullmatch("sha256:[0-9a-f]{64}", image_digest):
@@ -191,13 +193,14 @@ def verify_command(
 )
 @click.option("--url", help="A link to the run that made the record, kept in the predicate.")
 def predicate_command(evidence_path: Path, url: str | None) -> None:
-    """Print the in-toto test-result predicate for an evidence record: PASSED
-    for clean, FAILED for leak or incomplete. A record that breaks its
+    """Print the in-toto test-result predicate for an evidence record
+    (weir-verify-evidence/2, or /1 as weir-run 0.3.0 wrote it): PASSED for
+    clean, FAILED for a finding or incomplete. A record that breaks its
     schema, or whose verdict its fields do not support, is refused (exit 2)."""
     try:
         doc = evidence.predicate(evidence_path.read_bytes(), url)
     except (evidence.EvidenceError, OSError):
-        click.echo(f"weir-run: {evidence_path}: not a valid {evidence.SCHEMA} record", err=True)
+        click.echo(f"weir-run: {evidence_path}: not a valid evidence record", err=True)
         sys.exit(USAGE_ERROR)
     click.echo(json.dumps(doc, indent=2))
 

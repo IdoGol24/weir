@@ -94,7 +94,8 @@ def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str], mode
     result = CliRunner().invoke(cli.main, ["run", "--config", str(config), "--report", str(report)])
     assert report.exists(), result.output
     keys: list[str] = json.loads(side.read_text(encoding="utf-8"))
-    outcome = Outcome(result, json.loads(report.read_text(encoding="utf-8")), keys)
+    # The judge's own report, inside the run's (canary-report/2).
+    outcome = Outcome(result, json.loads(report.read_text(encoding="utf-8"))["judge"], keys)
     _assert_value_free(result.output + report.read_text(encoding="utf-8"), keys)
     # The flow finished its turn: the streamed final reply is in its relayed output.
     assert REPLY in result.output, result.output

@@ -35,7 +35,8 @@ SPEC = RunSpec((PLACEMENT,), (), MockSpec(tool_calls="none", endpoints=(Endpoint
 PROBE = Path(probe.__file__)
 FLOW_TIMEOUT_SECONDS = 120.0
 VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.-]+)?")
-EXIT_CODES = {"clean": 0, "leak": 1, "incomplete": 3}
+# 1 is a finding, either type (docs/canary.md, "Exit codes").
+EXIT_CODES = {"clean": 0, "leak": 1, "unmediated-tool-call": 1, "incomplete": 3}
 # The mock's endpoints, by the sink a request to each one reaches.
 ENDPOINT_SINKS = {"model": "model", "otlp": "telemetry", OUTBOUND: "outbound"}
 
@@ -163,14 +164,18 @@ def _sink_of(hit: Any) -> str:
 
 def _record(
     target: str,
-    report: Any,
+    run_report: Any,
     received: Counter[str],
     tools: list[dict[str, str]],
     missing: bool,
     image_digest: str | None,
-    judge_code: int,
+    code: int,
     fragments: int,
 ) -> evidence.Evidence:
+    """The record from the run's JSON report (canary-report/2): the
+    judge's hits, placements, reasons and network, and the run's own
+    unmediated tool calls; code is the run's exit code."""
+    report = run_report["judge"]
     hits = Counter(_sink_of(h) for h in report["hits"])
     reasons = Counter(
         r if r in evidence.JUDGE_REASONS else "judge_other"
@@ -185,6 +190,15 @@ def _record(
         sinks.append(
             {"name": name, "verdict": verdict, "received": received[name], "hits": hits[name]}
         )
+    # docs/canary.md, "Tool calls": the mock's own groups, by reason.
+    unmediated: Counter[str] = Counter()
+    for entry in run_report["unmediated"]:
+        unmediated[str(entry["reason"])] += int(entry["count"])
+    findings = [{"type": "leak", "reason": None, "count": hits.total()}] if hits else []
+    findings += [
+        {"type": "unmediated-tool-call", "reason": r, "count": n}
+        for r, n in sorted(unmediated.items())
+    ]
     doc = {
         "schema": evidence.SCHEMA,
         "target": target,
@@ -192,6 +206,7 @@ def _record(
         "manifest_sha256": manifest_sha256(target),
         "image_digest": image_digest,
         "verdict": "incomplete",
+        "findings": findings,
         "placements": [{k: p[k] for k in ("id", "state", "hits")} for p in report["placements"]],
         "sinks": sinks,
         "incomplete": [{"reason": r, "count": n} for r, n in sorted(reasons.items())],
@@ -201,8 +216,8 @@ def _record(
         },
     }
     record = msgspec.convert(doc, evidence.Evidence)
-    if evidence.derive(record) == "clean" and judge_code != 0:
-        # The record's fields and the judge's own verdict disagree.
+    if evidence.derive(record) == "clean" and code != 0:
+        # The record's fields and the run's own verdict disagree.
         reason = evidence.Incomplete(reason="judge_not_clean", count=1)
         record = msgspec.structs.replace(record, incomplete=[reason])
     return msgspec.structs.replace(record, verdict=evidence.derive(record))
@@ -218,7 +233,8 @@ def verify(
     image_digest: str | None = None,
 ) -> tuple[int, bytes]:
     """Run the probe against target, judge every sink. Returns the exit code
-    (0 clean, 1 leak, 3 incomplete) and the evidence record's bytes."""
+    (0 clean, 1 a finding: a leak or an unmediated tool call, 3 incomplete)
+    and the evidence record's bytes."""
     name, version_args, flow_of = TARGETS[target]
     binary = target_command or shutil.which(name)
     version = None if binary is None else tool_version([binary, *version_args])

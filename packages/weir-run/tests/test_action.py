@@ -99,6 +99,30 @@ def test_the_exit_mapping(code: int | None, result: str | None, expected: tuple[
     assert outcome.passed == (expected[0] == "clean")
 
 
+def _contract_exit_codes() -> list[tuple[int, str]]:
+    """(code, result) for every row of docs/canary.md's runner exit-code
+    table that has a result: the codes weir-run, which the action runs,
+    exits with."""
+    doc = (ROOT / "docs" / "canary.md").read_text(encoding="utf-8")
+    section = doc.split("\n## Exit codes\n", 1)[1].split("\n## ", 1)[0]
+    runner = section.split("\n| runner code |", 1)[1]
+    rows = re.findall(r"^\| `(\d+)` \| `([a-z-]+)` \|", runner, re.MULTILINE)
+    return [(int(code), result) for code, result in rows]
+
+
+def test_every_result_the_contract_names_is_taken_with_its_own_code_only() -> None:
+    """Exit 1 is a finding of either type: an unmediated tool call is no
+    error, and no other code may claim it."""
+    rows = _contract_exit_codes()
+    assert (1, "unmediated-tool-call") in rows and (1, "leak") in rows
+    for code, result in rows:
+        outcome = weir_action.outcome(code, _report(result))
+        assert (outcome.result, outcome.exit_code) == (result, code)
+        assert outcome.passed == (result == "clean")
+        for other in {c for c, _ in rows} - {code}:
+            assert weir_action.outcome(other, _report(result)).result == "error"
+
+
 def test_only_the_last_result_line_counts() -> None:
     report = "result: leak\n" + _report("clean")
     assert weir_action.outcome(0, report).result == "clean"
@@ -109,6 +133,7 @@ def test_only_the_last_result_line_counts() -> None:
 
 VERDICT = [
     'LEAK env.APP_KEY file=capture/otlp/traces.jsonl:1 signal=traces span="a ```` b" form=raw',
+    "unmediated tool call: send_file (executed without a model request)",
     "not exercised: env.OTHER",
     "not scanned: capture/x.gz (compressed)",
     "blocked connection: api.example:443 (1x)",
@@ -140,12 +165,47 @@ def test_the_fence_outlasts_any_backtick_run_in_the_lines() -> None:
 def test_each_result_has_its_own_headline() -> None:
     bodies = {
         result: weir_action.render(code, _report(result), key="k", config="c", run_url=None)
-        for code, result in ((0, "clean"), (1, "leak"), (3, "incomplete"))
+        for code, result in _contract_exit_codes()
     }
     bodies["error"] = weir_action.render(2, "", key="k", config="c", run_url=None)
     for result, body in bodies.items():
         assert body.splitlines()[1] == weir_action.headline(result)
-    assert len({weir_action.headline(r) for r in bodies}) == 4
+    assert len({weir_action.headline(r) for r in bodies}) == len(bodies) == 5
+    # An unmediated tool call is judged on execution, never called a leak,
+    # not even in the bold lead of its headline.
+    unmediated = weir_action.headline("unmediated-tool-call")
+    assert "leak" not in unmediated.lower()
+    assert unmediated.startswith("**Weir check: unmediated tool call.** ")
+
+
+@pytest.mark.parametrize(
+    ("result", "code", "title"),
+    [
+        ("unmediated-tool-call", 1, "Weir check"),
+        ("leak", 1, "Weir leak check"),
+        ("incomplete", 3, "Weir leak check"),
+    ],
+)
+def test_a_failing_result_is_annotated_and_an_unmediated_one_never_as_a_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    result: str,
+    code: int,
+    title: str,
+) -> None:
+    """The report step's error annotation names the run's result; for an
+    unmediated tool call its title is the plain check name."""
+    verdict = tmp_path / "verdict.txt"
+    verdict.write_text(_report(result), encoding="utf-8")
+    for name in ("GITHUB_EVENT_PATH", "GITHUB_STEP_SUMMARY", weir_action.TOKEN_VARIABLE):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("WEIR_CONFIG", "canary.toml")
+    monkeypatch.setenv("WEIR_EXIT_CODE", str(code))
+    monkeypatch.setenv("WEIR_VERDICT", str(verdict))
+    assert weir_action.main(["report"]) == code
+    errors = [x for x in capsys.readouterr().out.splitlines() if x.startswith("::error")]
+    assert errors == [f"::error title={title}::{result} (weir-run exit {code})"]
 
 
 def test_an_error_shows_no_verdict_lines_and_names_the_code() -> None:
@@ -168,11 +228,11 @@ def test_a_long_report_is_cut_but_keeps_its_summary_lines() -> None:
         f"LEAK env.K{i:04d} file=capture/otlp/traces.jsonl:{i} signal=traces form=raw"
         for i in range(2000)
     ]
-    report = "\n".join(hits + VERDICT[6:]) + "\n"
+    report = "\n".join(hits + VERDICT[-3:]) + "\n"
     body = weir_action.render(1, report, key="k", config="c", run_url=None)
     block = _block(body)
     assert len(body) <= weir_action.MAX_BODY
-    assert block[-3:] == VERDICT[6:]
+    assert block[-3:] == VERDICT[-3:]
     shown = [line for line in block if line.startswith("LEAK ")]
     assert 0 < len(shown) < len(hits)
     assert block[: len(shown)] == hits[: len(shown)]
@@ -554,7 +614,7 @@ def test_a_pr_run_posts_one_comment_with_the_report_weir_run_prints(
     assert _block(body) == direct_report.splitlines()
     assert _block(run.summary) == direct_report.splitlines()
     report = json.loads(Path(run.outputs["check"]["report"]).read_text("utf-8"))
-    assert report["result"] == result
+    assert report["result"] == report["judge"]["result"] == result
     value = side.read_text("utf-8")
     assert len(value) >= 20
     for text in (run.text, body, json.dumps(github.requests)):

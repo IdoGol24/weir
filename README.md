@@ -70,7 +70,7 @@ weir statusline setup         # shows the change, applies it only when you type 
 
 - **It doesn't guess.** It looks for the exact values it planted, raw or encoded, so a hit is a real leak.
 - **It checks every way out:** spans, logs, metrics, console output, prompts sent to the model, and requests to any other service. On Linux, where unprivileged user namespaces are allowed, the agent runs with no outside network, so a direct connection is caught too.
-- **No false all-clear in the test rig.** If a run didn't exercise something, Weir says incomplete, not clean, and shows exactly what it checked. Exit codes: 0 clean, 1 leak, 2 unusable input, 3 incomplete.
+- **No false all-clear in the test rig.** If a run didn't exercise something, Weir says incomplete, not clean, and shows exactly what it checked. Exit codes: 0 clean, 1 a finding (a leak, or a tool that ran without a model request asking for it), 2 unusable input, 3 incomplete.
 - **Offline and deterministic.** No AI model decides anything, and Weir itself sends nothing anywhere. Tests enforce both.
 
 **Found with Weir:** [CVE-2026-116691](https://nvd.nist.gov/vuln/detail/cve-2026-116691) ([GHSA-j7qq-vr8c-xvw3](https://github.com/mlflow/mlflow/security/advisories/GHSA-j7qq-vr8c-xvw3)), an MLflow advisory, fixed in 3.17.0.
