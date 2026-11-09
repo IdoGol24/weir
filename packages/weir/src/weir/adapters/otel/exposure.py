@@ -31,8 +31,13 @@ _MAX_DEPTH = 64
 
 # The OpenTelemetry HTTP semantic conventions record request header `<name>`
 # as the attribute `http.request.header.<name>`, a string or string array.
-# Only the credential-carrying authorization headers are named on the
-# surface; every other header attribute is a plain string like any other.
+# Instrumentation that records the whole header map as ONE kvlist attribute
+# (`http.request.headers = {authorization: ...}`) names the header in the
+# entry key instead, so inside a kvlist a bare `authorization` key names the
+# header too. Some instrumentations write `_` for `-` in a header name
+# (`proxy_authorization`), so the two are the same name here. Only the
+# credential-carrying authorization headers are named on the surface; every
+# other header is a plain string like any other.
 _REQUEST_HEADER = "http.request.header."
 _AUTHORIZATION_HEADERS = frozenset({"authorization", "proxy-authorization"})
 
@@ -80,7 +85,7 @@ def _walk_value(
     appended. In a log record a bytes value is collected too, and any shape
     holding no readable string other than a number or boolean is counted as
     not scanned. An array element keeps the header its attribute names; a
-    kvlist entry does not."""
+    kvlist entry names its own (see `_header_name`)."""
     if depth > _MAX_DEPTH or not isinstance(value, dict):
         if log and value is not None:
             out.append((location, None, None))
@@ -99,7 +104,12 @@ def _walk_value(
                 out.append((location, None, None))
         elif kind == "kvlist" and isinstance(inner, dict):
             _walk_attributes(
-                cast("dict[str, object]", inner).get("values"), location, out, depth + 1, log=log
+                cast("dict[str, object]", inner).get("values"),
+                location,
+                out,
+                depth + 1,
+                log=log,
+                in_kvlist=True,
             )
         elif kind == "bytes" and wrapper in holder:
             out.append((location, _bytes_text(inner), header))
@@ -110,8 +120,26 @@ def _walk_value(
         out.append((location, None, None))
 
 
+def _header_name(key: str, *, in_kvlist: bool) -> str | None:
+    """The authorization header an attribute key names, as written, or None.
+    `http.request.header.<name>` names `<name>` anywhere; a bare `<name>`
+    names it only as a kvlist entry, where a header map keeps its names."""
+    name = key[len(_REQUEST_HEADER):] if key.lower().startswith(_REQUEST_HEADER) else None
+    if name is None and in_kvlist:
+        name = key
+    if name is None or name.lower().replace("_", "-") not in _AUTHORIZATION_HEADERS:
+        return None
+    return name
+
+
 def _walk_attributes(
-    attributes: object, location: str, out: list[_Found], depth: int = 0, *, log: bool = False
+    attributes: object,
+    location: str,
+    out: list[_Found],
+    depth: int = 0,
+    *,
+    log: bool = False,
+    in_kvlist: bool = False,
 ) -> None:
     if depth > _MAX_DEPTH or not isinstance(attributes, list):
         if log and attributes is not None:
@@ -124,10 +152,7 @@ def _walk_attributes(
             if log:
                 out.append((location, None, None))
             continue
-        name = key[len(_REQUEST_HEADER):]
-        header = None
-        if key.lower().startswith(_REQUEST_HEADER) and name.lower() in _AUTHORIZATION_HEADERS:
-            header = name
+        header = _header_name(key, in_kvlist=in_kvlist)
         _walk_value(entry.get("value"), f"{location}.{key}", out, depth, header, log=log)
 
 

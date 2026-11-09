@@ -21,13 +21,20 @@ with no flow needed: OpenAI, Anthropic, AWS, GitHub and Google API keys,
 Google OAuth access tokens (`ya29.`), refresh tokens (`1//`, a digit,
 then 39 to 511 characters of
 `A-Z`, `a-z`, `0-9`, `_` or `-`) and client secrets (`GOCSPX-`), the token
-in an `Authorization: Bearer` header, and a field whose name says it holds a
-credential (`api_key=...`, `"password": "..."`), including inside JSON that
-is itself escaped in a string. A JSON-quoted value runs to its closing
-quote, spaces included; under the key `token` alone it counts only when it
-has both a letter and a digit of its own (an escape sequence such as `\n` or
-`\u0041` counts as neither), so a logprobs `"token": "Certainly"` is not
-one, in any language. A key-name match has no shape to check, so it goes to
+in an `Authorization: Bearer` header (also URL-encoded, as in
+`authorization=Bearer%20...` or a whole encoded header line, judged as
+the decoded token, and as the
+`authorization` entry of a header map recorded as one attribute), and a
+field whose name says it holds a credential (`api_key=...`,
+`"password": "..."`, `"api_key": ["..."]`), including inside JSON that is
+itself escaped in a string. A JSON-quoted value runs to its closing quote,
+spaces included, and an array value, nested or not, is judged by its first
+string item of 8 or more characters, after up to three leading `null`,
+`None`, number or shorter string items. A placeholder first item therefore hides a
+real value after it (`["REDACTED", "..."]` is not found). Under the key
+`token` alone the value counts only when it has both a letter and a digit of
+its own (an escape sequence such as `\n` or `\u0041` counts as neither), so
+a logprobs `"token": "Certainly"` is not one, in any language. A key-name match has no shape to check, so it goes to
 the review queue rather than failing the scan. In a log record it reads the
 attributes, the body (a string or a structured value) and the resource and
 scope attributes around it, and names the finding by the log record's
