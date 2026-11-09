@@ -11,7 +11,9 @@
       "rule_id": "openai-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 0,
       "source_class": "openai_api_key",
+      "span_key": 0,
       "span_name": "acme.agent",
       "span_ref": "1111111111111111",
       "value_len": 47
@@ -27,7 +29,9 @@
       "rule_id": "openai-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 1,
       "source_class": "openai_api_key",
+      "span_key": 0,
       "span_name": "acme.agent",
       "span_ref": "1111111111111111",
       "value_len": 47
@@ -43,7 +47,9 @@
       "rule_id": "openai-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 2,
       "source_class": "openai_api_key",
+      "span_key": 1,
       "span_name": "acme.agent",
       "span_ref": "2222222222222222",
       "value_len": 47
@@ -59,7 +65,9 @@
       "rule_id": "openai-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 3,
       "source_class": "openai_api_key",
+      "span_key": 1,
       "span_name": "acme.agent",
       "span_ref": "2222222222222222",
       "value_len": 47
@@ -75,7 +83,9 @@
       "rule_id": "openai-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 4,
       "source_class": "openai_api_key",
+      "span_key": 2,
       "span_name": "acme.agent",
       "span_ref": "3333333333333333",
       "value_len": 47
@@ -91,7 +101,9 @@
       "rule_id": "openai-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 5,
       "source_class": "openai_api_key",
+      "span_key": 2,
       "span_name": "acme.agent",
       "span_ref": "3333333333333333",
       "value_len": 47
@@ -107,7 +119,9 @@
       "rule_id": "openai-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 6,
       "source_class": "openai_api_key",
+      "span_key": 3,
       "span_name": "chat m-1",
       "span_ref": "4444444444444444",
       "value_len": 47
@@ -123,7 +137,9 @@
       "rule_id": "openai-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 7,
       "source_class": "openai_api_key",
+      "span_key": 3,
       "span_name": "chat m-1",
       "span_ref": "4444444444444444",
       "value_len": 47
@@ -141,7 +157,9 @@
       "rule_id": "google-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 8,
       "source_class": "google_api_key",
+      "span_key": 4,
       "span_name": "acme.config",
       "span_ref": "5555555555555555",
       "value_len": 31
@@ -159,7 +177,9 @@
       "rule_id": "credential-field-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 9,
       "source_class": "credential_field",
+      "span_key": 4,
       "span_name": "acme.config",
       "span_ref": "5555555555555555",
       "value_len": 19
@@ -177,7 +197,9 @@
       "rule_id": "credential-field-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 10,
       "source_class": "credential_field",
+      "span_key": 5,
       "span_name": "execute_tool Write",
       "span_ref": "6666666666666666",
       "value_len": 24
@@ -195,7 +217,9 @@
       "rule_id": "github-token-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 11,
       "source_class": "github_token",
+      "span_key": 6,
       "span_name": "execute_tool Write",
       "span_ref": "8888888888888888",
       "value_len": 40
@@ -213,7 +237,9 @@
       "rule_id": "openai-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 11,
       "source_class": "openai_api_key",
+      "span_key": 6,
       "span_name": "execute_tool Write",
       "span_ref": "8888888888888888",
       "value_len": 44
@@ -231,7 +257,9 @@
       "rule_id": "anthropic-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 11,
       "source_class": "anthropic_api_key",
+      "span_key": 6,
       "span_name": "execute_tool Write",
       "span_ref": "8888888888888888",
       "value_len": 77
@@ -249,7 +277,9 @@
       "rule_id": "aws-access-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 11,
       "source_class": "aws_access_key_id",
+      "span_key": 6,
       "span_name": "execute_tool Write",
       "span_ref": "8888888888888888",
       "value_len": 20
@@ -267,7 +297,9 @@
       "rule_id": "google-api-key-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 11,
       "source_class": "google_api_key",
+      "span_key": 6,
       "span_name": "execute_tool Write",
       "span_ref": "8888888888888888",
       "value_len": 40
@@ -285,7 +317,9 @@
       "rule_id": "bearer-token-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 11,
       "source_class": "bearer_token",
+      "span_key": 6,
       "span_name": "execute_tool Write",
       "span_ref": "8888888888888888",
       "value_len": 24
@@ -303,7 +337,9 @@
       "rule_id": "google-oauth-credential-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 11,
       "source_class": "google_oauth_credential",
+      "span_key": 6,
       "span_name": "execute_tool Write",
       "span_ref": "8888888888888888",
       "value_len": 45
@@ -321,7 +357,9 @@
       "rule_id": "json-credential-field-in-telemetry",
       "rule_version": "1.0.0",
       "severity": "high",
+      "site_key": 11,
       "source_class": "json_credential_field",
+      "span_key": 6,
       "span_name": "execute_tool Write",
       "span_ref": "8888888888888888",
       "value_len": 24
@@ -337,7 +375,9 @@
         "last4": "7Ri4",
         "location": "attributes.acme.agent.executor",
         "prefix": "sk-proj-",
+        "site_key": 0,
         "source_class": "openai_api_key",
+        "span_key": 0,
         "span_name": "acme.agent",
         "span_ref": "1111111111111111",
         "value_len": 47
@@ -349,7 +389,9 @@
         "last4": "7Ri4",
         "location": "attributes.acme.agent.llm",
         "prefix": "sk-proj-",
+        "site_key": 1,
         "source_class": "openai_api_key",
+        "span_key": 0,
         "span_name": "acme.agent",
         "span_ref": "1111111111111111",
         "value_len": 47
@@ -361,7 +403,9 @@
         "last4": "7Ri4",
         "location": "attributes.acme.agent.executor",
         "prefix": "sk-proj-",
+        "site_key": 2,
         "source_class": "openai_api_key",
+        "span_key": 1,
         "span_name": "acme.agent",
         "span_ref": "2222222222222222",
         "value_len": 47
@@ -373,7 +417,9 @@
         "last4": "7Ri4",
         "location": "attributes.acme.agent.llm",
         "prefix": "sk-proj-",
+        "site_key": 3,
         "source_class": "openai_api_key",
+        "span_key": 1,
         "span_name": "acme.agent",
         "span_ref": "2222222222222222",
         "value_len": 47
@@ -385,7 +431,9 @@
         "last4": "7Ri4",
         "location": "attributes.acme.agent.executor",
         "prefix": "sk-proj-",
+        "site_key": 4,
         "source_class": "openai_api_key",
+        "span_key": 2,
         "span_name": "acme.agent",
         "span_ref": "3333333333333333",
         "value_len": 47
@@ -397,7 +445,9 @@
         "last4": "7Ri4",
         "location": "attributes.acme.agent.llm",
         "prefix": "sk-proj-",
+        "site_key": 5,
         "source_class": "openai_api_key",
+        "span_key": 2,
         "span_name": "acme.agent",
         "span_ref": "3333333333333333",
         "value_len": 47
@@ -409,7 +459,9 @@
         "last4": "7Ri4",
         "location": "attributes.gen_ai.input.messages",
         "prefix": "sk-proj-",
+        "site_key": 6,
         "source_class": "openai_api_key",
+        "span_key": 3,
         "span_name": "chat m-1",
         "span_ref": "4444444444444444",
         "value_len": 47
@@ -421,7 +473,9 @@
         "last4": "7Ri4",
         "location": "status.message",
         "prefix": "sk-proj-",
+        "site_key": 7,
         "source_class": "openai_api_key",
+        "span_key": 3,
         "span_name": "chat m-1",
         "span_ref": "4444444444444444",
         "value_len": 47
@@ -433,7 +487,9 @@
         "last4": null,
         "location": "attributes.acme.secrets.google_key",
         "prefix": "AIza",
+        "site_key": 8,
         "source_class": "google_api_key",
+        "span_key": 4,
         "span_name": "acme.config",
         "span_ref": "5555555555555555",
         "value_len": 31
@@ -445,7 +501,9 @@
         "last4": null,
         "location": "attributes.acme.secrets.password",
         "prefix": "password",
+        "site_key": 9,
         "source_class": "credential_field",
+        "span_key": 4,
         "span_name": "acme.config",
         "span_ref": "5555555555555555",
         "value_len": 19
@@ -457,7 +515,9 @@
         "last4": null,
         "location": "attributes.gen_ai.tool.call.arguments",
         "prefix": "API_KEY",
+        "site_key": 10,
         "source_class": "credential_field",
+        "span_key": 5,
         "span_name": "execute_tool Write",
         "span_ref": "6666666666666666",
         "value_len": 24
@@ -469,7 +529,9 @@
         "last4": null,
         "location": "attributes.gen_ai.tool.call.arguments",
         "prefix": "ghp_",
+        "site_key": 11,
         "source_class": "github_token",
+        "span_key": 6,
         "span_name": "execute_tool Write",
         "span_ref": "8888888888888888",
         "value_len": 40
@@ -481,7 +543,9 @@
         "last4": null,
         "location": "attributes.gen_ai.tool.call.arguments",
         "prefix": "sk-proj-",
+        "site_key": 11,
         "source_class": "openai_api_key",
+        "span_key": 6,
         "span_name": "execute_tool Write",
         "span_ref": "8888888888888888",
         "value_len": 44
@@ -493,7 +557,9 @@
         "last4": null,
         "location": "attributes.gen_ai.tool.call.arguments",
         "prefix": "sk-ant-api03-",
+        "site_key": 11,
         "source_class": "anthropic_api_key",
+        "span_key": 6,
         "span_name": "execute_tool Write",
         "span_ref": "8888888888888888",
         "value_len": 77
@@ -505,7 +571,9 @@
         "last4": null,
         "location": "attributes.gen_ai.tool.call.arguments",
         "prefix": "AKIA",
+        "site_key": 11,
         "source_class": "aws_access_key_id",
+        "span_key": 6,
         "span_name": "execute_tool Write",
         "span_ref": "8888888888888888",
         "value_len": 20
@@ -517,7 +585,9 @@
         "last4": null,
         "location": "attributes.gen_ai.tool.call.arguments",
         "prefix": "AIza",
+        "site_key": 11,
         "source_class": "google_api_key",
+        "span_key": 6,
         "span_name": "execute_tool Write",
         "span_ref": "8888888888888888",
         "value_len": 40
@@ -529,7 +599,9 @@
         "last4": null,
         "location": "attributes.gen_ai.tool.call.arguments",
         "prefix": "Authorization: Bearer",
+        "site_key": 11,
         "source_class": "bearer_token",
+        "span_key": 6,
         "span_name": "execute_tool Write",
         "span_ref": "8888888888888888",
         "value_len": 24
@@ -541,7 +613,9 @@
         "last4": null,
         "location": "attributes.gen_ai.tool.call.arguments",
         "prefix": "ya29",
+        "site_key": 11,
         "source_class": "google_oauth_credential",
+        "span_key": 6,
         "span_name": "execute_tool Write",
         "span_ref": "8888888888888888",
         "value_len": 45
@@ -553,7 +627,9 @@
         "last4": null,
         "location": "attributes.gen_ai.tool.call.arguments",
         "prefix": "api_key",
+        "site_key": 11,
         "source_class": "json_credential_field",
+        "span_key": 6,
         "span_name": "execute_tool Write",
         "span_ref": "8888888888888888",
         "value_len": 24

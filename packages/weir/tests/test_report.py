@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from _harness.exposure import identity
 from _harness.g1 import assert_byte_identical_across_hash_seeds
 
 from weir.adapters.otel import decode_input
@@ -137,7 +138,7 @@ def _exposure_finding(**over) -> ExposureFinding:
                 value_len=48, prefix="sk-proj-", last4="7Ri4",
                 fingerprint="0123456789ab", is_verdict_grade=True)
     base.update(over)
-    return ExposureFinding(**base)
+    return ExposureFinding(**identity(str(base["span_ref"]), str(base["location"])), **base)
 
 
 def test_exposure_block_groups_by_fingerprint_and_names_the_locations() -> None:
@@ -242,11 +243,13 @@ def test_exposure_lines_location_order_is_hash_seed_independent() -> None:
         "findings = [\n"
         "    ExposureFinding(rule_id='r', rule_version='1.0.0', severity='high',"
         " source_class='openai_api_key', span_ref='aa', span_name='a',"
-        " location='attributes.k1', value_len=48, prefix='sk-proj-', last4='7Ri4',"
+        " location='attributes.k1', span_key=0, site_key=0, value_len=48,"
+        " prefix='sk-proj-', last4='7Ri4',"
         " fingerprint='0123456789ab', is_verdict_grade=True),\n"
         "    ExposureFinding(rule_id='r', rule_version='1.0.0', severity='high',"
         " source_class='openai_api_key', span_ref='bb', span_name='b',"
-        " location='attributes.k2', value_len=48, prefix='sk-proj-', last4='8Ri5',"
+        " location='attributes.k2', span_key=1, site_key=1, value_len=48,"
+        " prefix='sk-proj-', last4='8Ri5',"
         " fingerprint='0123456789ab', is_verdict_grade=True),\n"
         "]\n"
         "import sys; sys.stdout.write('\\n'.join(exposure_lines(findings)))\n"

@@ -5,16 +5,26 @@ rather than a stage of it.
 The strings arrive already enumerated by `weir.adapters.otel.exposure`, which
 is why this module needs no wire model and never imports `weir.adapters` - the
 "Analysis-path purity" contract holds it to that.
+
+This is also the one place the matched values and the names they sit under
+are both in hand, so it is where a span id, span name or location key that
+holds a matched value becomes `[withheld]` (docs/scan.md, "Why you can trust it").
+Every renderer downstream prints hits as they are and cannot get a name back.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from typing import NamedTuple
 
 import msgspec
 
+from weir._text_safety import flatten_untrusted
+from weir.canary import needles
+from weir.canary._types import RUN
+from weir.canary.text import WITHHELD
 from weir.catalog import (
     Catalog,
     SourceSpec,
@@ -24,13 +34,16 @@ from weir.catalog import (
     matched_value,
 )
 from weir.exposure._types import ExposureHit, ExposureScan
-from weir.schema.exposure import ExposureSurface, ScannedString
+from weir.schema.exposure import ExposureSurface, ScannedString, Segment, format_location
 
 FINGERPRINT_VERSION = 1
 
 # A value this short, plus its own last4, could be reconstructed from the
 # hit alone - see the last4= line in classify_exposure below.
 _MIN_LAST4_VALUE_LEN = 12
+
+# A needle at least this long is looked up by its last this-many bytes.
+_TAIL = 8
 
 _REGEX_META = frozenset(".^$*+?{}[]\\|()")
 
@@ -47,6 +60,7 @@ class _RawHit(msgspec.Struct, frozen=True):
     span_index: int
     span_ref: str
     span_name: str
+    path: tuple[Segment, ...]
     location: str
     start: int
     spec: SourceSpec
@@ -171,12 +185,60 @@ def _raw_hits_for(
     return [
         _RawHit(
             span_index=scanned.span_index, span_ref=scanned.span_ref,
-            span_name=scanned.span_name, location=scanned.location, start=cand.start,
+            span_name=scanned.span_name, path=scanned.path, location=scanned.location,
+            start=cand.start,
             spec=cand.spec, value=cand.value, prefix=cand.prefix, eligible=cand.eligible,
         )
         for cand in candidates
         if not _subsumed(cand, candidates)
     ]
+
+
+def _withholding(values: set[str]) -> Callable[[str], str]:
+    """The canary judge's printing rule, with `values` in the ledger's place:
+    text that holds one, or any run of 6 consecutive characters of one,
+    prints as `[withheld]`. The flattened form is checked as well, since
+    that is what is printed.
+
+    A scan can match a value per span, so each needle is looked up by its
+    last `_TAIL` bytes, or a shorter one by its length, and each distinct
+    string is checked once: the cost is the length of the strings checked,
+    not that times every needle of the scan."""
+    runs = frozenset(value[i : i + RUN] for value in values for i in range(len(value) - RUN + 1))
+    short: dict[int, set[bytes]] = {}
+    by_tail: dict[bytes, set[bytes]] = {}
+    for value in values:
+        for needle, _ in needles(value):
+            if len(needle) < _TAIL:
+                short.setdefault(len(needle), set()).add(needle)
+            else:
+                by_tail.setdefault(needle[-_TAIL:], set()).add(needle)
+
+    def holds_value(text: str) -> bool:
+        if any(text[i : i + RUN] in runs for i in range(len(text) - RUN + 1)):
+            return True
+        data = text.encode("utf-8", errors="surrogatepass")
+        if any(
+            data[i : i + size] in found
+            for size, found in short.items()
+            for i in range(len(data) - size + 1)
+        ):
+            return True
+        return any(
+            data.endswith(needle, 0, end)
+            for end in range(_TAIL, len(data) + 1)
+            for needle in by_tail.get(data[end - _TAIL : end], ())
+        )
+
+    printed: dict[str, str] = {}
+
+    def withhold(text: str) -> str:
+        if text not in printed:
+            held = holds_value(text) or holds_value(flatten_untrusted(text))
+            printed[text] = WITHHELD if held else text
+        return printed[text]
+
+    return withhold
 
 
 def classify_exposure(surface: ExposureSurface, catalog: Catalog) -> ExposureScan:
@@ -190,6 +252,15 @@ def classify_exposure(surface: ExposureSurface, catalog: Catalog) -> ExposureSca
     for scanned in surface.strings:
         raw.extend(_raw_hits_for(scanned, classes))
 
+    # Every value this scan matched, eligible or triage. A span id is
+    # lowercased off the wire, so for it each value counts in lower case too.
+    values = {hit.value for hit in raw}
+    withhold = _withholding(values)
+    withhold_id = _withholding(values | {value.lower() for value in values})
+    # Counts key on these ordinals, in hit order, never on the printed text:
+    # two locations can both print as `attributes.[withheld]`.
+    span_keys: dict[str, int] = {}
+    site_keys: dict[tuple[str, str], int] = {}
     hits: list[ExposureHit] = []
     # Dedupe key, both grades: one claim per (span, location, class, value).
     # span_index not span_ref - two spans may legally share a spanId (retries,
@@ -205,9 +276,11 @@ def classify_exposure(surface: ExposureSurface, catalog: Catalog) -> ExposureSca
             continue
         seen.add(key)
         hits.append(ExposureHit(
-            span_ref=hit.span_ref,
-            span_name=hit.span_name,
-            location=hit.location,
+            span_ref=withhold_id(hit.span_ref),
+            span_name=withhold(hit.span_name),
+            location=format_location(hit.path, withhold),
+            span_key=span_keys.setdefault(hit.span_ref, len(span_keys)),
+            site_key=site_keys.setdefault((hit.span_ref, hit.location), len(site_keys)),
             source_class=hit.spec.name,
             eligible=hit.eligible,
             value_len=len(hit.value),

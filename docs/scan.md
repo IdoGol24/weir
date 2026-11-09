@@ -68,7 +68,11 @@ Any that can export OpenTelemetry spans to a file.
   ([REMEDIATION_SOURCES.md](../REMEDIATION_SOURCES.md)).
 - **Nothing Weir prints is a credential.** No rendered weir output (text,
   gauge, HTML, ledger) contains a credential-shaped value; that is a test
-  over every fixture in the corpus.
+  over every fixture in the corpus. A span name, span id or attribute key
+  that holds a value the scan found, eligible or in the review queue, or
+  any 6 characters in a row of one, is printed as `[withheld]`, by the same
+  rule the canary judge uses ([canary.md](canary.md)). Counts and exit
+  codes are those of the names as found.
 - **Nothing phoning home.** The analysis path opens no sockets, and the
   whole test suite runs with socket creation blocked
   ([tests/_harness/g3.py](../tests/_harness/g3.py)).

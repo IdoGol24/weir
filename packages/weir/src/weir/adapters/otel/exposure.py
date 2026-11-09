@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import cast
 
 from weir.adapters.otel._wire import SpanInContext, WireInput
-from weir.schema.exposure import ExposureSurface, ScannedString
+from weir.schema.exposure import ExposureSurface, ScannedString, Segment
 
 # ponytail: hard depth cap, no ledger entry. Real OTLP kvlists are one or two
 # levels deep; anything at 64 is malformed or hostile, and crashing the scan
@@ -37,12 +37,12 @@ _MAX_DEPTH = 64
 _REQUEST_HEADER = "http.request.header."
 _AUTHORIZATION_HEADERS = frozenset({"authorization", "proxy-authorization"})
 
-_Found = tuple[str, str, str | None]
+_Found = tuple[tuple[Segment, ...], str, str | None]
 
 
 def _walk_value(
     value: object,
-    location: str,
+    path: tuple[Segment, ...],
     out: list[_Found],
     depth: int = 0,
     header: str | None = None,
@@ -58,20 +58,20 @@ def _walk_value(
     holder = cast("dict[str, object]", value)
     text = holder.get("stringValue")
     if isinstance(text, str):
-        out.append((location, text, header))
+        out.append((path, text, header))
         return
     array = holder.get("arrayValue")
     if isinstance(array, dict):
         items = cast("dict[str, object]", array).get("values")
         if isinstance(items, list):
             for index, item in enumerate(cast("list[object]", items)):
-                _walk_value(item, f"{location}[{index}]", out, depth + 1, header)
+                _walk_value(item, (*path, index), out, depth + 1, header)
         return
     kvlist = holder.get("kvlistValue")
     if isinstance(kvlist, dict):
         _walk_attributes(
             cast("dict[str, object]", kvlist).get("values"),
-            location,
+            path,
             out,
             depth + 1,
             in_kvlist=True,
@@ -92,7 +92,7 @@ def _header_name(key: str, *, in_kvlist: bool) -> str | None:
 
 def _walk_attributes(
     attributes: object,
-    location: str,
+    path: tuple[Segment, ...],
     out: list[_Found],
     depth: int = 0,
     *,
@@ -109,7 +109,7 @@ def _walk_attributes(
         key = entry.get("key")
         if isinstance(key, str):
             header = _header_name(key, in_kvlist=in_kvlist)
-            _walk_value(entry.get("value"), f"{location}.{key}", out, depth, header)
+            _walk_value(entry.get("value"), (*path, key), out, depth, header)
 
 
 def _span_surface(
@@ -117,7 +117,7 @@ def _span_surface(
 ) -> list[_Found]:
     """Every string location of one span, in the spec's declared order."""
     out: list[_Found] = []
-    _walk_attributes(ctx.span.attributes, "attributes", out)
+    _walk_attributes(ctx.span.attributes, ("attributes",), out)
     # `status` and `events` are raw pass-throughs on the wire struct - typing
     # them would quarantine spans that decode today - so every access here is
     # guarded, exactly as stage 2 guards attribute element access. Read each
@@ -131,20 +131,20 @@ def _span_surface(
             if isinstance(event, dict):
                 _walk_attributes(
                     cast("dict[str, object]", event).get("attributes"),
-                    f"events[{index}].attributes",
+                    ("events", index, "attributes"),
                     out,
                 )
     status = ctx.span.status
     if isinstance(status, dict):
         message = cast("dict[str, object]", status).get("message")
         if isinstance(message, str) and message:
-            out.append(("status.message", message, None))
+            out.append((("status", "message"), message, None))
     # Resource and scope attributes are visited ONCE, attributed to the first
     # span that arrived under them.
     if first_of_resource:
-        _walk_attributes(ctx.resource_attributes, "resource.attributes", out)
+        _walk_attributes(ctx.resource_attributes, ("resource", "attributes"), out)
     if first_of_scope:
-        _walk_attributes(ctx.scope.attributes, "scope.attributes", out)
+        _walk_attributes(ctx.scope.attributes, ("scope", "attributes"), out)
     return out
 
 
@@ -172,11 +172,11 @@ def scan_surface(wire: WireInput) -> ExposureSurface:
                 span_index=span_index,
                 span_ref=span_ref,
                 span_name=ctx.span.name,
-                location=location,
+                path=path,
                 text=text,
                 header=header,
             )
-            for location, text, header in found
+            for path, text, header in found
         )
 
     return ExposureSurface(

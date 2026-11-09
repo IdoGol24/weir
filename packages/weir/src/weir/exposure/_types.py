@@ -19,9 +19,17 @@ import msgspec
 
 
 class ExposureHit(msgspec.Struct, frozen=True):
+    # Printable as they are: a span id, span name or location key that holds
+    # a matched value is already `[withheld]` here (docs/scan.md, "Why you
+    # can trust it").
     span_ref: str
     span_name: str
     location: str
+    # Which span, and which (span, location), this hit is at: ordinals in hit
+    # order within one scan. Counts key on these, never on the strings above,
+    # because two different locations can both print as `[withheld]`.
+    span_key: int
+    site_key: int
     source_class: str
     eligible: bool
     value_len: int

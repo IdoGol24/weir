@@ -41,6 +41,8 @@ class ExposureFinding(msgspec.Struct, frozen=True):
     span_ref: str
     span_name: str
     location: str
+    span_key: int  # see ExposureHit: counts key on these, not on the strings
+    site_key: int
     value_len: int
     prefix: str
     is_verdict_grade: bool
