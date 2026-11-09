@@ -17,7 +17,7 @@ import base64
 import hashlib
 import json
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -143,6 +143,83 @@ def json_content(value: str, *, ensure_ascii: bool = True) -> str:
     return json.dumps(value, ensure_ascii=ensure_ascii)[1:-1]
 
 
+def u_escaped(value: str, escape: Callable[[int], bool], *, upper: bool = False) -> str:
+    """The value as JSON string content with the characters at the indexes
+    `escape` picks written `\\uXXXX` (a surrogate pair above U+FFFF), the
+    others as stdlib json writes them: any character may be escaped."""
+    out: list[str] = []
+    for index, ch in enumerate(value):
+        if not escape(index):
+            out.append(json_content(ch, ensure_ascii=False))
+            continue
+        # utf-16 gives a character above U+FFFF as its surrogate pair, and
+        # a lone surrogate (a JSON string may hold one) as itself.
+        units = ch.encode("utf-16-be", errors="surrogatepass")
+        for at in range(0, len(units), 2):
+            code = int.from_bytes(units[at : at + 2], "big")
+            out.append(f"\\u{code:04X}" if upper else f"\\u{code:04x}")
+    return "".join(out)
+
+
+_SHORT = {
+    ord('"'): b'"',
+    ord("\\"): b"\\",
+    ord("/"): b"/",
+    ord("b"): b"\b",
+    ord("f"): b"\f",
+    ord("n"): b"\n",
+    ord("r"): b"\r",
+    ord("t"): b"\t",
+}
+_HEX = frozenset(b"0123456789abcdefABCDEF")
+
+
+def _code_unit(data: bytes, at: int) -> int | None:
+    """The code unit of a `\\uXXXX` starting at `at`, or None."""
+    digits = data[at + 2 : at + 6]
+    if data[at : at + 2] != b"\\u" or len(digits) != 4 or not _HEX.issuperset(digits):
+        return None
+    return int(digits, 16)
+
+
+def json_unescape_once(data: bytes) -> bytes:
+    """`data` with each JSON escape undone once (docs/canary.md, "The
+    decoded view"), read byte by byte from the left: an escape is a `\\`
+    and the short letter or the `uXXXX` after it, a high and a low
+    surrogate escape in a row are one character, and any other byte is
+    kept. Written here, not with the judge's decoder."""
+    out = bytearray()
+    at = 0
+    while at < len(data):
+        short = _SHORT.get(data[at + 1]) if data[at] == 0x5C and at + 1 < len(data) else None
+        code = _code_unit(data, at)
+        if short is not None:
+            out += short
+            at += 2
+        elif code is not None:
+            at += 6
+            low = _code_unit(data, at)
+            if 0xD800 <= code < 0xDC00 and low is not None and 0xDC00 <= low < 0xE000:
+                code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+                at += 6
+            out += chr(code).encode("utf-8", errors="surrogatepass")
+        else:
+            out.append(data[at])
+            at += 1
+    return bytes(out)
+
+
+def json_unescaped(text: str) -> list[str]:
+    """`text` with its JSON escapes undone once, twice and so on until none
+    is left, the text itself first."""
+    texts = [text]
+    data = text.encode("utf-8", errors="surrogatepass")
+    while len(texts) < 64 and (decoded := json_unescape_once(data)) != data:
+        data = decoded
+        texts.append(data.decode("utf-8", errors="surrogatepass"))
+    return texts
+
+
 def base64_embedded(value: str, offset: int, *, urlsafe: bool = False) -> str:
     """The value inside a larger plaintext at byte `offset` mod 3, encoded
     whole: what an HTTP Basic value or a JWT segment carries."""
@@ -190,10 +267,13 @@ def judge(
 
 
 def assert_value_free(text: str, values: Iterable[str]) -> None:
-    """No value and no run of 6 consecutive characters of one is printed."""
+    """No value and no run of 6 consecutive characters of one is printed,
+    as it is or with its JSON escapes undone."""
+    texts = json_unescaped(text)
     for value in values:
         for i in range(len(value) - RUN + 1):
-            assert value[i : i + RUN] not in text, "output holds a fragment of a canary"
+            for shown in texts:
+                assert value[i : i + RUN] not in shown, "output holds a fragment of a canary"
 
 
 def leak_lines(run: Run) -> list[str]:

@@ -32,6 +32,21 @@
     8-character floor, placeholder rules and letter-and-digit rule for
     `token` as the string form. A placeholder first item hides a real value
     after it (`["REDACTED", "..."]` is not a hit).
+- **The canary judge reads JSON escapes.** A planted value is found when
+  the JSON around it writes any of its characters as a `\uXXXX` escape,
+  not only the characters a standard serializer escapes: in a telemetry
+  string, a request part, and a line only the raw sweep reads (console
+  output and other swept files, and a capture line the walk or the
+  request parser cannot read) that is JSON or holds a JSON object or
+  array, such as a log line printing a tool's arguments, wherever that
+  line is written. Text that holds no JSON, and the value of a credential
+  field, are matched as before. The hit is reported at the same record
+  and location as the plain value would be, under form `json` (escaped once) or `json2` (escaped more than
+  once). Text is unescaped up to 16 times; text escaped deeper makes the
+  run incomplete (`unparsed_record`), never clean. A name the judge
+  prints whose unescaped text holds a value is shown as `[withheld]`.
+  Every other judge result is unchanged (docs/canary.md, "The decoded
+  view").
 
 ### Changed
 - Project links point to github.com/ralis-ai/weir.

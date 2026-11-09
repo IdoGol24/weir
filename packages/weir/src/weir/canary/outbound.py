@@ -55,6 +55,10 @@ class Part:
     # `("body", <name>)`, a form field or a top-level JSON member and
     # everything under it. None for every other part.
     field: tuple[str, str] | None = None
+    # Set for a body that is a JSON document: its strings and keys are its
+    # parts, so the whole is not read through the decoded view
+    # (docs/canary.md, "The decoded view").
+    document: bool = False
 
 
 def parse_request(line: bytes) -> Request | None:
@@ -155,6 +159,7 @@ def _is_form(record: Request) -> bool:
 
 def _body_parts(record: Request, body: bytes, display: Display) -> list[Part]:
     parts: list[Part] = []
+    document = False
     try:
         doc: Json = msgspec.json.decode(body)
     except (msgspec.DecodeError, RecursionError):
@@ -162,7 +167,8 @@ def _body_parts(record: Request, body: bytes, display: Display) -> list[Part]:
             parts = _pairs(body, "body", display)
     else:
         _json_parts(doc, "body", display, parts)
-    parts.append(Part(body, "body", "body", whole=True))
+        document = True
+    parts.append(Part(body, "body", "body", whole=True, document=document))
     return parts
 
 
