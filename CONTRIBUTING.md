@@ -163,3 +163,8 @@ Claude Code or bubblewrap is not installed.
 Do not open a public issue for a security finding. See
 [SECURITY.md](SECURITY.md). If you can make attacker-controlled content do
 more than add visible low-confidence noise, that is a security bug.
+
+## Governance
+
+How the project is run, who maintains it and how changes land is in
+[GOVERNANCE.md](GOVERNANCE.md).

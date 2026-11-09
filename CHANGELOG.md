@@ -32,6 +32,10 @@
     8-character floor, placeholder rules and letter-and-digit rule for
     `token` as the string form. A placeholder first item hides a real value
     after it (`["REDACTED", "..."]` is not a hit).
+- `GOVERNANCE.md`, describing how the project is run: the maintainer, how
+  decisions are made, how changes land, how to become a maintainer and how
+  the document changes. It names the security lead, who `SECURITY.md` now
+  names too. `CONTRIBUTING.md` links to it.
 
 ### Changed
 - Project links point to github.com/ralis-ai/weir.
