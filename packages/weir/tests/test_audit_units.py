@@ -1079,6 +1079,18 @@ def test_a_value_only_in_a_file_name_is_never_printed(tmp_path: Path, as_json: b
     assert "[withheld]" in run.stdout
 
 
+def test_a_name_that_holds_a_value_only_through_json_escapes_is_printed(tmp_path: Path) -> None:
+    """docs/audit.md, "Printing": the audit checks a name as it is, not
+    with its JSON escapes undone as the canary judge does, so a folder named
+    with every character of a found value written `\\uXXXX` is printed."""
+    setup = fx.build(tmp_path)
+    value = setup.values[fx.ACME]
+    folder = tmp_path / cfx.u_escaped(value, lambda i: True)
+    path = _session(setup, folder / "subagents" / "agent-a1b2c3.jsonl", f"token {value}")
+    run = setup.audit([path], as_json=False)
+    assert run.lines[0].split(" file=")[1].startswith(f"{path}:")
+
+
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs a FIFO")
 def test_an_error_never_prints_a_value_in_a_path(tmp_path: Path) -> None:
     setup = fx.build(tmp_path)

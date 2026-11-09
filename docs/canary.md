@@ -289,10 +289,12 @@ like anything else the program emits.
 
 - Planted values follow a shapes registry so that software checking a key's
   prefix or length accepts them: a provider's documented prefix followed by
-  random characters from `[A-Za-z0-9]` only. JSON and URL escaping leave
-  such a value unchanged. A `mock-oauth` value may hold other characters
-  where its reply's format calls for them, which is why the judge matches
-  escaped forms at all.
+  random characters from `[A-Za-z0-9]` only. A standard JSON serializer
+  and a URL encoder leave such a value unchanged, but JSON lets a writer
+  escape any character as `\uXXXX`, a letter included, so the judge also
+  reads JSON escapes undone ([the decoded view](#the-decoded-view)). A
+  `mock-oauth` value may hold other characters where its reply's format
+  calls for them, which is why the judge matches escaped forms at all.
 - Signing keys are not planted in the first release: a private key or
   signing secret cannot take this shape, and its placements are reserved
   (above).
@@ -330,6 +332,65 @@ base64 blob, padded or not.
 
 Matching is exact and case-sensitive, except that `hex` and the
 percent-escapes of `url` are matched in both letter cases as listed.
+
+### The decoded view
+
+JSON lets a writer escape any character, not only the ones a standard
+serializer escapes, so no set of needles covers every way a value can be
+written inside JSON. The judge therefore also matches every needle against
+text that holds JSON with its JSON escapes undone:
+
+- **What is read.** One rule for every text the view reads: the JSON it
+  holds, which is the text where it parses as a JSON object, array or
+  string, and otherwise each JSON object or array inside it, left to
+  right, such as the arguments a log line prints or a record cut short.
+  The texts are a string the structured walk reads, a part of a request
+  record ([Attribution](#attribution)) other than the value of one of its
+  credential fields, and a line only the raw sweep reads, which is every
+  line of a swept file, a line of a telemetry file the walk cannot read
+  (not an export request, or a last line cut short) and a line of a
+  request capture file that is not a request record. JSON nested past the
+  decoder's depth limit is read as JSON. Nothing else is read through the
+  view: text that holds no complete JSON object, array or string (a
+  `key=\u0073...` line, a method or host, JSON cut short before its object
+  closes), and a telemetry line the walk read, a request record or a
+  request's JSON body as a whole, whose strings the walk and the request
+  parts already read. A credential
+  field is matched by its needles alone, as the mock matches it, wherever
+  it sits, a header or a member of a JSON body: a value escaped there is
+  neither evidence that it was exercised nor a hit.
+- **What is unescaped.** *Unescaping* replaces each JSON escape (`\"` `\\`
+  `\/` `\b` `\f` `\n` `\r` `\t`, and `\uXXXX` in either letter case, a
+  surrogate pair as one character) by its character and leaves any other
+  `\` as it is, the rule of the audit's `json` form ([the audit](audit.md)).
+  Text that still holds an escape is unescaped again, up to **16** times,
+  and each result is one more text to match.
+- **What it covers.** For text that holds a JSON object, array or string,
+  one unescaping gives each of its string leaves and keys decoded, and a
+  JSON document held as a string inside it is decoded by the next. A value
+  with any of its characters written as `\uXXXX` is therefore found, at the
+  same record, location, line or request part as the text it came from,
+  and is attributed the same way.
+- **How a hit is named.** Where the text itself holds a needle of a
+  placement, the view adds nothing for that placement there: every hit the
+  text gives stays as it is, and none is reported twice. Otherwise the
+  placement's hits are those of the fewest unescapings that hold a needle
+  of it, each named by the escapings the value took in all, the
+  unescapings and the needle's own:
+
+| needle | after 1 unescaping | after 2 or more |
+| --- | --- | --- |
+| `raw` | `json` | `json2` |
+| `json` | `json2` | `json2` |
+| `json2` | `json2` | `json2` |
+| `url`, `base64`, `base64url`, `hex` | the needle's form | the needle's form |
+
+- **The bound.** Text that still holds an escape after 16 unescapings is
+  escaped deeper than the view reads, so the judge cannot search it in
+  full: the run is incomplete, with `unparsed_record` naming the file and
+  line, never clean.
+- The view adds no coverage count: `strings` and `bytes swept` count the
+  capture as it was read.
 
 ### What the judge does not claim
 
@@ -465,8 +526,10 @@ of three roles, fixed by the command line and never guessed from content:
    files are the only telemetry that counts toward completeness.
 2. **Swept files** (every other `PATH`): any bytes, such as the body of a
    request to a non-OTLP telemetry endpoint or a flow's captured stdout and
-   stderr. A swept file is never parsed, whatever it holds, and nothing in
-   it counts toward completeness.
+   stderr. A swept file is never walked, whatever it holds: only the JSON
+   its lines hold is read, through [the decoded view](#the-decoded-view).
+   Nothing in it counts toward completeness, except that a line escaped
+   deeper than the decoded view reads makes the run incomplete.
 3. **Request files** (`--requests`): the mock's record of every request it
    received, judged by the attribution rules of
    [The request capture](#the-request-capture-canary-requests1). Nothing in
@@ -476,10 +539,12 @@ Telemetry and swept files are read this way:
 
 - **The structured walk** (telemetry files). Each line is decoded, and
   every string field and every `stringValue`, plus every `bytesValue` after
-  base64 decoding, is matched against every needle. A hit gets a precise
-  location.
+  base64 decoding, is matched against every needle, as it is and, where it
+  holds JSON, through [the decoded view](#the-decoded-view). A hit gets a
+  precise location.
 - **The raw sweep** (every file). The file's bytes, undecoded, are matched
-  against every needle. In a telemetry file a raw hit is reported only
+  against every needle, and the JSON each line only the sweep reads holds
+  also through the decoded view. In a telemetry file a raw hit is reported only
   where the structured walk found nothing for the same placement on the
   same line, so a hit is not reported twice.
 
@@ -524,8 +589,11 @@ path segment, request host, header, parameter or field name, capture file
 name or `direct` target comes from the program under test and may
 itself hold a canary. Before any such string is printed it is flattened to
 one line (control characters shown as `\xNN`), cut to 200 characters with
-`...`, and replaced entirely by `[withheld]` if it contains any needle or
-any run of 6 or more consecutive characters of any ledger value. A canary in a
+`...`, and replaced entirely by `[withheld]` if it, or the string
+unescaped as [the decoded view](#the-decoded-view) unescapes (any string,
+JSON or not), contains any needle or any run of 6 or more consecutive
+characters of any ledger value, or if it is escaped deeper than the view
+reads. A canary in a
 span name is therefore reported as a hit at location `name` of a span
 shown as `[withheld]`.
 
@@ -653,7 +721,7 @@ one reason:
 | `flow_not_ok` | `<flow id>=<status>`, such as `quickstart=failed` | a `flow` record's status is not `ok` |
 | `unexpected_credential` | the `unexpected` record's id | the mock received a credential field that held no needle of any ledger value |
 | `not_scanned` | the file | a capture file was not scanned (`compressed`, or a `symlink` inside a capture directory) |
-| `unparsed_record` | `<file>:<line>` | a line of a telemetry file is not an OTLP export request, or a line of a request capture file is not a request record or names a body the judge could not search in full (`unread`) |
+| `unparsed_record` | `<file>:<line>` | a line of a telemetry file is not an OTLP export request, or a line of a request capture file is not a request record or names a body the judge could not search in full (`unread`), or a line of any capture file holds text escaped deeper than [the decoded view](#the-decoded-view) reads |
 | `empty_capture` | none | the telemetry files hold no span, log record or metric data point. Swept files never count, whatever they hold |
 | `network_not_isolated` | none | the `network` record says `required` and not `isolated`: the run required isolation and did not have it |
 | `direct_connection` | `<flow>=<protocol>:<target>`, such as `quickstart=tcp:203.0.113.7:443` | a `direct` record: a flow tried to reach a host around the mock. Isolation blocked it, so nothing left, but what it would have sent was never seen |
