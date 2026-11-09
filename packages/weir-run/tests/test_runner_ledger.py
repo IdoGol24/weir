@@ -9,6 +9,7 @@ import json
 import os
 import stat
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ import pytest
 
 from weir_run.ledger import Ledger, LedgerError
 from weir_run.needles import needles
-from weir_run.shapes import ByteSource, shaped
+from weir_run.shapes import ID_OVERLAP, SHAPES, ByteSource, shaped, windows
 
 
 def _records(path: Path) -> list[dict[str, Any]]:
@@ -170,3 +171,68 @@ def test_withheld_follows_the_printing_rule(ledger: Ledger) -> None:
     assert ledger.withheld(f"host-{p.value[5:11]}.invalid")
     assert not ledger.withheld(f"host-{p.value[5:10]}.invalid")
     assert ledger.withheld(base64.b64encode(p.value.encode()).decode())
+
+
+@pytest.mark.parametrize("shape", sorted(s for s in SHAPES if SHAPES[s].prefix))
+def test_withheld_judges_the_random_part(ledger: Ledger, shape: str) -> None:
+    """The prefix every key of a shape carries is no trace of this key; a
+    run of ID_OVERLAP characters of its random part is, even where the run
+    starts inside the prefix."""
+    prefix = SHAPES[shape].prefix
+    p = ledger.plant("env.A_KEY", "env", shaped(ledger.source, shape), parts=SHAPES[shape].parts)
+    assert p.value.startswith(prefix)
+    assert not ledger.withheld(f"a key of kind {prefix}")
+    assert not ledger.withheld(p.value[: len(prefix) + ID_OVERLAP - 1])
+    assert ledger.withheld(p.value[: len(prefix) + ID_OVERLAP])
+    assert ledger.withheld(f"slice {p.value[-ID_OVERLAP:]}")
+
+
+def test_host_text_is_judged_in_either_case(ledger: Ledger) -> None:
+    """A host name reaches the runner case-folded: with host, a run of a
+    value is withheld in any letter case; without it, only as drawn."""
+    p = ledger.plant("env.A_KEY", "env", shaped(ledger.source, "aws-access-key-id"))
+    # A run with a letter, which the shape draws in upper case only.
+    run = next(w for w in sorted(windows(p.value)) if w != w.lower())
+    for text in (run, run.lower(), run.swapcase()):
+        assert ledger.withheld(f"{text}.example.invalid", host=True)
+    assert ledger.withheld(run)
+    assert not ledger.withheld(f"{run.lower()}.example.invalid")
+    assert not ledger.withheld(f"{run[:-1].lower()}.example.invalid", host=True)
+
+
+@pytest.mark.parametrize("shape", sorted(s for s in SHAPES if len(SHAPES[s].prefix) >= ID_OVERLAP))
+def test_host_text_is_judged_by_the_whole_value(ledger: Ledger, shape: str) -> None:
+    """docs/canary.md, "Printing capture-derived text": a host holding a run
+    of 6 characters of a ledger value is withheld, and the value includes
+    its shape's prefix, as the judge reads it. The relay of a flow's own
+    output judges the random part only, so the prefix reads as printed."""
+    prefix = SHAPES[shape].prefix
+    ledger.plant("env.A_KEY", "env", shaped(ledger.source, shape), parts=SHAPES[shape].parts)
+    host = f"{prefix}x.example"
+    for text in (host, host.upper()):
+        assert ledger.withheld(text, host=True)
+    assert not ledger.withheld(host)
+    assert not ledger.withheld(f"{prefix[: ID_OVERLAP - 1]}x.example", host=True)
+
+
+def test_a_value_must_carry_its_prefix(ledger: Ledger) -> None:
+    with pytest.raises(LedgerError, match="random parts"):
+        ledger.plant(
+            "env.A_KEY", "env", shaped(ledger.source, "generic"), parts=SHAPES["openai"].parts
+        )
+
+
+# Random parts no 6-character run could match, so every slice would print.
+UNMATCHABLE: dict[str, Callable[[str], tuple[str, ...]]] = {
+    "none": lambda v: (),
+    "too-short": lambda v: (v[: ID_OVERLAP - 1],),
+    "not-in-value": lambda v: (v[1:] + "!",),
+}
+
+
+@pytest.mark.parametrize("parts", UNMATCHABLE.values(), ids=UNMATCHABLE.keys())
+def test_random_parts_the_rule_could_never_match_are_refused(
+    ledger: Ledger, parts: Callable[[str], tuple[str, ...]]
+) -> None:
+    with pytest.raises(LedgerError, match="random parts"):
+        ledger.plant("env.A_KEY", "env", shaped(ledger.source, "generic"), parts=parts)

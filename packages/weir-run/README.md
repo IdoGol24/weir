@@ -324,9 +324,17 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 - **stderr:** first, one line for each placement with neither a
   `provider` nor a `provider_host`; then each flow's status and its own
   stdout and stderr, relayed after the run with every encoded form of
-  every canary replaced by `<canary:PLACEMENT-ID>`; whether the network
+  every canary replaced by `<canary:PLACEMENT-ID>` and every line that
+  holds 6 or more characters in a row of a canary's random part (after
+  its shape's prefix; for a minted ID token, its subject and signature)
+  replaced by `[withheld]`; whether the network
   was isolated, and each blocked direct attempt; refused egress and
-  unmocked requests by count.
+  unmocked requests by count. A host, direct target or unmocked request
+  that holds 6 or more characters in a row of a whole canary, prefix
+  included, in either letter case, reads `[withheld]`. The judge's
+  report withholds by the same whole-value rule but matches letter case
+  exactly, so a host the flow lowercased itself can still appear among
+  its blocked destinations.
 - **stdout:** the judge's text report: one `LEAK` line per hit, the
   not-exercised placements, the blocked destinations, the incomplete
   reasons, the coverage line, the network line and the result. It names
