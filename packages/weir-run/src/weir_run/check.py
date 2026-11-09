@@ -10,7 +10,8 @@ the judge"):
    receives in the request capture);
 3. stop the mock, record whether the run was isolated and each direct
    connection attempt the namespace blocked, relay each flow's output with
-   every needle replaced;
+   every needle replaced and every line that holds a run of a value
+   withheld;
 4. call the judge, then delete the ledger and the capture.
 
 The CLI runs a whole config through `run_spec`; the pytest plugin drives a
@@ -19,6 +20,7 @@ The CLI runs a whole config through `run_spec`; the pytest plugin drives a
 
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 import tempfile
@@ -32,9 +34,11 @@ from weir_run import judge as judge_cli
 from weir_run.capture import Capture
 from weir_run.ledger import Ledger
 from weir_run.mock import Mock
-from weir_run.shapes import ByteSource, shaped
+from weir_run.shapes import SHAPES, ByteSource, shaped
 from weir_run.spec import FlowSpec, RunSpec, SpecError, validate
 
+WITHHELD = "[withheld]"
+_LINE_ENDING = re.compile(r"(\r?\n)")
 _DIRECT_WORDS = {"tcp": "tcp connection to", "udp": "udp datagram to", "dns": "dns lookup of"}
 
 
@@ -87,7 +91,13 @@ class CheckRun:
                 made = shaped(self.source, p.shape)
                 providers = () if p.provider is None else (p.provider,)
                 placement = self.ledger.plant(
-                    p.id, p.kind, made, p.required, providers, p.provider_host
+                    p.id,
+                    p.kind,
+                    made,
+                    p.required,
+                    providers,
+                    p.provider_host,
+                    parts=SHAPES[p.shape].parts,
                 )
                 self.planted[p.variable] = placement.value
             self.mock = Mock(spec.mock, self.ledger, self.capture, self.source)
@@ -156,13 +166,17 @@ class CheckRun:
         finally:
             self.ledger.close()
 
-    def safe(self, text: str) -> str:
-        """Program-derived text, printed only if it holds no trace of a value."""
-        return "[withheld]" if self.ledger.withheld(text) else text
+    def safe(self, text: str, *, host: bool = False) -> str:
+        """Program-derived text, printed only if it holds no trace of a value;
+        with host (text from the mock's own records), by the whole value in
+        either letter case."""
+        return WITHHELD if self.ledger.withheld(text, host=host) else text
 
-    def relay(self, out: TextIO, *, withhold: bool = False) -> None:
-        """Each flow's own output, every needle replaced by `<canary:ID>`;
-        with withhold, also every line `safe` would withhold."""
+    def relay(self, out: TextIO) -> None:
+        """Each flow's own output, every needle replaced by `<canary:ID>` and
+        then every line `safe` would withhold withheld: a slice of a value
+        is no needle, and is never printed either. A withheld line keeps
+        the line ending the flow printed, LF or CRLF."""
         for o in self.outcomes:
             out.write(f"flow {o.id}: {o.status}\n")
             for name, path in (("stdout", o.stdout), ("stderr", o.stderr)):
@@ -171,8 +185,9 @@ class CheckRun:
                     continue
                 out.write(f"--- flow {o.id} {name} (canaries redacted) ---\n")
                 text = self.ledger.redact(data).decode("utf-8", "replace")
-                if withhold:
-                    text = "\n".join(self.safe(line) for line in text.split("\n"))
+                # Odd parts are the line endings, even parts the lines.
+                parts = _LINE_ENDING.split(text)
+                text = "".join(p if i % 2 else self.safe(p) for i, p in enumerate(parts))
                 out.write(text if text.endswith("\n") else text + "\n")
                 out.write(f"--- end of flow {o.id} {name} ---\n")
         if self.jail is not None:
@@ -181,15 +196,14 @@ class CheckRun:
             out.write(f"network: not isolated ({self.not_isolated})\n")
         for (flow_id, protocol, target), count in sorted(self.direct.items()):
             what = _DIRECT_WORDS[protocol]
-            out.write(
-                f"network: blocked direct {what} {self.safe(target)} from flow {flow_id}"
-                f" ({count}x)\n"
-            )
+            shown = self.safe(target, host=True)
+            out.write(f"network: blocked direct {what} {shown} from flow {flow_id} ({count}x)\n")
         mock = self.mock
         for host, count in sorted(mock.egress.items()):
-            out.write(f"mock: refused egress to {self.safe(host)} ({count}x)\n")
+            out.write(f"mock: refused egress to {self.safe(host, host=True)} ({count}x)\n")
         for request, count in sorted(mock.unmocked.items()):
-            out.write(f"mock: no mock for {self.safe(request)} ({count}x), answered 404\n")
+            shown = self.safe(request, host=True)
+            out.write(f"mock: no mock for {shown} ({count}x), answered 404\n")
         if mock.errors:
             out.write(f"mock: {mock.errors} request(s) failed inside the mock, answered 500\n")
 

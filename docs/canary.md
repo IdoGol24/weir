@@ -860,7 +860,15 @@ contract:
    and each flow's stdout and stderr as its own capture file, passed as a
    swept `PATH`;
 5. relays a flow's own output only after replacing every needle with
-   `<canary:PLACEMENT-ID>`;
+   `<canary:PLACEMENT-ID>`, and then replacing by `[withheld]` every line
+   that still holds a run of 6 or more consecutive characters of a ledger
+   value's random part (the value after the prefix its shape gives every
+   value, such as `sk-ant-api03-`; for an ID token the mock mints, the
+   payload characters that carry its random `sub` and the signature, not
+   the header or claims every such token shares), so a slice of a value
+   is never printed either; a host, `direct` target or unmocked request
+   it prints from its own records follows "Printing capture-derived
+   text", judged on the whole value and in either letter case;
 6. writes one `network` record saying whether the flows ran isolated, and
    whether the run requires it, and one `direct` record per distinct
    connection attempt isolation blocked;

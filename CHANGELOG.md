@@ -37,6 +37,21 @@
 - Project links point to github.com/ralis-ai/weir.
 
 ### Fixed
+- **weir-run never relays a slice of a planted key.** When `weir-run run`
+  or the pytest plugin prints a flow's own stdout and stderr, every line
+  that holds 6 or more characters in a row of a planted value is now
+  replaced by `[withheld]`, as `weir-run verify` already did; before, only
+  a whole value (in any of its encoded forms) was replaced, so a flow that
+  printed part of its key showed that part. In a flow's relayed output,
+  the prefix every key of a shape carries, such as `sk-ant-api03-`, is not
+  itself withheld: only the random part of the value is judged. For an
+  ID token the mock mints, that is its subject and signature, so another
+  JWT with the same header and claims reads as printed. A refused-egress
+  host, a blocked direct target and an unmocked request keep the judge's
+  printing rule, the whole value with its prefix, and are now judged in
+  either letter case, since the mock records a host in lower case: a host
+  name that holds a slice of a key now reads `[withheld]`. Output that
+  holds no part of a value is relayed exactly as before.
 - **A long run of backslashes after a credential-field key no longer slows
   the scan.** The `credential_field` and `json_credential_field` patterns
   now check each backslash run once, not once per value character. Such
