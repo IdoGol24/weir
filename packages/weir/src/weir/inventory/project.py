@@ -27,7 +27,13 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from weir.catalog import DEFAULT_CATALOG, Catalog, assignment_prefix, is_verbatim_eligible
+from weir.catalog import (
+    DEFAULT_CATALOG,
+    Catalog,
+    assignment_prefix,
+    is_verbatim_eligible,
+    matched_value,
+)
 from weir.inventory._scan import Hit, line_of
 from weir.inventory._types import NotScannedReason, Reason
 from weir.inventory.classify import (
@@ -206,7 +212,7 @@ def _catalog_hits(text: str, catalog: Catalog, *, code: bool) -> Iterator[Hit]:
         pattern = re.compile(spec.content_pattern)
         group = 1 if pattern.groups else 0
         for match in pattern.finditer(text):
-            value = match.group(group) or ""
+            value = matched_value(match.group(group) or "", spec)
             if group and spec.eligibility.pattern is None:
                 # credential_field or json_credential_field: an assignment, the
                 # value in group 1. It has no eligibility floor (triage only),

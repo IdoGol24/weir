@@ -25,9 +25,12 @@ class ScannedString(msgspec.Struct, frozen=True):
     location: str
     text: str
     # The authorization request header `text` is the value of, when the
-    # attribute key names one (`http.request.header.authorization` or
-    # `http.request.header.proxy-authorization`, any case); the classifier
-    # then reads the string as the header line `<name>: <text>`.
+    # attribute key names one: `http.request.header.authorization` or
+    # `http.request.header.proxy-authorization` anywhere, or a bare
+    # `authorization` or `proxy-authorization` as a kvlist entry at any depth
+    # (a header map recorded as one attribute), any case and with `_` for `-`
+    # (`proxy_authorization`). The name is kept as written, and the
+    # classifier then reads the string as the header line `<name>: <text>`.
     header: str | None = None
 
 

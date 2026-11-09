@@ -61,6 +61,14 @@ Adding a source class needs three things, not one:
    than parked in the review queue, since there is no weaker state to demote
    it to.
 
+   Both field classes end a value before a backslash run that escapes its
+   closing quote or forms an escape (`\"`, `\n`). They check the run once,
+   at its first backslash, with an atomic lookahead, and take each later
+   backslash of the run without looking again. A lookahead from EVERY
+   backslash re-reads the run once per value character, which made a key
+   followed by a long run of backslashes scan many times slower than any
+   other input. `test_catalog_scan_speed.py` guards this.
+
 Three false-positive classes are worth knowing. A structural near-miss is what
 (3) catches. A structurally valid but non-secret value is not - weir's own demo
 secret is the well-known German test IBAN, and 4111111111111111 passes Luhn -
