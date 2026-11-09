@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Added
+- **The exposure scan reads OpenTelemetry log records**: `weir scan` and
+  `weir gauge` accept an OTLP logs export (`resourceLogs`, camelCase or
+  snake_case) as well as a traces export, alone or mixed in one file or one
+  document. In each log record the scan judges the attributes, the body
+  (string, structured or nested) and the resource and scope attributes,
+  with the same detectors, grades, printing rule and review queue as a span.
+  A finding names its log record by 0-based position in the input
+  (`log record 0` in text and HTML; `log_record` on the hit and the finding,
+  with an empty `span_ref` and `span_name`). A batch holding data the scan
+  cannot read, such as metrics, is reported as `data in 1 batch not
+  scanned` in the terminal and the HTML report, never as clean. A logs-only
+  input no longer exits 2.
+- **Log records are read in every OTLP JSON spelling**: a log record's
+  values may use snake_case wrappers (`string_value`, `kvlist_value`, ...),
+  as protojson writes them with proto field names, and a `bytesValue` in a
+  log record is base64-decoded and scanned when it is UTF-8 text. A log
+  body written as a bare string is read as the body.
+- **A log-record value the exposure scan cannot read is reported as not
+  scanned** (`1 value not scanned`): bytes that are not UTF-8, a resource,
+  list or record in a shape OTLP JSON does not use, or nesting past the
+  depth cap.
+- **`weir gauge` on a logs-only export** prints `flow scan: the input held
+  no spans, so no flow trace was built` in place of the flow coverage
+  lines, then the line for any input it could not decode (a JSONL line
+  that is not JSON, bytes that are not UTF-8), then the exposure scan
+  lines.
+
 ### Changed
 - Project links point to github.com/ralis-ai/weir.
 

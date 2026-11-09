@@ -1,12 +1,12 @@
 # The reject-vs-degrade contract
 
-Exit-2 rejects are exactly two conditions: the input is not JSON at all (neither a JSON document nor JSON Lines), or the input is JSON but not OTLP-shaped (no `resourceSpans` list found anywhere). Everything else degrades, named by one of the rows below.
+Exit-2 rejects are exactly two conditions: the input is not JSON at all (neither a JSON document nor JSON Lines), or the input is JSON but not OTLP-shaped (no `resourceSpans` or `resourceLogs` list found anywhere). Everything else degrades, named by one of the rows below.
 
 | reason | trigger | what weir does | remediation |
 | --- | --- | --- | --- |
 | invalid_encoding | input bytes are not valid UTF-8 | decoding continues with U+FFFD in place of the invalid bytes; no node is marked degraded, but content-derived joins and taint can be silently wrong | the input is not valid UTF-8; invalid bytes were replaced with U+FFFD, which can silently alter content-mined join evidence and taint payloads - fix the exporter's encoding |
 | undecodable_batch | a JSONL line failed to parse as JSON | the line is skipped; decoding continues with the remaining lines | one or more JSONL lines could not be decoded; re-export the batch or check the exporter's file rotation for mid-write truncation |
-| non_trace_batches_skipped | a batch decoded fine but carries no resourceSpans list | the batch is skipped entirely; its spans never enter the trace | lines that decoded but carry no resourceSpans list (logs/metrics in a mixed export, or a malformed traces batch) were skipped; export traces to their own well-formed file |
+| non_trace_batches_skipped | a batch decoded fine but carries no resourceSpans list | the batch is left out of the flow trace; the exposure scan still reads any log records in it, and reports anything else as not scanned | lines that decoded but carry no resourceSpans list (logs/metrics in a mixed export, or a malformed traces batch) were left out of the flow scan; export traces to their own well-formed file |
 | undecodable_span | a span object failed structural decode against the wire schema | the span is discarded; it never becomes a node - absent from the trace | a span failed structural decode and was quarantined; check the exporter for schema-violating span serialization |
 | undecodable_scope | an instrumentation scope object failed structural decode | the scope is replaced with an empty scope; its spans are still mapped but lose framework identity | an instrumentation scope failed structural decode and was dropped; framework identity for its spans is lost - check the exporter's scope serialization |
 | orphaned_parent | a span's parentSpanId names no span present in this export | the parent link is cleared; the node is kept but appears unlinked, not marked degraded by this alone | a span references a parent absent from this export; include the full trace in one export (or concatenate the batches into one JSONL file) |

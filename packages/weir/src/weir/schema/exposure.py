@@ -19,7 +19,9 @@ import msgspec
 
 
 class ScannedString(msgspec.Struct, frozen=True):
-    span_index: int  # position in the wire batch; the hit ordering key
+    # Position of its span or log record in the input, spans first; the hit
+    # ordering key.
+    record_index: int
     span_ref: str
     span_name: str
     location: str
@@ -29,6 +31,9 @@ class ScannedString(msgspec.Struct, frozen=True):
     # `http.request.header.proxy-authorization`, any case); the classifier
     # then reads the string as the header line `<name>: <text>`.
     header: str | None = None
+    # The log record's 0-based index in the input when the string is in a log
+    # record; `span_ref` and `span_name` are then empty.
+    log_record: int | None = None
 
 
 class ExposureSurface(msgspec.Struct, frozen=True):
@@ -37,3 +42,11 @@ class ExposureSurface(msgspec.Struct, frozen=True):
     applicable: bool
     spans_scanned: int
     strings: list[ScannedString]
+    log_records_scanned: int = 0
+    # Batches holding data the scan cannot read (metrics, another signal, or
+    # nothing OTLP-shaped): reported as not scanned, never as clean.
+    batches_not_scanned: int = 0
+    # Values inside the read data whose shape the scan could not read
+    # (an undecodable bytesValue, a list given as an object, a depth past
+    # the cap): reported as not scanned, never as clean.
+    values_not_scanned: int = 0

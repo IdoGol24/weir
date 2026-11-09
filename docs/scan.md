@@ -16,9 +16,10 @@ Most exports cannot support this yet, because content capture ships off by
 default almost everywhere. `weir gauge` measures how much of your trace the
 scan can actually see, and names the exact setting to switch on, read from
 the instrumentation in your own trace. The scan also reports any provider
-key pattern it finds sitting in a span, with no flow needed: OpenAI,
-Anthropic, AWS, GitHub and Google API keys, Google OAuth access tokens
-(`ya29.`), refresh tokens (`1//`, a digit, then 39 to 511 characters of
+key pattern it finds sitting in a span or an OpenTelemetry log record,
+with no flow needed: OpenAI, Anthropic, AWS, GitHub and Google API keys,
+Google OAuth access tokens (`ya29.`), refresh tokens (`1//`, a digit,
+then 39 to 511 characters of
 `A-Z`, `a-z`, `0-9`, `_` or `-`) and client secrets (`GOCSPX-`), the token
 in an `Authorization: Bearer` header, and a field whose name says it holds a
 credential (`api_key=...`, `"password": "..."`), including inside JSON that
@@ -27,7 +28,15 @@ quote, spaces included; under the key `token` alone it counts only when it
 has both a letter and a digit of its own (an escape sequence such as `\n` or
 `\u0041` counts as neither), so a logprobs `"token": "Certainly"` is not
 one, in any language. A key-name match has no shape to check, so it goes to
-the review queue rather than failing the scan.
+the review queue rather than failing the scan. In a log record it reads the
+attributes, the body (a string or a structured value) and the resource and
+scope attributes around it, and names the finding by the log record's
+0-based position in the input (`log record 0`). An export may hold traces,
+logs or both, in one file, with camelCase or snake_case (proto field name)
+structural keys. The snake_case value wrappers (`string_value`, ...) are
+read in log records only; a span attribute value is read from the camelCase
+OTLP/JSON wrappers (`stringValue`, ...). In a log record a bytes value is
+decoded and scanned when it is UTF-8 text.
 
 Each check is a rule, and a rule is a short JSON file naming a source, a
 destination and a match mode ([bundled
@@ -70,3 +79,8 @@ Any that can export OpenTelemetry spans to a file.
 
 - The flow scan needs content capture switched on in your instrumentation;
   `weir gauge` tells you whether it is.
+- The key scan reads spans and log records only. Metrics, or anything else
+  in the export, are not scanned, and the output says so
+  (`data in 1 batch not scanned`) instead of reporting them clean. So is a
+  log-record value in a shape the scan cannot read, such as bytes that are
+  not UTF-8 (`1 value not scanned`).

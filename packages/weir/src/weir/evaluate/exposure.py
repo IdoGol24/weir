@@ -53,5 +53,6 @@ def evaluate_exposure(scan: ExposureScan, rules: list[RuleSpec]) -> list[Exposur
                 fingerprint_v=hit.fingerprint_v,
                 is_verdict_grade=not reasons,
                 demotion_reasons=reasons,
+                log_record=hit.log_record,
             ))
     return findings

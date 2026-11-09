@@ -150,4 +150,4 @@ recomputing this line. (`scope_remediations` is advisory prose like
 part of this digest's `payload`, but every scope-remediation string is still
 reviewed and sourced above by the same discipline.)
 
-reviewed-digest: 711ad424dc4ea446ced9483b385409be45cedbb3f097ec7803614ea91d1a0a5a
+reviewed-digest: 24e3a0aaa7beb5511820176cbd63705c90141a0b8e02b39f57afd180f41a3f5a
