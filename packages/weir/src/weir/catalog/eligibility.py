@@ -44,20 +44,29 @@ def class_prefix(value: str) -> str:
 
 
 # An escaped line break (the two characters `\n`, as after `[` in indented,
-# escaped JSON) is a separator too, so its letter never shows as a word.
-_KEY_SEPARATORS = re.compile(r"""(?:[\s"'=:,\[]|\\+[ntr]?)+""")
+# escaped JSON) is a separator too, so its letter never shows as a word, and
+# so are a URL-encoded space (`%20`, or `+` in a form body) and colon
+# (`%3A`), as in `authorization=Bearer%20` and `authorization%3A%20Bearer%20`.
+_KEY_SEPARATORS = re.compile(r"""(?:[\s"'=:,\[+]|%20|%3[Aa]|\\+[ntr]?)+""")
+# The leading array items a credential field skips before the item it judges
+# (`[null, "k1", `) are values, never part of the name: everything from the
+# array's `[` through the last `,` goes. No header form has a `,` after its
+# `[`, so a header name is untouched.
+_SKIPPED_ITEMS = re.compile(r"\[.*,", re.DOTALL)
 
 
 def assignment_prefix(key_text: str) -> str:
     """The display name of an assignment-shaped match: the text before its
     value group with quotes, backslash escapes (escaped line breaks
-    included), operators, list punctuation and a bytes-literal `b` dropped,
-    words joined by ': '. Every quoting of one key shows the same name, so
-    `"api_key": "` and `\\"api_key\\":\\"` are both `api_key`, and the
+    included), operators, list punctuation, the leading array items a
+    credential field skips and a bytes-literal `b` dropped, words joined by
+    ': ', with a URL-encoded space or colon as a separator too. Every
+    quoting of one key shows the same name, so `"api_key": "` and
+    `\\"api_key\\":\\"` are both `api_key`, and the
     header is shown as written, with quotes, escapes and operators normalized
     (for example `Authorization: Bearer`, also for `(b'authorization',
     b'Bearer `). Never a byte of the value."""
-    words = _KEY_SEPARATORS.split(key_text)
+    words = _KEY_SEPARATORS.split(_SKIPPED_ITEMS.sub("[", key_text))
     return ": ".join(word for word in words if word and word.lower() != "b")
 
 
@@ -79,6 +88,27 @@ def _floor_prefix(value: str) -> str:
     head = value[:_PREFIX_WINDOW]
     cut = max((i for i, ch in enumerate(head) if ch in _SEPARATORS), default=-1)
     return value[: cut + 1] if cut >= 0 else value[:4]
+
+
+# A run of percent-escapes, decoded as one UTF-8 byte string with invalid
+# bytes replaced, exactly as `urllib.parse.unquote` does. Decoded here rather
+# than through `urllib`: the audit and status line import the catalog, and
+# their import contracts (pyproject.toml) forbid `urllib` as a network module.
+_PERCENT_RUN = re.compile(r"(?:%[0-9A-Fa-f]{2})+")
+
+
+def _percent_decode(value: str) -> str:
+    return _PERCENT_RUN.sub(
+        lambda run: bytes.fromhex(run.group(0).replace("%", "")).decode("utf-8", "replace"),
+        value,
+    )
+
+
+def matched_value(value: str, source: SourceSpec) -> str:
+    """The value a match stands for: percent-decoded when the class declares
+    `percent_decoded`, else as written. Judge, measure and fingerprint this,
+    never the raw match."""
+    return _percent_decode(value) if source.percent_decoded else value
 
 
 def is_verbatim_eligible(value: str, source: SourceSpec) -> bool:

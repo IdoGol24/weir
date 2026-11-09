@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import urllib.parse
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -182,6 +184,8 @@ _HEADER_ATTRIBUTES = {
         "http.request.header.authorization",
         "HTTP.Request.Header.Authorization",
         "http.request.header.proxy-authorization",
+        "http.request.header.proxy_authorization",
+        "http.request.header.PROXY_AUTHORIZATION",
     ],
 )
 @pytest.mark.parametrize("form", sorted(_HEADER_ATTRIBUTES))
@@ -445,13 +449,32 @@ def _plants() -> list[str]:
         _FIELD_FORMS["json-escaped"]("client_secret"),
         _PASSPHRASE_FORMS["json-escaped"](PASSPHRASE),
         *(_GOOGLE_FORMS["json"](v) for v in GOOGLE.values()),
+        _URL_ENCODED_FORMS["query-in-escaped-json"](TOKEN),
+        _URL_ENCODED_FORMS["form-body"](TOKEN),
+        _field_documents(array=True)["json-escaped-indented"]("api_key", FIELD),
+        _field_documents(array=True)["python-repr"]("password", PASSPHRASE),
+        _URL_ENCODED_FORMS["header-line"](TOKEN),
+        *(_PCT_TOKEN_FORMS["query"](t) for t in B64_TOKENS.values()),
+        _SHAPED_DOCUMENTS["json-escaped-indented"]("api_key", _ARRAY_SHAPES["two-skipped"](FIELD)),
     ]
 
 
 def test_no_output_prints_a_value_or_a_fragment_of_one(tmp_path: Path) -> None:
     values = [TOKEN, FIELD, PASSPHRASE, *GOOGLE.values()]
-    windows = _windows([*values, SLASH_TOKEN])
-    attrs = [{"key": f"probe{i}", "value": {"stringValue": s}} for i, s in enumerate(_plants())]
+    encoded = [urllib.parse.quote(t, safe="") for t in B64_TOKENS.values()]
+    windows = _windows([*values, SLASH_TOKEN, JWT, *B64_TOKENS.values(), *encoded])
+    attrs: list[dict[str, object]] = [
+        {"key": f"probe{i}", "value": {"stringValue": s}} for i, s in enumerate(_plants())
+    ]
+    attrs.append(
+        {"key": "http.request.headers", "value": _KVLIST_HEADERS["nested"]("Authorization", JWT)}
+    )
+    attrs.append(
+        {
+            "key": "http.request.headers.snake",
+            "value": _KVLIST_HEADERS["string"]("proxy_authorization", JWT),
+        }
+    )
     trace = tmp_path / "trace.json"
     trace.write_text(
         json.dumps(
@@ -466,6 +489,16 @@ def test_no_output_prints_a_value_or_a_fragment_of_one(tmp_path: Path) -> None:
             }
         )
     )
+    # Every plant is found, so the check below covers every shape.
+    found_at = {
+        h.location
+        for h in classify_exposure(
+            scan_surface(decode_input(trace.read_bytes())), DEFAULT_CATALOG
+        ).hits
+    }
+    for attr in attrs:
+        where = f"attributes.{attr['key']}"
+        assert any(loc == where or loc.startswith(f"{where}.") for loc in found_at), where
     report = tmp_path / "r.html"
     scan = CliRunner().invoke(main, ["scan", str(trace), "--report", str(report)])
     gauge = CliRunner().invoke(main, ["gauge", str(trace)])
@@ -500,10 +533,413 @@ def test_no_output_prints_a_value_or_a_fragment_of_one(tmp_path: Path) -> None:
     assert report_json.exit_code == 0
     key = load_or_create_key(key_file)
     found = {r["fingerprint"] for r in json.loads(store.read_text())["records"]}
-    assert {fingerprint(key, v) for v in values} <= found
+    assert {fingerprint(key, v) for v in [*values, *B64_TOKENS.values()]} <= found
     for label, out in {
         "inventory": text.output,
         "inventory-json": report_json.output,
         "store": store.read_text(),
     }.items():
         _assert_no_fragment(label, out, windows)
+
+
+def _kvlist(entries: dict[str, dict[str, object]]) -> dict[str, object]:
+    return {"kvlistValue": {"values": [{"key": k, "value": v} for k, v in entries.items()]}}
+
+
+_KVLIST_HEADERS = {
+    "string": lambda name, t: _kvlist(
+        {"accept": {"stringValue": "*/*"}, name: {"stringValue": f"Bearer {t}"}}
+    ),
+    "array": lambda name, t: _kvlist({name: _HEADER_ATTRIBUTES["array"](t)}),
+    "nested": lambda name, t: _kvlist(
+        {"headers": _kvlist({name: {"stringValue": f"Bearer {t}"}})}
+    ),
+}
+
+
+@pytest.mark.parametrize("attribute", ["http.request.headers", "request.headers", "headers"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "authorization",
+        "Authorization",
+        "AUTHORIZATION",
+        "proxy-authorization",
+        "proxy_authorization",
+        "Proxy_Authorization",
+    ],
+)
+@pytest.mark.parametrize("form", sorted(_KVLIST_HEADERS))
+def test_an_authorization_entry_in_a_kvlist_holds_a_bearer_token(
+    form: str, name: str, attribute: str
+) -> None:
+    # A request header map recorded as one kvlist attribute names the header
+    # in the entry key, so it is found exactly like the same header recorded
+    # as its own `http.request.header.<name>` attribute.
+    hits = _attribute_hits(attribute, _KVLIST_HEADERS[form](name, JWT))
+    plain = _attribute_hits(f"http.request.header.{name}", {"stringValue": f"Bearer {JWT}"})
+    assert _claims(hits) == _claims(plain) == [_claim(JWT, "bearer_token", eligible=True)]
+    assert hits[0].prefix == plain[0].prefix
+    assert hits[0].prefix.lower() == "authorization: bearer"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "accept",
+        "x-api-key",
+        "x-authorization",
+        "x_authorization",
+        "authorization-hint",
+        "authorization_hint",
+        "app.authorization",
+    ],
+)
+def test_bearer_under_another_kvlist_entry_is_not_a_hit(name: str) -> None:
+    value = _kvlist({name: {"stringValue": f"Bearer {JWT}"}})
+    assert _attribute_hits("http.request.headers", value) == []
+
+
+@pytest.mark.parametrize(
+    "text", ["Bearer <token>", "Bearer ${TOKEN}", "Bearer abc123", "Basic dXNlcjpwYXNzd29yZA=="]
+)
+def test_a_kvlist_authorization_entry_without_a_real_token_is_not_a_hit(text: str) -> None:
+    # The kvlist entry is judged by the same floors and placeholder rules as
+    # the plain header attribute.
+    assert _attribute_hits(
+        "http.request.headers", _kvlist({"authorization": {"stringValue": text}})
+    ) == _attribute_hits("http.request.header.authorization", {"stringValue": text}) == []
+
+
+_URL_ENCODED_FORMS = {
+    "query": lambda t: f"GET /v1/callback?authorization=Bearer%20{t}&state=s1 HTTP/1.1",
+    "query-capital": lambda t: f"https://api.example.com/v1/models?Authorization=Bearer%20{t}",
+    "form-body": lambda t: f"authorization=Bearer+{t}&grant_type=client_credentials",
+    "query-in-json": lambda t: json.dumps(
+        {"url": f"https://api.example.com/v1/models?authorization=Bearer%20{t}"}
+    ),
+    "query-in-escaped-json": lambda t: json.dumps(
+        {"body": json.dumps({"url": f"/v1/models?authorization=Bearer%20{t}&a=1"})}
+    ),
+    # The whole header line encoded as one value: `quote` writes the colon
+    # as `%3A`, `quote_plus` the space as `+`, and JavaScript's `encodeURI`
+    # keeps the colon (the `safe=":"` form).
+    "header-line": lambda t: "headers=" + urllib.parse.quote(f"authorization: Bearer {t}", safe=""),
+    "header-line-plus": lambda t: urllib.parse.quote_plus(f"Authorization: Bearer {t}"),
+    "header-line-lower-hex": lambda t: f"Authorization%3a+Bearer+{t}",
+    "header-line-encodeuri": lambda t: urllib.parse.quote(f"authorization: Bearer {t}", safe=":"),
+    "doubled-plus": lambda t: f"authorization=Bearer++{t}&a=1",
+    "doubled-pct20": lambda t: f"authorization=Bearer%20%20{t}&a=1",
+}
+
+
+@pytest.mark.parametrize("token", [TOKEN, JWT], ids=["opaque", "jwt"])
+@pytest.mark.parametrize("form", sorted(_URL_ENCODED_FORMS))
+def test_a_url_encoded_authorization_header_holds_a_bearer_token(form: str, token: str) -> None:
+    hits = _hits(_URL_ENCODED_FORMS[form](token))
+    plain = _hits(f"Authorization: Bearer {token}")
+    assert _claims(hits) == _claims(plain) == [_claim(token, "bearer_token", eligible=True)]
+    # The display prefix is the header; an encoded space is never shown.
+    assert hits[0].prefix.lower() == "authorization: bearer"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "/v1/callback?authorization=Bearer%20%3Ctoken%3E",
+        "/v1/callback?authorization=Bearer%20%24%7BTOKEN%7D",
+        "/v1/callback?authorization=Bearer%20abc123&a=1",
+        "/v1/callback?authorization=Bearer%20&a=1",
+        f"/v1/callback?xauthorization=Bearer%20{TOKEN}",
+        f"/v1/callback?unauthorization=Bearer%20{TOKEN}",
+        f"headers=unauthorization%3A%20Bearer%20{TOKEN}",
+        f"/v1/search?q=bearer%20{TOKEN}",
+        "headers=authorization%3A%20Bearer%20%3Ctoken%3E",
+    ],
+    ids=[
+        "placeholder",
+        "shell-placeholder",
+        "short",
+        "empty",
+        "glued-key",
+        "glued-key-un",
+        "glued-key-header-line",
+        "no-key",
+        "header-line-placeholder",
+    ],
+)
+def test_a_url_encoded_near_miss_is_not_a_hit(text: str) -> None:
+    assert _hits(text) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://docs.example.com/search?q=authorization:Bearer+token+is+missing+or+invalid",
+        "authorization=Bearer+token+is+missing+or+invalid&a=1",
+        "authorization=Bearer%20token+is+missing+or+invalid+now",
+        "authorization%3A+Bearer+token+is+missing+or+invalid",
+        "authorization=Bearer++token+is+missing+or+invalid",
+        "authorization=Bearer%20%20token+is+missing+or+invalid",
+    ],
+    ids=["query", "form-body", "pct20-then-plus", "header-line", "doubled-plus", "doubled-pct20"],
+)
+def test_a_form_encoded_sentence_after_bearer_is_not_a_token(text: str) -> None:
+    # In a form body every `+` is an encoded space, so the encoded sentence is
+    # judged as the sentence it stands for, which is not a hit.
+    decoded = urllib.parse.unquote_plus(text)
+    assert _hits(decoded) == []
+    assert _hits(text) == []
+
+
+@pytest.mark.parametrize("space", ["+", "%20"])
+def test_a_form_encoded_token_ends_at_the_next_encoded_space(space: str) -> None:
+    hits = _hits(f"authorization=Bearer{space}{JWT}+extra+words")
+    assert _claims(hits) == _claims(_hits(f"Authorization: Bearer {JWT} extra words"))
+    assert _claims(hits) == [_claim(JWT, "bearer_token", eligible=True)]
+
+
+# Standard-base64 tokens: `/` or `+` early, `=` padding. URL encoding writes
+# them as `%2F`, `%2B` and `%3D`.
+B64_TOKENS = {
+    "slash-early": _v("ab12/ Kq7vR2 mLx9Tz 4Wb8Nc 3Hd6Jf 1Ps5Yg 0Ua=="),
+    "plus-early": _v("Kq7vR2+ mLx9Tz 4Wb8Nc 3Hd6Jf/ 1Ps5Yg 0Ua="),
+}
+
+
+def _lower_hex(text: str) -> str:
+    return re.sub("%[0-9A-F]{2}", lambda m: m.group().lower(), text)
+
+
+_PCT_TOKEN_FORMS = {
+    "query": lambda t: f"/v1/callback?authorization=Bearer%20{urllib.parse.quote(t, safe='')}&a=1",
+    "form-body": lambda t: f"authorization=Bearer+{urllib.parse.quote_plus(t)}&a=1",
+    "lower-hex": lambda t: _lower_hex(f"authorization=Bearer%20{urllib.parse.quote(t, safe='')}"),
+    "header-line": lambda t: urllib.parse.quote(f"authorization: Bearer {t}", safe=""),
+}
+
+
+def _claims_with_last4(hits: list[ExposureHit]) -> list[tuple[object, ...]]:
+    return [(*claim, h.last4) for claim, h in zip(_claims(hits), hits, strict=True)]
+
+
+@pytest.mark.parametrize("token", sorted(B64_TOKENS))
+@pytest.mark.parametrize("form", sorted(_PCT_TOKEN_FORMS))
+def test_a_percent_encoded_character_inside_a_token_does_not_cut_it(
+    form: str, token: str
+) -> None:
+    # The hit is the decoded token's claim: the same length, fingerprint and
+    # last4 as the plain header holding it, so the two are one credential.
+    text = _PCT_TOKEN_FORMS[form](B64_TOKENS[token])
+    assert B64_TOKENS[token] not in text
+    hits = _hits(text)
+    plain = _hits(f"Authorization: Bearer {B64_TOKENS[token]}")
+    assert _claims(hits) == [_claim(B64_TOKENS[token], "bearer_token", eligible=True)]
+    assert _claims_with_last4(hits) == _claims_with_last4(plain)
+    assert hits[0].prefix.lower() == "authorization: bearer"
+
+
+@pytest.mark.parametrize(
+    "decoded", [_v("abababab ababababab ab/+="), _v("abababab ababababab ab//==")]
+)
+@pytest.mark.parametrize("form", sorted(_PCT_TOKEN_FORMS))
+def test_a_percent_encoded_low_entropy_token_is_judged_decoded(form: str, decoded: str) -> None:
+    # The escapes' own characters (`%`, `2`, `F`, ...) are not the token's:
+    # a value too uniform to be verdict-grade in a plain header is not made
+    # verdict-grade by encoding it.
+    plain = _hits(f"Authorization: Bearer {decoded}")
+    assert _claims(plain) == [_claim(decoded, "bearer_token", eligible=False)]
+    assert _claims(_hits(_PCT_TOKEN_FORMS[form](decoded))) == _claims(plain)
+
+
+def test_a_url_encoded_placeholder_is_only_reviewed() -> None:
+    hits = _hits("/v1/callback?authorization=Bearer%20YOUR_ACCESS_TOKEN_HERE")
+    assert hits
+    assert not any(h.eligible for h in hits)
+
+
+def _field_documents(*, array: bool) -> dict[str, Callable[[str, str], str]]:
+    """One credential field in each document shape, its value written as a
+    one-item array (`array`) or as the plain string."""
+
+    def one(v: str) -> object:
+        return [v] if array else v
+
+    def two(v: str) -> object:
+        return [v, "m-1"] if array else v
+
+    return {
+        "json": lambda k, v: json.dumps({k: one(v), "model": "m-1"}),
+        "compact": lambda k, v: json.dumps({k: one(v), "model": "m-1"}, separators=(",", ":")),
+        "indented": lambda k, v: json.dumps({k: one(v), "model": "m-1"}, indent=2),
+        "two-items": lambda k, v: json.dumps({k: two(v)}),
+        "json-escaped": lambda k, v: json.dumps({"body": json.dumps({k: one(v), "model": "m-1"})}),
+        "json-escaped-indented": lambda k, v: json.dumps(
+            {"body": json.dumps({k: one(v), "model": "m-1"}, indent=2)}
+        ),
+        "python-repr": lambda k, v: repr({k: one(v), "model": "m-1"}),
+    }
+
+
+_ARRAY_FIELD_FORMS = _field_documents(array=True)
+_STRING_FIELD_FORMS = _field_documents(array=False)
+
+
+def _string_form(form: str, key: str, value: str) -> str:
+    return _STRING_FIELD_FORMS[form](key, value)
+
+
+@pytest.mark.parametrize(
+    "key", ["api_key", "access_token", "client_secret", "password", "token", "Token"]
+)
+@pytest.mark.parametrize("form", sorted(_ARRAY_FIELD_FORMS))
+def test_a_json_quoted_credential_field_with_an_array_value_is_found(form: str, key: str) -> None:
+    hits = _hits(_ARRAY_FIELD_FORMS[form](key, FIELD))
+    string = _hits(_string_form(form, key, FIELD))
+    assert _claims(hits) == _claims(string)
+    assert _claims(hits) == [_claim(FIELD, "json_credential_field", eligible=False)]
+    assert hits[0].prefix == string[0].prefix == key
+
+
+# Values the string form finds and values it rejects (a floor, a
+# placeholder rule or the letter-and-digit rule under `token`).
+_ARRAY_VALUES = {
+    ("password", PASSPHRASE): True,
+    ("password", f"don't {PASSPHRASE}"): True,
+    ("token", "abc\\u00e9123456"): True,
+    ("password", "*" * 12): False,
+    ("password", "REDACTED"): False,
+    ("api_key", "null"): False,
+    ("api_key", "None"): False,
+    ("api_key", "abc123"): False,
+    ("token", "123456789012"): False,
+    ("token", "Certainly"): False,
+    ("token", "你好"): False,
+    ("tokens", FIELD): False,
+    ("max_tokens", FIELD): False,
+    ("password_hint", FIELD): False,
+    ("tokenizer", FIELD): False,
+}
+
+
+@pytest.mark.parametrize("form", ["json", "json-escaped", "python-repr", "indented"])
+@pytest.mark.parametrize(("key", "value"), sorted(_ARRAY_VALUES))
+def test_an_array_value_meets_the_same_floors_and_placeholder_rules(
+    form: str, key: str, value: str
+) -> None:
+    hits = _hits(_ARRAY_FIELD_FORMS[form](key, value))
+    assert _claims(hits) == _claims(_hits(_string_form(form, key, value)))
+    assert bool(hits) is _ARRAY_VALUES[(key, value)]
+
+
+# Array shapes that hold the value after nesting or after leading items that
+# are not candidates: null, a number, or a string under the 8-character floor.
+_ARRAY_SHAPES: dict[str, Callable[[str], object]] = {
+    "nested": lambda v: [[v]],
+    "nested-deep": lambda v: [[[v], "m-1"]],
+    "null-first": lambda v: [None, v],
+    "number-first": lambda v: [3, v],
+    "empty-first": lambda v: ["", v],
+    "short-first": lambda v: ["k1", v],
+    "two-skipped": lambda v: [None, "k1", v],
+    "nested-null-first": lambda v: [[None, v]],
+}
+_SHAPED_DOCUMENTS: dict[str, Callable[[str, object], str]] = {
+    "json": lambda k, o: json.dumps({k: o, "model": "m-1"}),
+    "compact": lambda k, o: json.dumps({k: o, "model": "m-1"}, separators=(",", ":")),
+    "indented": lambda k, o: json.dumps({k: o, "model": "m-1"}, indent=2),
+    "json-escaped": lambda k, o: json.dumps({"body": json.dumps({k: o, "model": "m-1"})}),
+    "json-escaped-indented": lambda k, o: json.dumps(
+        {"body": json.dumps({k: o, "model": "m-1"}, indent=2)}
+    ),
+    "python-repr": lambda k, o: repr({k: o, "model": "m-1"}),
+}
+
+
+@pytest.mark.parametrize("key", ["api_key", "token"])
+@pytest.mark.parametrize("shape", sorted(_ARRAY_SHAPES))
+@pytest.mark.parametrize("form", sorted(_SHAPED_DOCUMENTS))
+def test_an_array_is_judged_by_its_first_string_item_of_8_or_more(
+    form: str, shape: str, key: str
+) -> None:
+    hits = _hits(_SHAPED_DOCUMENTS[form](key, _ARRAY_SHAPES[shape](FIELD)))
+    string = _hits(_SHAPED_DOCUMENTS[form](key, FIELD))
+    assert _claims(hits) == _claims(string)
+    assert _claims(hits) == [_claim(FIELD, "json_credential_field", eligible=False)]
+    assert hits[0].prefix == string[0].prefix == key
+
+
+@pytest.mark.parametrize("shape", ["nested", "null-first", "short-first"])
+@pytest.mark.parametrize(("key", "value"), sorted(_ARRAY_VALUES))
+def test_a_skipped_or_nested_array_value_meets_the_same_rules(
+    shape: str, key: str, value: str
+) -> None:
+    hits = _hits(_SHAPED_DOCUMENTS["json"](key, _ARRAY_SHAPES[shape](value)))
+    assert _claims(hits) == _claims(_hits(_SHAPED_DOCUMENTS["json"](key, value)))
+    assert bool(hits) is _ARRAY_VALUES[(key, value)]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        json.dumps({"api_key": [], "model": "m-1-abcdefgh"}),
+        json.dumps({"api_key": [12345678901]}),
+        json.dumps({"api_key": [None, "m-1"]}),
+        json.dumps({"api_key": [None, 3, "k1"]}),
+        json.dumps({"password": [["********"]]}),
+        json.dumps({"password": [None, "REDACTED"]}),
+        # Leading items are skipped only inside an array: the next field of
+        # the object is never read as the value.
+        json.dumps({"api_key": None, "model_name_value": "m-1-abcdefgh"}),
+        json.dumps({"api_key": "k1", "model_name_value": "m-1-abcdefgh"}),
+        json.dumps({"api_key": 3, "model_name_value": "m-1-abcdefgh"}),
+    ],
+    ids=[
+        "empty",
+        "number",
+        "null-then-short",
+        "only-non-candidates",
+        "nested-masked",
+        "null-then-placeholder",
+        "null-not-in-array",
+        "short-not-in-array",
+        "number-not-in-array",
+    ],
+)
+def test_an_array_with_no_string_item_of_8_or_more_is_not_a_hit(text: str) -> None:
+    assert _hits(text) == []
+
+
+_LONG_RUN = 300
+_RUN_VALUES = {
+    "run-then-letter": "abc" + "\\" * _LONG_RUN + "d",
+    "letters-then-run": "abcdefgh" + "\\" * 5,
+    "run-in-middle": "abcd" + "\\" * 4 + "efgh",
+    "short-plus-run": "abcde" + "\\" * 3,
+}
+
+
+@pytest.mark.parametrize("name", sorted(_RUN_VALUES))
+def test_a_backslash_run_counts_one_character_per_backslash(name: str) -> None:
+    # Every backslash of a run that does not end the value at a quote or an
+    # escape letter is one character of the value, up to the 256 cap.
+    value = _RUN_VALUES[name]
+    hits = _hits(f"password={value} next")
+    assert _claims(hits) == [_claim(value[:256], "credential_field", eligible=False)]
+
+
+@pytest.mark.parametrize(
+    ("text", "value"),
+    [
+        ('password=abcdefgh' + "\\" * _LONG_RUN + '"', "abcdefgh"),
+        ('password=abcdefgh' + "\\" * _LONG_RUN + "n", "abcdefgh"),
+        ('{"password": "abcdefgh' + "\\" * _LONG_RUN + '"}', "abcdefgh"),
+        ("{'password': 'abcdefgh" + "\\" * _LONG_RUN + "t'}", "abcdefgh"),
+    ],
+    ids=["field-quote", "field-escape", "json-quote", "repr-escape"],
+)
+def test_a_backslash_run_before_a_quote_or_escape_letter_ends_the_value(
+    text: str, value: str
+) -> None:
+    hits = _hits(text)
+    assert [(h.value_len, h.eligible) for h in hits] == [(len(value), False)]

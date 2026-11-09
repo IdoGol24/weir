@@ -21,6 +21,7 @@ from weir.catalog import (
     assignment_prefix,
     class_prefix,
     is_verbatim_eligible,
+    matched_value,
 )
 from weir.exposure._types import ExposureHit, ExposureScan
 from weir.schema.exposure import ExposureSurface, ScannedString
@@ -146,11 +147,11 @@ def _raw_hits_for(
         if has_group:
             # An assignment-shaped class captures the SECRET in group 1; the
             # text before it is the key name, which is the display prefix.
-            value = match.group(1) or ""
+            value = matched_value(match.group(1) or "", spec)
             prefix = assignment_prefix(match.group(0)[: match.start(1) - match.start(0)])
             value_start, value_end = match.span(1)
         else:
-            value = match.group(0)
+            value = matched_value(match.group(0), spec)
             prefix = class_prefix(value)
             value_start, value_end = match.span(0)
         eligible = is_verbatim_eligible(value, spec)

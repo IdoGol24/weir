@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+- **More credential shapes in the exposure scan.**
+  - A bearer token is found in a request header map recorded as one
+    OpenTelemetry kvlist attribute (for example
+    `http.request.headers = {authorization: "Bearer ..."}`). An
+    `authorization` or `proxy-authorization` entry, in any case, at any
+    depth and with `_` for `-` (`proxy_authorization`), gives the same hit
+    as the `http.request.header.authorization` attribute. Other entries are
+    scanned as plain strings. A `http.request.header.proxy_authorization`
+    attribute is now read as the header too.
+  - A bearer token is found in a URL-encoded authorization header, with the
+    space written `%20` or `+`, doubled or not (`authorization=Bearer%20...`,
+    also inside a query string or a form body), and in a whole header line
+    encoded as one value, the colon written `%3A` or kept
+    (`authorization%3A%20Bearer%20...`, `authorization:%20Bearer%20...`).
+    Inside the token, `%2F` and `%2B` count as token characters and `%3D`
+    as padding, so a URL-encoded standard-base64 token is found whole. The
+    token is judged decoded: it gets the same floors, length, last 4 and
+    fingerprint as the same token in a plain header.
+    After a `%20` or `+` the token ends at the next `+`, an encoded space
+    too, so an encoded sentence is not a token. The display prefix stays
+    `authorization: Bearer`.
+  - A JSON-quoted credential field whose value is an array
+    (`"api_key": ["..."]`, compact, indented, escaped or Python-repr, and
+    nested arrays such as `[["..."]]`) is judged by its first string item of
+    8 or more characters: up to three leading `null`, `None`, number or
+    shorter string items are skipped. That item must pass the same
+    8-character floor, placeholder rules and letter-and-digit rule for
+    `token` as the string form. A placeholder first item hides a real value
+    after it (`["REDACTED", "..."]` is not a hit).
+
 ### Changed
 - Project links point to github.com/ralis-ai/weir.
 
@@ -21,6 +52,15 @@
   either letter case, since the mock records a host in lower case: a host
   name that holds a slice of a key now reads `[withheld]`. Output that
   holds no part of a value is relayed exactly as before.
+- **A long run of backslashes after a credential-field key no longer slows
+  the scan.** The `credential_field` and `json_credential_field` patterns
+  now check each backslash run once, not once per value character. Such
+  input now scans at about the speed of ordinary input of the same size,
+  where before it was more than 10 times slower. Matches are unchanged.
+
+### Corpus
+- The diffspec baselines were regenerated for the new catalog digest. The
+  diff is digest-only.
 
 ## [0.9.0] - 2026-11-08
 

@@ -55,6 +55,11 @@ class SourceSpec(msgspec.Struct, frozen=True):
     # only the exposure scan does, and an exposure rule may name no other
     # kind of class.
     exposure: bool = False
+    # True: the exposure scan and the inventory percent-decode the value
+    # before they judge, measure or fingerprint it, so a URL-encoded token
+    # (`Bearer%20ab%2Fcd...`) gets the claim of the token it stands for
+    # (`Bearer ab/cd...`), never one over its escapes.
+    percent_decoded: bool = False
 
 
 class SinkSpec(msgspec.Struct, frozen=True):
