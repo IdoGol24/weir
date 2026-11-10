@@ -50,3 +50,6 @@ class ExposureFinding(msgspec.Struct, frozen=True):
     fingerprint: str | None = None
     fingerprint_v: int = 1
     demotion_reasons: list[str] = []
+    # Set when the finding is in a log record (its 0-based index in the
+    # input); `span_ref` and `span_name` are then empty.
+    log_record: int | None = None

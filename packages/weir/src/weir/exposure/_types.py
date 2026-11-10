@@ -37,6 +37,9 @@ class ExposureHit(msgspec.Struct, frozen=True):
     last4: str | None = None
     fingerprint: str | None = None
     fingerprint_v: int = 1
+    # Set when the hit is in a log record (its 0-based index in the input);
+    # `span_ref` and `span_name` are then empty.
+    log_record: int | None = None
 
 
 class ExposureScan(msgspec.Struct, frozen=True):
@@ -44,3 +47,6 @@ class ExposureScan(msgspec.Struct, frozen=True):
     spans_scanned: int
     strings_scanned: int
     hits: list[ExposureHit]
+    log_records_scanned: int = 0
+    batches_not_scanned: int = 0
+    values_not_scanned: int = 0

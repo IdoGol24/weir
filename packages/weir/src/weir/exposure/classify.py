@@ -57,9 +57,10 @@ class _RawHit(msgspec.Struct, frozen=True):
     """One match after subsumption, before triage/eligible dedupe. Carries
     the value, which the public ExposureHit deliberately does not."""
 
-    span_index: int
+    record_index: int
     span_ref: str
     span_name: str
+    log_record: int | None
     path: tuple[Segment, ...]
     location: str
     start: int
@@ -184,9 +185,9 @@ def _raw_hits_for(
 
     return [
         _RawHit(
-            span_index=scanned.span_index, span_ref=scanned.span_ref,
-            span_name=scanned.span_name, path=scanned.path, location=scanned.location,
-            start=cand.start,
+            record_index=scanned.record_index, span_ref=scanned.span_ref,
+            span_name=scanned.span_name, log_record=scanned.log_record,
+            path=scanned.path, location=scanned.location, start=cand.start,
             spec=cand.spec, value=cand.value, prefix=cand.prefix, eligible=cand.eligible,
         )
         for cand in candidates
@@ -260,18 +261,18 @@ def classify_exposure(surface: ExposureSurface, catalog: Catalog) -> ExposureSca
     # Counts key on these ordinals, in hit order, never on the printed text:
     # two locations can both print as `attributes.[withheld]`.
     span_keys: dict[str, int] = {}
-    site_keys: dict[tuple[str, str], int] = {}
+    site_keys: dict[tuple[str, int | None, str], int] = {}
     hits: list[ExposureHit] = []
-    # Dedupe key, both grades: one claim per (span, location, class, value).
-    # span_index not span_ref - two spans may legally share a spanId (retries,
+    # Dedupe key, both grades: one claim per (record, location, class, value).
+    # record_index not span_ref - two spans may legally share a spanId (retries,
     # broken instrumentation, or an attacker-set id), and a security finding
     # must not vanish into a duplicate. The fingerprint distinguishes two
     # different secrets at one location, and is None for triage hits, which
     # collapses this to the (span, location, class) rule triage needs.
     seen: set[tuple[int, str, str, str | None]] = set()
-    for hit in sorted(raw, key=lambda h: (h.span_index, h.location, h.start)):
+    for hit in sorted(raw, key=lambda h: (h.record_index, h.location, h.start)):
         fingerprint = _fingerprint(hit.value) if hit.eligible else None
-        key = (hit.span_index, hit.location, hit.spec.name, fingerprint)
+        key = (hit.record_index, hit.location, hit.spec.name, fingerprint)
         if key in seen:
             continue
         seen.add(key)
@@ -280,7 +281,9 @@ def classify_exposure(surface: ExposureSurface, catalog: Catalog) -> ExposureSca
             span_name=withhold(hit.span_name),
             location=format_location(hit.path, withhold),
             span_key=span_keys.setdefault(hit.span_ref, len(span_keys)),
-            site_key=site_keys.setdefault((hit.span_ref, hit.location), len(site_keys)),
+            site_key=site_keys.setdefault(
+                (hit.span_ref, hit.log_record, hit.location), len(site_keys)
+            ),
             source_class=hit.spec.name,
             eligible=hit.eligible,
             value_len=len(hit.value),
@@ -295,6 +298,7 @@ def classify_exposure(surface: ExposureSurface, catalog: Catalog) -> ExposureSca
             ),
             fingerprint=fingerprint,
             fingerprint_v=FINGERPRINT_VERSION,
+            log_record=hit.log_record,
         ))
 
     return ExposureScan(
@@ -302,4 +306,7 @@ def classify_exposure(surface: ExposureSurface, catalog: Catalog) -> ExposureSca
         spans_scanned=surface.spans_scanned,
         strings_scanned=len(surface.strings),
         hits=hits,
+        log_records_scanned=surface.log_records_scanned,
+        batches_not_scanned=surface.batches_not_scanned,
+        values_not_scanned=surface.values_not_scanned,
     )

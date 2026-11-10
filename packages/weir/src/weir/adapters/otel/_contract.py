@@ -43,8 +43,8 @@ REMEDIATION: dict[DegradationReason, str] = {
     ),
     DegradationReason.NON_TRACE_BATCHES_SKIPPED: (
         "lines that decoded but carry no resourceSpans list (logs/metrics "
-        "in a mixed export, or a malformed traces batch) were skipped; "
-        "export traces to their own well-formed file"
+        "in a mixed export, or a malformed traces batch) were left out of "
+        "the flow scan; export traces to their own well-formed file"
     ),
     DegradationReason.UNDECODABLE_BATCH: (
         "one or more JSONL lines could not be decoded; re-export the batch or "
@@ -195,7 +195,9 @@ DISPOSITION: dict[DegradationReason, str] = {
         "the line is skipped; decoding continues with the remaining lines"
     ),
     DegradationReason.NON_TRACE_BATCHES_SKIPPED: (
-        "the batch is skipped entirely; its spans never enter the trace"
+        "the batch is left out of the flow trace; the exposure scan still "
+        "reads any log records in it, and reports anything else as not "
+        "scanned"
     ),
     DegradationReason.UNDECODABLE_SPAN: (
         "the span is discarded; it never becomes a node - absent from the "
@@ -271,8 +273,8 @@ def render_contract_doc() -> str:
         "",
         "Exit-2 rejects are exactly two conditions: the input is not JSON at "
         "all (neither a JSON document nor JSON Lines), or the input is JSON "
-        "but not OTLP-shaped (no `resourceSpans` list found anywhere). "
-        "Everything else degrades, named by one of the rows below.",
+        "but not OTLP-shaped (no `resourceSpans` or `resourceLogs` list found "
+        "anywhere). Everything else degrades, named by one of the rows below.",
         "",
         "| reason | trigger | what weir does | remediation |",
         "| --- | --- | --- | --- |",

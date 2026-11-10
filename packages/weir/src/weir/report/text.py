@@ -5,7 +5,7 @@ length is reported) so terminal/CI logs never leak scanned material."""
 
 from __future__ import annotations
 
-from weir._text_safety import flatten_untrusted, plural
+from weir._text_safety import flatten_untrusted, plural, records_phrase
 from weir.canary.text import WITHHELD
 from weir.evaluate import ExposureFinding, Finding, joins_on_path
 from weir.graph import SessionGraph
@@ -68,24 +68,29 @@ def exposure_lines(findings: list[ExposureFinding]) -> list[str]:
     lines: list[str] = []
     for group in groups.values():
         classes = ", ".join(dict.fromkeys(f.source_class for f in group))
+        # The ordinals, not the strings: two locations can both be withheld.
         locations = len({f.site_key for f in group})
-        spans = len({f.span_key for f in group})
+        spans = len({f.span_key for f in group if f.log_record is None})
+        logs = len({f.log_record for f in group if f.log_record is not None})
         lines.append(
             f"1 credential ({classes}) in {plural(locations, 'location')} "
-            f"across {plural(spans, 'span')}"
+            f"across {records_phrase(spans, logs)}"
         )
-        for _, span_ref, span_name, location, prefix, last4 in dict.fromkeys(
-            (f.site_key, f.span_ref, f.span_name, f.location, f.prefix, f.last4) for f in group
+        for _, span_ref, span_name, log_record, location, prefix, last4 in dict.fromkeys(
+            (f.site_key, f.span_ref, f.span_name, f.log_record, f.location, f.prefix, f.last4)
+            for f in group
         ):
             value = f"{prefix}…{last4}" if last4 else prefix
             # span_ref distinguishes rows when several spans share a name -
             # several identically-named agent spans is the leak shape this
             # feature exists for, not an edge case. A withheld id prints whole.
             ref = span_ref if span_ref == WITHHELD else flatten_untrusted(span_ref)[:8]
-            lines.append(
-                f"  {flatten_untrusted(span_name)} ({ref})  {flatten_untrusted(location)}  "
-                f"{flatten_untrusted(value)}"
+            where = (
+                f"{flatten_untrusted(span_name)} ({ref})"
+                if log_record is None
+                else f"log record {log_record}"
             )
+            lines.append(f"  {where}  {flatten_untrusted(location)}  {flatten_untrusted(value)}")
         for rule_id in dict.fromkeys(f.rule_id for f in group):
             lines.append(f"  rule: {rule_id}")
             lines.append(f'  to demote: set "stage": "shadow" in {rule_id}.json')
@@ -97,8 +102,13 @@ def exposure_lines(findings: list[ExposureFinding]) -> list[str]:
             f"review queue: {len(triage)} credential-shaped {match_word} ({classes})"
         )
         for finding in triage:
+            where = (
+                flatten_untrusted(finding.span_name)
+                if finding.log_record is None
+                else f"log record {finding.log_record}"
+            )
             lines.append(
-                f"  {flatten_untrusted(finding.span_name)}  "
+                f"  {where}  "
                 f"{flatten_untrusted(finding.location)}  {flatten_untrusted(finding.prefix)}"
             )
             lines.extend(f"  {reason}" for reason in finding.demotion_reasons)

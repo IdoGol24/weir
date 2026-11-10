@@ -12,6 +12,18 @@ bytes); every other capture file gets the raw sweep only. In a telemetry
 file a raw hit is reported only where the walk found nothing for the same
 placement on the same line.
 
+The JSON a text holds is matched as it is and through its decoded view,
+the text with its JSON escapes undone (`weir.json_escapes`), by one rule:
+the text where it parses as a JSON object, array or string, else each
+object or array inside it. The texts are every string the walk reads,
+every request part but a credential field's value and a JSON body as a
+whole, and every line only the raw sweep reads (a swept file's, a
+telemetry line the walk cannot read, a request capture line that is not a
+record). A placement the text itself does not hold is found in the
+fewest unescapings that hold it, at the same record and location, and its
+form is named by the escapings the value took. Text escaped past the
+view's bound makes its line unparsed.
+
 Each request capture file is judged record by record under the attribution
 rules: a needle in one of the credential fields of a request to the
 placement's own provider is evidence that it was exercised, a needle
@@ -23,6 +35,7 @@ where it went.
 from __future__ import annotations
 
 import bisect
+import json
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
@@ -54,11 +67,15 @@ from weir.canary._types import (
 )
 from weir.canary._types import FlowState as FlowEntry
 from weir.canary.capture import CaptureFile, Role, collect_capture
-from weir.canary.forms import needles
+from weir.canary.forms import decoded_form, needles
 from weir.canary.ledger import read_ledger
 from weir.canary.outbound import Part, parse_request, request_parts, shown
 from weir.canary.text import Display
 from weir.canary.walk import Segment, Site, walk_request
+from weir.json_escapes import decoded_view
+
+_JSON_START = re.compile(r"[\[{]")
+_DECODER = json.JSONDecoder()
 
 
 @dataclass(frozen=True)
@@ -78,7 +95,11 @@ def _all_needles(ledger: Ledger) -> list[_Needle]:
 
 def ledger_display(ledger: Ledger) -> Display:
     """The printing rule for this ledger's values."""
-    return Display((n.data for n in _all_needles(ledger)), (p.value for p in ledger.placements))
+    return Display(
+        (n.data for n in _all_needles(ledger)),
+        (p.value for p in ledger.placements),
+        decoded=True,
+    )
 
 
 def _find(haystack: bytes, needle: bytes, ends: Sequence[int]) -> Iterator[int]:
@@ -98,11 +119,118 @@ def _find(haystack: bytes, needle: bytes, ends: Sequence[int]) -> Iterator[int]:
 class _RawHit:
     needle: _Needle
     line: int
+    form: Form
 
 
-def _raw_sweep(data: bytes, table: Sequence[_Needle]) -> list[_RawHit]:
+@dataclass
+class _Swept:
+    hits: list[_RawHit]
+    # Lines holding text escaped past the decoded view's bound.
+    too_deep: list[int]
+
+
+@dataclass(frozen=True)
+class _Text:
+    """One text of a decoded view: where it came from (a site, a line or a
+    request part, by index) and how many unescapings gave it."""
+
+    origin: int
+    unescapings: int
+    data: bytes
+
+
+def _holds_json(data: bytes) -> bool:
+    """Whether `data` holds an escape and parses as a JSON object, array or
+    string: text the decoded view reads. JSON nested past the decoder's
+    depth limit cannot be told apart, so it is read."""
+    if b"\\" not in data:
+        return False
+    try:
+        return isinstance(msgspec.json.decode(data), str | list | dict)
+    except msgspec.DecodeError:
+        return False
+    except RecursionError:
+        return True
+
+
+def _json_spans(line: bytes) -> list[bytes]:
+    """The JSON a text holds, where it holds an escape: the text where it
+    parses as a JSON object, array or string, else each object or array
+    inside it, left to right. The one rule for every text the decoded view
+    reads."""
+    if b"\\" not in line:
+        return []
+    if _holds_json(line):
+        return [line]
+    # A byte that is not UTF-8 stands for itself, so a span encodes back to
+    # the very bytes it was read from.
+    text = line.decode("utf-8", errors="surrogateescape")
+    spans: list[bytes] = []
+    at = 0
+    while (start := _JSON_START.search(text, at)) is not None:
+        try:
+            _, end = _DECODER.raw_decode(text, start.start())
+        except ValueError:
+            at = start.start() + 1
+            continue
+        except RecursionError:
+            return [line]
+        spans.append(text[start.start() : end].encode("utf-8", errors="surrogateescape"))
+        at = end
+    return spans
+
+
+def _views(origins: Sequence[tuple[int, bytes]]) -> tuple[list[_Text], list[int]]:
+    """The decoded view of every (origin, text), and each origin escaped too
+    deep, once."""
+    texts: list[_Text] = []
+    too_deep: dict[int, None] = {}
+    for origin, data in origins:
+        view = decoded_view(data)
+        if not view.complete:
+            too_deep[origin] = None
+        texts += [_Text(origin, level, text) for level, text in enumerate(view.texts, start=1)]
+    return texts, list(too_deep)
+
+
+def _view_hits(
+    texts: Sequence[_Text], table: Sequence[_Needle], found: set[tuple[str, int]]
+) -> list[tuple[_Needle, _Text]]:
+    """Every needle in a text of the view whose origin does not hold that
+    placement itself (`found`: placement id, origin), at the fewest
+    unescapings that hold one of the placement's needles."""
+    ends: list[int] = []
+    offset = 0
+    for text in texts:
+        offset += len(text.data)
+        ends.append(offset)
+    haystack = b"".join(text.data for text in texts)
+    matches = [
+        (needle, texts[index])
+        for needle in table
+        for index in _find(haystack, needle.data, ends)
+        if (needle.placement.id, texts[index].origin) not in found
+    ]
+    fewest: dict[tuple[str, int], int] = {}
+    for needle, text in matches:
+        key = (needle.placement.id, text.origin)
+        fewest[key] = min(fewest.get(key, text.unescapings), text.unescapings)
+    return [
+        (needle, text)
+        for needle, text in matches
+        if fewest[(needle.placement.id, text.origin)] == text.unescapings
+    ]
+
+
+def _every_line(_: int) -> bool:
+    return True
+
+
+def _raw_sweep(data: bytes, table: Sequence[_Needle], viewed: Callable[[int], bool]) -> _Swept:
     """Every (needle, line) where a match starts. A match may run past the
-    end of its line: a raw needle may itself hold a newline."""
+    end of its line: a raw needle may itself hold a newline. The JSON each
+    line `viewed` picks (by number) holds is also read through its decoded
+    view."""
     line_ends = [match.end() for match in re.finditer(b"\n", data)]
     if not line_ends or line_ends[-1] != len(data):
         line_ends.append(len(data))
@@ -111,9 +239,26 @@ def _raw_sweep(data: bytes, table: Sequence[_Needle]) -> list[_RawHit]:
         pos = data.find(needle.data)
         while pos != -1:
             line = bisect.bisect_right(line_ends, pos)
-            hits.append(_RawHit(needle, line + 1))
+            hits.append(_RawHit(needle, line + 1, needle.form))
             pos = data.find(needle.data, line_ends[line])
-    return hits
+    if b"\\" not in data:
+        return _Swept(hits, [])
+    starts = [0, *line_ends[:-1]]
+    lines = [data[start:end] for start, end in zip(starts, line_ends, strict=True)]
+    spans = [
+        (origin, span)
+        for origin, line in enumerate(lines)
+        if viewed(origin + 1)
+        for span in _json_spans(line)
+    ]
+    texts, too_deep = _views(spans)
+    # Line numbers are origins counted from 1.
+    found = {(hit.needle.placement.id, hit.line - 1) for hit in hits}
+    hits += [
+        _RawHit(needle, text.origin + 1, decoded_form(needle.form, text.unescapings))
+        for needle, text in _view_hits(texts, table, found)
+    ]
+    return _Swept(hits, [origin + 1 for origin in too_deep])
 
 
 @dataclass(frozen=True)
@@ -121,12 +266,15 @@ class _SiteHit:
     needle: _Needle
     site: Site
     line: int
+    form: Form
 
 
 @dataclass
 class _Telemetry:
     site_hits: list[_SiteHit]
     unparsed_lines: list[int]
+    # The lines the walk could not read: left to the raw sweep alone.
+    unread_lines: list[int] = field(default_factory=lambda: [])
     spans: int = 0
     log_records: int = 0
     metric_data_points: int = 0
@@ -156,6 +304,7 @@ def _walk_telemetry(data: bytes, table: Sequence[_Needle]) -> _Telemetry:
         sites.extend((site, number) for site in walk.sites)
     if truncated:
         telemetry.unparsed_lines.append(len(lines))
+    telemetry.unread_lines = list(telemetry.unparsed_lines)
     telemetry.strings = len(sites)
 
     # One haystack for the whole file, so each needle is one fast search;
@@ -166,10 +315,22 @@ def _walk_telemetry(data: bytes, table: Sequence[_Needle]) -> _Telemetry:
         offset += len(site.data)
         ends.append(offset)
     haystack = b"".join(site.data for site, _ in sites)
+    found: set[tuple[str, int]] = set()
     for needle in table:
         for index in _find(haystack, needle.data, ends):
             site, number = sites[index]
-            telemetry.site_hits.append(_SiteHit(needle, site, number))
+            telemetry.site_hits.append(_SiteHit(needle, site, number, needle.form))
+            found.add((needle.placement.id, index))
+
+    viewed = [
+        (index, span) for index, (site, _) in enumerate(sites) for span in _json_spans(site.data)
+    ]
+    texts, too_deep = _views(viewed)
+    for needle, text in _view_hits(texts, table, found):
+        site, number = sites[text.origin]
+        form = decoded_form(needle.form, text.unescapings)
+        telemetry.site_hits.append(_SiteHit(needle, site, number, form))
+    telemetry.unparsed_lines += dict.fromkeys(sites[origin][1] for origin in too_deep)
     return telemetry
 
 
@@ -214,32 +375,68 @@ def _credential_fields(record: Request) -> set[tuple[str, str]]:
     }
 
 
+def _part_needles(
+    texts: Sequence[tuple[int, bytes]], present: Sequence[_Needle]
+) -> list[tuple[_Needle, Form]]:
+    """Every needle in a part's texts (unescapings, text), each placement at
+    the fewest unescapings that hold it."""
+    out: list[tuple[_Needle, Form]] = []
+    seen: set[str] = set()
+    for unescapings in sorted({level for level, _ in texts}):
+        at = [text for level, text in texts if level == unescapings]
+        now = [n for n in present if n.placement.id not in seen and any(n.data in t for t in at)]
+        out += [(n, decoded_form(n.form, unescapings)) for n in now]
+        seen.update(n.placement.id for n in now)
+    return out
+
+
+def _part_texts(
+    part: Part, credentials: set[tuple[str, str]]
+) -> tuple[list[tuple[int, bytes]], bool]:
+    """The part itself, then the decoded view of the JSON it holds, each
+    text with the unescapings that gave it, and whether the view read it in
+    full. Not viewed: a JSON body as a whole, whose strings are its parts,
+    and a credential field's value, which is matched as the mock matches
+    it."""
+    texts = [(0, part.data)]
+    if part.document or part.field in credentials:
+        return texts, True
+    complete = True
+    for span in _json_spans(part.data):
+        view = decoded_view(span)
+        complete = complete and view.complete
+        texts += enumerate(view.texts, start=1)
+    return texts, complete
+
+
 def _found(
     parts: Sequence[Part], table: Sequence[_Needle], credentials: set[tuple[str, str]]
-) -> set[tuple[str, str, Form, bool]]:
+) -> tuple[set[tuple[str, str, Form, bool]], bool]:
     """(placement id, location, form, in a credential field) for every
     needle in the request; a whole query or body only where no finer part
-    of it found the placement."""
+    of it found the placement. And whether any part is escaped past the
+    decoded view's bound."""
     fine: set[tuple[str, str, Form, bool]] = set()
     whole: set[tuple[str, str, Form, str | None]] = set()
     grouped: set[tuple[str, str | None]] = set()
+    read = [_part_texts(part, credentials) for part in parts]
+    texts = [part_texts for part_texts, _ in read]
     # One search per needle over the whole request first: a needle in no
-    # part is in no part's bytes, and most needles are in no request.
-    joined = b"\0".join(part.data for part in parts)
+    # part is in no part's texts, and most needles are in no request.
+    joined = b"\0".join(text for part_texts in texts for _, text in part_texts)
     present = [needle for needle in table if needle.data in joined]
-    for part in parts:
-        for needle in present:
-            if needle.data in part.data:
-                pid = needle.placement.id
-                if part.whole:
-                    whole.add((pid, part.location, needle.form, part.group))
-                else:
-                    fine.add((pid, part.location, needle.form, part.field in credentials))
-                    grouped.add((pid, part.group))
+    for part, part_texts in zip(parts, texts, strict=True):
+        for needle, form in _part_needles(part_texts, present):
+            pid = needle.placement.id
+            if part.whole:
+                whole.add((pid, part.location, form, part.group))
+            else:
+                fine.add((pid, part.location, form, part.field in credentials))
+                grouped.add((pid, part.group))
     for pid, location, form, group in whole:
         if (pid, group) not in grouped:
             fine.add((pid, location, form, False))
-    return fine
+    return fine, not all(complete for _, complete in read)
 
 
 def _judge_requests(
@@ -258,7 +455,9 @@ def _judge_requests(
             out.hits += _raw_hits(line, number, path, table)
             continue
         out.requests += 1
-        if record.unread is not None:
+        parts = request_parts(record, display)
+        found, too_deep = _found(parts, table, _credential_fields(record))
+        if record.unread is not None or too_deep:
             out.unparsed_lines.append(number)
         if record.outcome != "served":
             kind = _BLOCKED_KIND[record.outcome]
@@ -271,8 +470,7 @@ def _judge_requests(
                 if _own_provider(placement, record):
                     out.evidence.setdefault(placement.id, set()).add("egress")
         sink = _sink(record, display)
-        parts = request_parts(record, display)
-        for pid, location, form, credential in _found(parts, table, _credential_fields(record)):
+        for pid, location, form, credential in found:
             placement = placements[pid]
             if credential and _own_provider(placement, record):
                 if record.outcome == "served":
@@ -301,10 +499,13 @@ def _judge_requests(
 
 
 def _raw_hits(data: bytes, line: int, path: str, table: Sequence[_Needle]) -> list[Hit]:
-    return [_raw_hit(raw.needle, path, line + raw.line - 1) for raw in _raw_sweep(data, table)]
+    return [
+        _raw_hit(raw.needle, path, line + raw.line - 1, raw.form)
+        for raw in _raw_sweep(data, table, _every_line).hits
+    ]
 
 
-def _raw_hit(needle: _Needle, path: str, line: int) -> Hit:
+def _raw_hit(needle: _Needle, path: str, line: int, form: Form) -> Hit:
     return Hit(
         placement=needle.placement.id,
         kind=needle.placement.kind,
@@ -317,7 +518,7 @@ def _raw_hit(needle: _Needle, path: str, line: int) -> Hit:
         metric=None,
         sink=None,
         location=None,
-        form=needle.form,
+        form=form,
     )
 
 
@@ -379,6 +580,7 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
             continue
         swept += len(capture.data)
         walked: set[tuple[str, int]] = set()
+        viewed = _every_line
         if capture.role is Role.TELEMETRY:
             telemetry = _walk_telemetry(capture.data, table)
             spans += telemetry.spans
@@ -386,6 +588,7 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
             data_points += telemetry.metric_data_points
             strings += telemetry.strings
             unparsed.extend((path, line) for line in telemetry.unparsed_lines)
+            viewed = set(telemetry.unread_lines).__contains__
             for found in telemetry.site_hits:
                 record = found.site.record
                 placement = found.needle.placement
@@ -403,14 +606,17 @@ def judge_capture(ledger: Ledger, files: Sequence[CaptureFile]) -> Report:
                         metric=_shown(display, record and record.metric),
                         sink=None,
                         location=_location(found.site.location, display),
-                        form=found.needle.form,
+                        form=found.form,
                     )
                 )
-        for raw in _raw_sweep(capture.data, table):
+        swept_file = _raw_sweep(capture.data, table, viewed)
+        if capture.role is Role.SWEPT:
+            unparsed.extend((path, line) for line in swept_file.too_deep)
+        for raw in swept_file.hits:
             placement = raw.needle.placement
             if (placement.id, raw.line) in walked:
                 continue
-            hits.add(_raw_hit(raw.needle, path, raw.line))
+            hits.add(_raw_hit(raw.needle, path, raw.line, raw.form))
 
     ordered_hits = sorted(hits, key=_hit_sort_key)
     hit_counts: dict[str, int] = {}

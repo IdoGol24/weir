@@ -21,3 +21,13 @@ def flatten_untrusted(value: str) -> str:
 def plural(count: int, word: str) -> str:
     """`1 location` / `2 locations`. Inline ternaries got two of six wrong."""
     return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
+def records_phrase(spans: int, log_records: int) -> str:
+    """`2 spans`, `1 log record`, or `1 span and 2 log records`: what an
+    exposure hit count lies across. Spans alone read as they always have."""
+    if not log_records:
+        return plural(spans, "span")
+    if not spans:
+        return plural(log_records, "log record")
+    return f"{plural(spans, 'span')} and {plural(log_records, 'log record')}"

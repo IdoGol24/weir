@@ -43,8 +43,8 @@ from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans, Sp
 from weir_run.capture import Capture
 from weir_run.ledger import Ledger
 from weir_run.mock import HOST, Mock
-from weir_run.mock.oauth import CREDENTIAL_FORM_FIELDS
-from weir_run.shapes import ByteSource, shaped
+from weir_run.mock.oauth import CREDENTIAL_FORM_FIELDS, OAuth
+from weir_run.shapes import ALNUM, ID_OVERLAP, ByteSource, shaped
 from weir_run.spec import CredentialField, EndpointSpec, MockSpec, PlacementSpec
 
 
@@ -843,6 +843,57 @@ def test_the_id_token_is_a_jwt_for_the_client(rig: Rig) -> None:
     claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
     assert claims["aud"] == "app" and claims["iss"] == rig.mock.url
     assert json.loads(base64.urlsafe_b64decode(header + "=" * (-len(header) % 4)))["typ"] == "JWT"
+
+
+def _unpad(segment: str) -> bytes:
+    return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+
+
+def _pad(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _another_jwt(token: str, source: ByteSource) -> str:
+    """A JWT with token's header and claims but its own subject and
+    signature: what any client of the mock's issuer might print."""
+    header, payload, _ = token.split(".")
+    claims = json.loads(_unpad(payload))
+    claims["sub"] = source.choose(ALNUM, len(claims["sub"]))
+    return f"{header}.{_pad(json.dumps(claims).encode())}.{_pad(source.read(32))}"
+
+
+# Three ports, one per alignment of the subject in the payload's base64.
+@pytest.mark.parametrize("port", [80, 8080, 18080])
+def test_an_id_token_is_judged_by_its_subject_and_signature(tmp_path: Path, port: int) -> None:
+    """The header and fixed claims every ID token of the mock carries are
+    no trace of one: a JWT that shares them reads as it is, while any run
+    of 6 characters that differs between the two tokens is withheld."""
+    ledger = Ledger(tmp_path / "ledger.jsonl", ByteSource(seed=1))
+    oauth = OAuth(ledger, ByteSource(seed=2), ("oauth",))
+    oauth.base_url = f"http://127.0.0.1:{port}"
+    form = {"grant_type": ["client_credentials"], "client_id": ["app"], "scope": ["openid"]}
+    token = json.loads(oauth.token(form, None)[1])["id_token"]
+    other = _another_jwt(token, ByteSource(seed=3))
+    assert len(other) == len(token) and other.split(".")[0] == token.split(".")[0]
+    assert not ledger.withheld(f"Bearer {other}")
+    starts = range(len(token) - ID_OVERLAP + 1)
+    shared = [i for i in starts if token[i : i + ID_OVERLAP] == other[i : i + ID_OVERLAP]]
+    own = [
+        i
+        for i in starts
+        if all(
+            a != b
+            for a, b in zip(token[i : i + ID_OVERLAP], other[i : i + ID_OVERLAP], strict=True)
+        )
+    ]
+    payload, signature = token.index("."), token.rindex(".")
+    assert 0 in shared  # the header
+    assert any(payload < i < signature - ID_OVERLAP for i in own)  # the subject
+    assert any(i > signature for i in own)
+    for i in shared:
+        assert not ledger.withheld(token[i : i + ID_OVERLAP]), i
+    for i in own:
+        assert ledger.withheld(token[i : i + ID_OVERLAP]), i
 
 
 def test_authorization_code_flow(rig: Rig) -> None:
