@@ -60,12 +60,27 @@ EXPIRES_IN = 3600
 # Fixed claims: the runner never reads the wall clock (G1). exp is far ahead.
 ID_TOKEN_IAT = 1_700_000_000
 ID_TOKEN_EXP = 4_102_444_800
+# How the `sub` claim opens in an ID token's payload: no claim value holds
+# it, since a quote inside a JSON string is escaped.
+SUB = b'"sub": "'
 
 type Reply = tuple[int, bytes, str, dict[str, str]]
 
 
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def id_token_parts(token: str) -> tuple[str, str]:
+    """An ID token's random parts: the payload characters that carry a bit
+    of its random `sub`, and its signature. The header and every other
+    claim are the same in each ID token the mock mints for a client."""
+    _, payload, signature = token.split(".")
+    claims = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+    start = claims.index(SUB) + len(SUB)
+    end = claims.index(b'"', start)
+    # Payload character i encodes bits 6i to 6i+5 of the claims.
+    return payload[8 * start // 6 : (8 * end + 5) // 6], signature
 
 
 def _json(status: int, body: object) -> Reply:
@@ -105,7 +120,7 @@ class OAuth:
             payload = _b64url(json.dumps(claims).encode())
             return f"{header}.{payload}.{_b64url(self.source.read(32))}"
 
-        return self.ledger.mint("id_token", make, self.providers).value
+        return self.ledger.mint("id_token", make, self.providers, id_token_parts).value
 
     def metadata(self) -> Reply:
         u = self.base_url

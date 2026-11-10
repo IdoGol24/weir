@@ -52,7 +52,7 @@ key in the `x-api-key` header of the model request (the placement is
 `exercised`), and nothing else carries it. The judge is `weir canary judge`,
 with every encoded form it matches. verify prints each flow's output with
 every match of the key replaced, and withholds any line that holds 6
-characters in a row of the key.
+characters in a row of the key's random part, as `weir-run run` does.
 
 A sink's verdict is `leak` when it holds a hit, `not_reached` when nothing
 reached it, and `clean` otherwise. The run is `leak` when any sink leaks,

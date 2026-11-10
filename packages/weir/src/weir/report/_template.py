@@ -29,6 +29,8 @@ REPORT_TEMPLATE = """<!doctype html>
   .review-queue { border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.25rem;
                   background: #fbfbfb; margin-top: 1rem; }
   .review-queue h2 { font-size: 1rem; color: #666; margin-top: 0; }
+  .not-scanned { border: 1px solid #e6d3a3; background: #fdf8ec; border-radius: 8px;
+                 padding: 1rem 1.25rem; margin-bottom: 1rem; }
   footer { margin-top: 2rem; font-size: 0.8rem; color: #777; }
 </style>
 </head>
@@ -57,6 +59,13 @@ REPORT_TEMPLATE = """<!doctype html>
   <h2>review queue - credential-shaped matches, never a headline count</h2>
   {% for e in exposure_triage %}
   <div>{{ e.headline }}{% for r in e.reasons %} - {{ r }}{% endfor %}</div>
+  {% endfor %}
+</div>
+{% endif %}
+{% if not_scanned %}
+<div class="not-scanned">
+  {% for line in not_scanned %}
+  <div>{{ line }}</div>
   {% endfor %}
 </div>
 {% endif %}

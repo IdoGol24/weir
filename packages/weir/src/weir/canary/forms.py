@@ -148,3 +148,17 @@ def needles(value: str) -> list[tuple[bytes, Form]]:
                 seen.add(needle)
                 out.append((needle, form))
     return out
+
+
+# docs/canary.md, "The decoded view": the escapings a needle's own form
+# takes. Every other form keeps its name through the view.
+_ESCAPINGS = {Form.RAW: 0, Form.JSON: 1, Form.JSON2: 2}
+
+
+def decoded_form(form: Form, unescapings: int) -> Form:
+    """The form of a needle found after `unescapings` unescapings, named by
+    the escapings the value took in all: `json` for one, `json2` for more."""
+    own = _ESCAPINGS.get(form)
+    if unescapings == 0 or own is None:
+        return form
+    return Form.JSON if own + unescapings == 1 else Form.JSON2

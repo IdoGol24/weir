@@ -45,6 +45,12 @@ class Shape:
     body_length: int
     alphabet: str = ALNUM
 
+    def parts(self, value: str) -> tuple[str, ...]:
+        """The part of a value of this shape drawn at random: all of it
+        after the prefix every value of the shape carries. None, for a
+        value without that prefix."""
+        return (value[len(self.prefix) :],) if value.startswith(self.prefix) else ()
+
 
 SHAPES: dict[str, Shape] = {
     "generic": Shape("", 40),
@@ -88,12 +94,19 @@ class ByteSource:
         return "".join(chars)
 
 
+def windows(value: str, run: int = ID_OVERLAP) -> set[str]:
+    """Every run of `run` consecutive characters of value."""
+    return {value[i : i + run] for i in range(len(value) - run + 1)}
+
+
+def holds_run(text: str, runs: set[str], run: int = ID_OVERLAP) -> bool:
+    """Does text hold one of runs, each `run` characters long?"""
+    return any(text[i : i + run] in runs for i in range(len(text) - run + 1))
+
+
 def overlaps(value: str, text: str, run: int = ID_OVERLAP) -> bool:
     """Does text hold a run of `run` or more consecutive characters of value?"""
-    if len(text) < run or len(value) < run:
-        return False
-    windows = {value[i : i + run] for i in range(len(value) - run + 1)}
-    return any(text[i : i + run] in windows for i in range(len(text) - run + 1))
+    return holds_run(text, windows(value, run), run)
 
 
 def acceptable(value: str, taken: Iterable[str], ids: Iterable[str]) -> bool:
