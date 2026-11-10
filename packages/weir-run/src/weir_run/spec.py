@@ -19,6 +19,8 @@ VARIABLE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 ENDPOINT_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
 FIELD_NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 HOST_RE = re.compile(r"[A-Za-z0-9._:-]{1,253}")
+# docs/canary.md, "Tool calls": a tool name the runner prints.
+TOOL_NAME_RE = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
 
 # The mock's own endpoints. A configured endpoint takes any other id.
 BUILTIN_ENDPOINTS = ("model", "oauth", "otlp")
@@ -105,6 +107,9 @@ class EndpointSpec:
     reply: str = "{}"
     content_type: str = "application/json"
     capture: bool = False
+    # The tool that calls this API: every request the mock serves here is
+    # that tool executing (docs/canary.md, "Tool calls").
+    tool: str | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +129,10 @@ class MockSpec:
         builtin = BUILTIN_FIELDS.get(endpoint, ())
         added = self.credential_fields.get(endpoint, ())
         return builtin + tuple(f for f in added if f not in builtin)
+
+    def tools(self) -> dict[str, str]:
+        """Each tool an endpoint stands in for, and that endpoint's id."""
+        return {e.tool: e.id for e in self.endpoints if e.tool is not None}
 
 
 @dataclass(frozen=True)
@@ -168,6 +177,8 @@ class RunSpec:
         # Printed as sinks: `<host> (blocked)` and `unmocked`.
         ids += [p.provider_host for p in self.placements if p.provider_host]
         ids.append(UNMOCKED)
+        # Printed in `unmediated tool call` lines.
+        ids += list(self.mock.tools())
         return ids
 
 
@@ -235,6 +246,7 @@ def validate(spec: RunSpec, *, require_flows: bool = True) -> None:
     if require_flows and not spec.flows:
         raise SpecError("no flow is defined")
     endpoint_ids: set[str] = set()
+    tools: dict[str, str] = {}
     for e in spec.mock.endpoints:
         if not ENDPOINT_ID_RE.fullmatch(e.id) or e.id in (*BUILTIN_ENDPOINTS, UNMOCKED):
             raise SpecError(f"endpoint id {e.id!r} is not usable")
@@ -243,6 +255,16 @@ def validate(spec: RunSpec, *, require_flows: bool = True) -> None:
         endpoint_ids.add(e.id)
         if not 100 <= e.status <= 599:
             raise SpecError(f"endpoint {e.id}: status {e.status} is not an HTTP status")
+        if e.tool is None:
+            continue
+        if not isinstance(e.tool, str) or not TOOL_NAME_RE.fullmatch(e.tool):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise SpecError(
+                f"endpoint {e.id}: tool {e.tool!r} is not a tool name"
+                " (1 to 128 of [A-Za-z0-9._:/-])"
+            )
+        if e.tool in tools:
+            raise SpecError(f"tool {e.tool} is named by two endpoints, {tools[e.tool]} and {e.id}")
+        tools[e.tool] = e.id
     for name, fields in spec.mock.credential_fields.items():
         if name not in BUILTIN_ENDPOINTS:
             raise SpecError(

@@ -100,7 +100,8 @@ def _run(
     result = CliRunner().invoke(
         cli.main, ["run", "--config", str(config), "--report", str(report), *args]
     )
-    doc: dict[str, Any] = json.loads(report.read_text()) if report.exists() else {}
+    # The judge's own report, inside the run's (canary-report/2).
+    doc: dict[str, Any] = json.loads(report.read_text())["judge"] if report.exists() else {}
     return result, doc
 
 

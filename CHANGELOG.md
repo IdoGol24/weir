@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+weir-run's unmediated tool call below is decided by weir-run's own mock
+and needs nothing of weir-scan's `weir canary judge`, so weir-run still
+requires `weir-scan>=0.6.0`.
+
 ### Added
 - **The exposure scan reads OpenTelemetry log records**: `weir scan` and
   `weir gauge` accept an OTLP logs export (`resourceLogs`, camelCase or
@@ -58,6 +62,36 @@
     8-character floor, placeholder rules and letter-and-digit rule for
     `token` as the string form. A placeholder first item hides a real value
     after it (`["REDACTED", "..."]` is not a hit).
+- **weir-run: an unmediated tool call fails the run.** The mock keeps a
+  tool ledger of its own: every tool call its model API issues, by call
+  id, and every request served at a `[[mock.endpoint]]` whose new `tool`
+  key names the tool that calls it, which is that tool executing (the
+  pytest plugin's `endpoint(..., tool=...)` sets the same). Each execution
+  is judged when it happens: it answers the oldest call issued for that
+  tool in the flow that none has answered yet and whose result has not
+  gone back to the model yet, or repeats an execution whose result has
+  not gone back yet (a retry, several requests). A tool that executes
+  with no call to answer, as when a program runs a tool call a caller put
+  into the conversation or runs a tool after its call's result went back,
+  is a finding named `unmediated-tool-call` (reason `not_issued`). A tool
+  result under the call id the model gave another tool, which names a
+  tool that executed while the asked tool never did, is the same finding
+  with the reason `tool_mismatch`, even when the executed tool had a call
+  of its own, so an alias or a substitution is told apart from an orphan
+  call. It is printed on execution, never as a leak:
+  `unmediated tool call: send_file (executed without a model request)`,
+  `unmediated tool call: send_file (executed in answer to a model request
+  for read_file)`. An execution without a model request is never clean,
+  in a stored Responses conversation too. Nothing a model request carries
+  makes a finding: few-shot tool-use examples, a replayed transcript, a
+  framework's own hand-off, a summary or guardrail request, another
+  agent's conversation. Neither do retries or batched calls. A tool that
+  keeps sending requests to its endpoint after its result went back, such
+  as a background upload, or first reaches it only then, such as a
+  deferred or async tool, is a finding: a call answered without its tool
+  running mediates no later run. A tool with no `tool` endpoint is
+  never reported, and `tool` must be exactly the name the program offers
+  the model. See docs/canary.md, "Tool calls".
 - **The canary judge reads JSON escapes.** A planted value is found when
   the JSON around it writes any of its characters as a `\uXXXX` escape,
   not only the characters a standard serializer escapes: in a telemetry
@@ -82,6 +116,40 @@
   name is checked as written, without undoing JSON escapes. Verdict lines
   and review-queue rows are both covered, on every exit code. What the
   scan reports, its counts, verdicts and exit codes are unchanged.
+- **weir-run: exit 1 is a finding, a leak or an unmediated tool call.** No
+  exit code was added: `weir-run run`, `weir-run verify`, the pytest
+  plugin and the GitHub Action still exit 0 clean, 1 failed, 2 error and 3
+  incomplete. Any finding fails a run; otherwise any gap makes it
+  incomplete; only neither is clean. The run's text report is the judge's,
+  with the `unmediated tool call` lines before its coverage line and the
+  run's own result as its last line. The Action takes exit 1 with the
+  result `leak` or `unmediated-tool-call`, and its `result` output can be
+  `unmediated-tool-call`. For that result its PR comment headline and its
+  error annotation are titled "Weir check", never a leak check.
+- **`weir-run verify` writes `weir-verify-evidence/2`**, a new schema
+  version with its own JSON Schema artifact
+  (`weir-verify-evidence.v2.schema.json`): the v1 record with `findings`
+  (`{type, reason, count}`) and the verdict `unmediated-tool-call`. Its
+  predicate is `FAILED` with `finding:<type>` in `failedTests`. A run with
+  an unmediated tool call cannot produce a `PASSED` result; its `FAILED`
+  result is signed like a leak's. `weir-run predicate` still accepts a
+  `weir-verify-evidence/1` record, which weir-run 0.3.0 wrote, and makes
+  the same predicate for it as 0.3.0 did; the v1 schema artifact is
+  unchanged. verify's own probe runs no tool, so its current target never
+  reaches this verdict.
+- **weir-run: `--report` writes `canary-report/2`**, the run's JSON
+  report, with a JSON Schema artifact (`canary-report.v2.schema.json`):
+  `result` and `exit_code` are always the run's, so a failing run never
+  reads `clean`; `findings` (the finding types, as data), `unmediated`
+  (`{tool, reason, issued_tool, count}` per group) and `judge`, the
+  judge's own `canary-report/1`, unchanged. What you need to do: a job
+  that reads the report's `result` or `exit_code` keeps working and now
+  sees the run's verdict, `unmediated-tool-call` included; a job that
+  reads the judge's other fields, such as `hits`, `placements` or
+  `coverage`, reads them from `judge`.
+- **weir-run: the mock's Chat Completions and Responses call ids are
+  `call_mock_<n>_<i>`** (were `call_<n>_<i>`), so an id a program or a
+  framework makes up is less likely to look like one the mock issued.
 - Project links point to github.com/ralis-ai/weir.
 
 ### Fixed

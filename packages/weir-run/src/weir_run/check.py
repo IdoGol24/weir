@@ -12,7 +12,9 @@ the judge"):
    connection attempt the namespace blocked, relay each flow's output with
    every needle replaced and every line that holds a run of a value
    withheld;
-4. call the judge, then delete the ledger and the capture.
+4. call the judge and combine its verdict with the mock's own unmediated
+   tool calls (`weir_run.verdict`, docs/canary.md "Tool calls"), then
+   delete the ledger and the capture.
 
 The CLI runs a whole config through `run_spec`; the pytest plugin drives a
 `CheckRun` call by call.
@@ -29,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from weir_run import flows, isolation
+from weir_run import flows, isolation, verdict
 from weir_run import judge as judge_cli
 from weir_run.capture import Capture
 from weir_run.ledger import Ledger
@@ -126,6 +128,7 @@ class CheckRun:
         tmp.mkdir()
         env = flows.flow_environment(self.mock_url, self.planted, flow.env, home, tmp)
         stdout, stderr = self.capture.flow_streams(index, flow.id)
+        self.mock.tools.start_flow()
         status = flows.run(flow, env, stdout, stderr, self.python, self.jail)
         self.ledger.flow(flow.id, status)
         self._observe(flow.id)
@@ -207,11 +210,34 @@ class CheckRun:
         if mock.errors:
             out.write(f"mock: {mock.errors} request(s) failed inside the mock, answered 500\n")
 
+    def unmediated(self) -> list[verdict.UnmediatedEntry]:
+        """The mock's unmediated tool calls, as the run prints them."""
+        return verdict.entries(self.mock.tools.unmediated(), self.safe)
+
     def judge(self, *, json_report: bool = False) -> judge_cli.Verdict:
+        """The run's verdict: the judge's, combined with the mock's own
+        unmediated tool calls. A judge that reached no verdict (exit 2) is
+        passed on as it is."""
         self.stop()
-        self.verdict = judge_cli.judge(self.judge_command, self.run_dir)
-        if json_report:
-            self.json_verdict = judge_cli.judge(self.judge_command, self.run_dir, json_report=True)
+        judged = judge_cli.judge(self.judge_command, self.run_dir)
+        as_json = (
+            judge_cli.judge(self.judge_command, self.run_dir, json_report=True)
+            if json_report
+            else None
+        )
+        if judged.code not in verdict.JUDGE_RESULTS:
+            self.verdict, self.json_verdict = judged, as_json
+            return judged
+        unmediated = self.unmediated()
+        result, findings = verdict.combine(judged.code, unmediated)
+        code = verdict.EXIT_CODES[result]
+        self.verdict = judge_cli.Verdict(
+            code, verdict.text(judged.stdout, unmediated, result), judged.stderr
+        )
+        if as_json is not None:
+            # The plain verdict decides the run; the JSON report says the same.
+            data = verdict.report(as_json.stdout, unmediated, result, findings)
+            self.json_verdict = judge_cli.Verdict(code, data, as_json.stderr)
         return self.verdict
 
     def redacted(self, data: bytes) -> str:
@@ -263,13 +289,13 @@ def run_spec(
             run.run_flow(flow)
         run.stop()
         run.relay(err)
-        verdict = run.judge(json_report=json_report is not None)
-        out.write(run.redacted(verdict.stdout))
-        if verdict.stderr:
-            err.write(run.redacted(verdict.stderr))
+        judged = run.judge(json_report=json_report is not None)
+        out.write(run.redacted(judged.stdout))
+        if judged.stderr:
+            err.write(run.redacted(judged.stderr))
         if json_report is not None and run.json_verdict is not None:
             json_report.write_text(run.redacted(run.json_verdict.stdout), encoding="utf-8")
-        return verdict.code
+        return judged.code
     finally:
         for directory in run.cleanup():
             err.write(f"weir-run: could not delete {directory}; delete it by hand\n")

@@ -1,0 +1,258 @@
+{
+  "$defs": {
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "image_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "incomplete": {
+          "items": {
+            "$ref": "#/$defs/Incomplete"
+          },
+          "type": "array"
+        },
+        "manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "network": {
+          "$ref": "#/$defs/Network"
+        },
+        "placements": {
+          "items": {
+            "$ref": "#/$defs/Placement"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "enum": [
+            "weir-verify-evidence/2"
+          ]
+        },
+        "sinks": {
+          "items": {
+            "$ref": "#/$defs/Sink"
+          },
+          "type": "array"
+        },
+        "target": {
+          "pattern": "^[a-z0-9][a-z0-9.-]{0,39}$",
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/Tool"
+          },
+          "type": "array"
+        },
+        "verdict": {
+          "enum": [
+            "clean",
+            "incomplete",
+            "leak",
+            "unmediated-tool-call"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "target",
+        "tools",
+        "manifest_sha256",
+        "image_digest",
+        "verdict",
+        "findings",
+        "placements",
+        "sinks",
+        "incomplete",
+        "network"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "Finding": {
+      "additionalProperties": false,
+      "description": "One finding type, with its reason for an unmediated tool call (null\n    for a leak), and how many: hits for a leak, tool calls otherwise.",
+      "properties": {
+        "count": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "not_issued",
+                "tool_mismatch"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "enum": [
+            "leak",
+            "unmediated-tool-call"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "reason",
+        "count"
+      ],
+      "title": "Finding",
+      "type": "object"
+    },
+    "Incomplete": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "reason": {
+          "enum": [
+            "direct_connection",
+            "empty_capture",
+            "flow_not_ok",
+            "judge_not_clean",
+            "judge_other",
+            "network_not_isolated",
+            "not_scanned",
+            "required_not_exercised",
+            "sink_not_reached",
+            "target_missing",
+            "unexpected_credential",
+            "unparsed_record",
+            "value_fragment"
+          ]
+        }
+      },
+      "required": [
+        "reason",
+        "count"
+      ],
+      "title": "Incomplete",
+      "type": "object"
+    },
+    "Network": {
+      "additionalProperties": false,
+      "properties": {
+        "direct_attempts": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "isolated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "isolated",
+        "direct_attempts"
+      ],
+      "title": "Network",
+      "type": "object"
+    },
+    "Placement": {
+      "additionalProperties": false,
+      "properties": {
+        "hits": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "pattern": "^env\\.[A-Z_][A-Z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "exercised",
+            "leaked",
+            "not_exercised"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "hits"
+      ],
+      "title": "Placement",
+      "type": "object"
+    },
+    "Sink": {
+      "additionalProperties": false,
+      "properties": {
+        "hits": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "enum": [
+            "console",
+            "model",
+            "outbound",
+            "telemetry"
+          ]
+        },
+        "received": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "verdict": {
+          "enum": [
+            "clean",
+            "leak",
+            "not_reached"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "verdict",
+        "received",
+        "hits"
+      ],
+      "title": "Sink",
+      "type": "object"
+    },
+    "Tool": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9.-]{0,39}$",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[0-9][0-9A-Za-z.+-]{0,63}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "Tool",
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Evidence"
+}

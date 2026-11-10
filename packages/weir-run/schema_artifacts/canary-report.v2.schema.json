@@ -1,0 +1,98 @@
+{
+  "$defs": {
+    "Report": {
+      "additionalProperties": false,
+      "description": "canary-report/2: what `weir-run run --report` writes.",
+      "properties": {
+        "exit_code": {
+          "enum": [
+            0,
+            1,
+            3
+          ]
+        },
+        "findings": {
+          "items": {
+            "enum": [
+              "leak",
+              "unmediated-tool-call"
+            ]
+          },
+          "type": "array"
+        },
+        "judge": {
+          "description": "The judge's own JSON report (canary-report/1), unchanged: its own JSON Schema is weir-scan's canary-report.v1.schema.json.",
+          "type": "object"
+        },
+        "result": {
+          "enum": [
+            "clean",
+            "incomplete",
+            "leak",
+            "unmediated-tool-call"
+          ]
+        },
+        "schema": {
+          "enum": [
+            "canary-report/2"
+          ]
+        },
+        "unmediated": {
+          "items": {
+            "$ref": "#/$defs/UnmediatedEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema",
+        "result",
+        "exit_code",
+        "findings",
+        "unmediated",
+        "judge"
+      ],
+      "title": "Report",
+      "type": "object"
+    },
+    "UnmediatedEntry": {
+      "additionalProperties": false,
+      "description": "One group of unmediated tool calls: the tool that executed, why, the\n    tool the model asked for (`tool_mismatch`) and how many.",
+      "properties": {
+        "count": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "issued_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "enum": [
+            "not_issued",
+            "tool_mismatch"
+          ]
+        },
+        "tool": {
+          "pattern": "^[A-Za-z0-9._:/-]{1,128}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "reason",
+        "issued_tool",
+        "count"
+      ],
+      "title": "UnmediatedEntry",
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Report"
+}
