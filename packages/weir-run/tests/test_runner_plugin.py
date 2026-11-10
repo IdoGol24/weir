@@ -16,7 +16,9 @@ from pathlib import Path
 
 import pytest
 
+from weir_run.check import WITHHELD
 from weir_run.pytest_plugin import CanaryCheck
+from weir_run.shapes import SHAPES
 from weir_run.spec import SpecError
 
 PROBE = Path(__file__).parent / "_probe_flow.py"
@@ -72,6 +74,19 @@ def test_tool_run_asked(canary_check, tmp_path):
 
 def test_tool_run_unasked(canary_check, tmp_path):
     _tools(canary_check, tmp_path, "injected")
+
+def test_fragment(canary_check, tmp_path):
+    from weir_run.shapes import ID_OVERLAP, SHAPES
+
+    prefix = SHAPES["anthropic"].prefix
+    canary_check.env("APP_KEY", provider="model", shape="anthropic")
+    env = {{**_env(tmp_path, "fragment"), "PREFIX_LENGTH": str(len(prefix))}}
+    canary_check.run(["{{python}}", PROBE], env=env)
+    result = canary_check.judge()
+    body = (tmp_path / "side").read_text(encoding="utf-8")[len(prefix):]
+    windows = {{body[i : i + ID_OVERLAP] for i in range(len(body) - ID_OVERLAP + 1)}}
+    assert not [w for w in windows if w in result.output + result.report]
+    assert f"prefix {{prefix}}\\n" in result.output.replace("\\r\\n", "\\n")
 """
 
 # An inner conftest that makes isolation unavailable, as on a host without
@@ -160,6 +175,37 @@ def test_judge_can_be_called_to_assert_on_the_result(
     inner: subprocess.CompletedProcess[str],
 ) -> None:
     assert "PASSED test_inner.py::test_explicit_judge" in inner.stdout, inner.stdout
+
+
+def test_a_slice_of_the_key_never_reaches_the_relayed_output(
+    inner: subprocess.CompletedProcess[str],
+) -> None:
+    assert "PASSED test_inner.py::test_fragment" in inner.stdout, inner.stdout
+
+
+def test_a_withheld_line_keeps_the_crlf_the_flow_printed(tmp_path: Path, judge: list[str]) -> None:
+    """A flow that ends its lines with CRLF, as any Windows program does: a
+    withheld line ends with CRLF like the lines around it, and the lines
+    that hold no value are relayed as printed."""
+    prefix = SHAPES["anthropic"].prefix
+    plain = "an ordinary line from the flow"
+    check = CanaryCheck(judge, tmp_path)
+    try:
+        check.env("APP_KEY", provider="model", shape="anthropic")
+        env = {
+            "SIDE_FILE": str(tmp_path / "side"),
+            "MODE": "fragment",
+            "PREFIX_LENGTH": str(len(prefix)),
+            "PLAIN": plain,
+            "NEWLINE": "\r\n",
+        }
+        check.run(["{python}", PROBE.as_posix()], id="main", env=env)
+        output = check.judge().output
+    finally:
+        check.close()
+    stdout = f"{plain}\r\n{WITHHELD}\r\nprefix {prefix}\r\n"
+    assert f"--- flow main stdout (canaries redacted) ---\n{stdout}--- end" in output, output
+    assert f"--- flow main stderr (canaries redacted) ---\n{WITHHELD}\r\n--- end" in output
 
 
 def test_declarations_close_at_the_first_run(tmp_path: Path, judge: list[str]) -> None:

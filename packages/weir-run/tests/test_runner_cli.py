@@ -25,11 +25,14 @@ from click.testing import CliRunner, Result
 
 from weir_run import cli
 from weir_run import judge as judge_cli
+from weir_run.check import WITHHELD
+from weir_run.shapes import ID_OVERLAP, SHAPES
 
 CONFIG = """
 [[placement]]
 id = "env.APP_KEY"
 kind = "env"
+shape = "{shape}"
 required = true
 provider = "model"
 
@@ -49,15 +52,39 @@ CANARY_REPORT_SCHEMA = (
 )
 
 
-def _setup(tmp_path: Path, mode: str = "", extra: str = "") -> tuple[Path, Path]:
+def _setup(
+    tmp_path: Path,
+    mode: str = "",
+    extra: str = "",
+    shape: str = "generic",
+    env: dict[str, str] | None = None,
+) -> tuple[Path, Path]:
     side = tmp_path / "side.txt"
-    env = {"SIDE_FILE": side.as_posix(), "MODE": mode}
+    env = {"SIDE_FILE": side.as_posix(), "MODE": mode, **(env or {})}
     inline = ", ".join(f"{k} = {json.dumps(v)}" for k, v in env.items())
     path = tmp_path / "canary.toml"
-    path.write_text(
-        CONFIG.format(env=inline, probe=json.dumps(PROBE.as_posix())) + extra, encoding="utf-8"
-    )
+    probe = json.dumps(PROBE.as_posix())
+    path.write_text(CONFIG.format(env=inline, probe=probe, shape=shape) + extra, encoding="utf-8")
     return path, side
+
+
+def _windows(value: str) -> set[str]:
+    """Every run of ID_OVERLAP characters of value: what the printing rule
+    withholds (docs/canary.md, "Printing capture-derived text")."""
+    return {value[i : i + ID_OVERLAP] for i in range(len(value) - ID_OVERLAP + 1)}
+
+
+def _relayed(stream: str, text: str) -> str:
+    """The block the runner relays for flow main's stream holding text."""
+    return (
+        f"--- flow main {stream} (canaries redacted) ---\n{text}--- end of flow main {stream} ---\n"
+    )
+
+
+def _lf(text: str) -> str:
+    """text with CRLF read as LF: on Windows the flow's print and the
+    runner's own stream each end a line with CRLF."""
+    return text.replace("\r\n", "\n")
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, judge: list[str], config: Path, *args: str) -> Result:
@@ -101,6 +128,105 @@ def test_relayed_output_is_redacted(
     basic = base64.b64encode(f"u:{value}".encode()).decode()
     assert basic not in result.output
     assert "<canary:env.APP_KEY>" in result.stderr.split("b64 ", 1)[1]
+
+
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_a_slice_of_the_key_is_never_relayed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str], shape: str
+) -> None:
+    """A flow that prints a slice of its key, on either stream: no run of
+    ID_OVERLAP characters of the key's random part reaches the runner's
+    output, the line holding it is withheld, and the prefix every key of
+    the shape carries still reads as it was printed."""
+    prefix = SHAPES[shape].prefix
+    plain = "an ordinary line from the flow"
+    env = {"PREFIX_LENGTH": str(len(prefix)), "PLAIN": plain}
+    config, side = _setup(tmp_path, "fragment", shape=shape, env=env)
+    result = _run(monkeypatch, judge, config)
+    held = side.read_text(encoding="utf-8")
+    assert held.startswith(prefix)
+    body = held[len(prefix) :]
+    assert not [w for w in _windows(body) if w in result.output], result.output
+    assert _relayed("stdout", f"{plain}\n{WITHHELD}\nprefix {prefix}\n") in _lf(result.stderr)
+    assert _relayed("stderr", f"{WITHHELD}\n") in _lf(result.stderr)
+    assert "<canary:" not in result.output  # a slice is no needle: nothing was redacted
+
+
+@pytest.mark.parametrize("shape", ["aws-access-key-id", "anthropic"])
+def test_a_refused_egress_host_holding_a_slice_of_the_key_is_withheld(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str], shape: str
+) -> None:
+    """The mock counts a refused host in lower case, so a slice of the key
+    in a host name reaches the runner case-folded: it is withheld in either
+    case, and no run of the key's random part reaches the output in any
+    case. aws-access-key-id draws only upper case letters and digits, so its
+    lower-case slice matches no run as drawn."""
+    prefix = SHAPES[shape].prefix
+    config, side = _setup(tmp_path, "egress", shape=shape, env={"PREFIX_LENGTH": str(len(prefix))})
+    result = _run(monkeypatch, judge, config)
+    body = side.read_text(encoding="utf-8")[len(prefix) :]
+    folded = _lf(result.output).lower()
+    assert not [w for w in _windows(body.lower()) if w in folded], result.output
+    assert f"mock: refused egress to {WITHHELD} (1x)\n" in _lf(result.stderr)
+
+
+def test_a_refused_egress_host_holding_the_key_s_prefix_is_withheld_as_the_judge_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    """docs/canary.md, "Printing capture-derived text": a request host that
+    holds a run of 6 characters of a ledger value, prefix included, is
+    withheld. The runner's refused-egress line and the judge's blocked list
+    for the same run agree, while the flow's own line naming the same
+    prefix is relayed as printed: the relay judges the random part only."""
+    prefix = SHAPES["anthropic"].prefix
+    host = f"{prefix}x.example"
+    plain = f"a key of kind {prefix}"
+    env = {"EGRESS_HOST": host, "PLAIN": plain}
+    config, side = _setup(tmp_path, "egress", shape="anthropic", env=env)
+    result = _run(monkeypatch, judge, config)
+    assert side.read_text(encoding="utf-8").startswith(prefix)
+    assert f"mock: refused egress to {WITHHELD} (1x)\n" in _lf(result.stderr)
+    blocked = [line for line in result.stdout.splitlines() if line.startswith("blocked ")]
+    assert blocked and all(f": {WITHHELD}:" in line for line in blocked), result.stdout
+    assert host.lower() not in result.output.lower()
+    assert _lf(result.stderr).startswith("flow main: ok\n" + _relayed("stdout", plain + "\n"))
+
+
+def test_output_that_holds_no_value_is_relayed_as_printed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    """Nothing secret printed, so the relay is the flow's own output, byte
+    for byte, even where it names the prefix every key of the shape holds."""
+    plain = f"status 200 for env.APP_KEY, a key of kind {SHAPES['anthropic'].prefix}"
+    config, _ = _setup(tmp_path, shape="anthropic", env={"PLAIN": plain})
+    result = _run(monkeypatch, judge, config)
+    assert result.exit_code == 0, result.output
+    assert _lf(result.stderr).startswith("flow main: ok\n" + _relayed("stdout", plain + "\n"))
+    assert WITHHELD not in result.output
+
+
+def test_a_jwt_that_only_shares_the_id_token_s_structure_is_relayed_as_printed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: list[str]
+) -> None:
+    """The flow holds an ID token the mock minted and prints another JWT
+    with the same header and claims but its own subject and signature,
+    which it also requests as a path. The relay judges the minted token's
+    random part, so the line reads as printed; the mock's unmocked-request
+    line is judged as the judge prints a path (docs/canary.md, "Printing
+    capture-derived text"), by the whole token, header included, so it is
+    withheld. A slice of the minted token's signature is withheld."""
+    config, side = _setup(tmp_path, "jwt", extra="\n[mock]\noauth = true\n")
+    result = _run(monkeypatch, judge, config, "--seed", "1")
+    token = side.with_name(side.name + ".jwt").read_text(encoding="utf-8")
+    header, payload, signature = token.split(".")
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    claims["sub"] = "0" * len(claims["sub"])
+    encoded = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    other = f"{header}.{encoded}.{'A' * len(signature)}"
+    assert _relayed("stdout", f"session {other}\n{WITHHELD}\n") in _lf(result.stderr)
+    assert f"mock: no mock for {WITHHELD} (1x), answered 404\n" in _lf(result.stderr)
+    assert f"/session/{header}" not in result.output
+    assert not [w for w in _windows(signature) if w in result.output], result.output
 
 
 def test_a_placement_without_a_provider_is_named_before_any_flow(

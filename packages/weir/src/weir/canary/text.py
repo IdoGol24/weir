@@ -4,8 +4,9 @@ A span name, metric name, attribute key, path segment, capture file name or
 direct connection target comes from the program under test and may itself
 hold a canary. Before any
 such string is printed it is flattened to one line, cut to 200 characters,
-and replaced entirely by `[withheld]` if it holds any needle or any run of 6
-consecutive characters of any ledger value (docs/canary.md, "Printing
+and replaced entirely by `[withheld]` if it, or any text of its decoded
+view, holds any needle or any run of 6 consecutive characters of any ledger
+value, or if it is escaped past the view's bound (docs/canary.md, "Printing
 capture-derived text").
 """
 
@@ -15,6 +16,7 @@ import json
 from collections.abc import Iterable, Iterator
 
 from weir.canary._types import RUN, Hit, Report
+from weir.json_escapes import decoded_view
 
 WITHHELD = "[withheld]"
 MAX_CHARS = 200
@@ -28,9 +30,14 @@ def _escape(ch: str) -> str:
 
 
 class Display:
-    """Renders capture-derived text under the printing rule."""
+    """Renders capture-derived text under the printing rule. `decoded` is
+    the judge's: any text it prints is also read through its decoded view,
+    JSON or not."""
 
-    def __init__(self, needles: Iterable[bytes], values: Iterable[str]) -> None:
+    def __init__(
+        self, needles: Iterable[bytes], values: Iterable[str], *, decoded: bool = False
+    ) -> None:
+        self._decoded = decoded
         self._needles = tuple(needles)
         self._runs = frozenset(
             value[i : i + RUN] for value in values for i in range(len(value) - RUN + 1)
@@ -38,6 +45,19 @@ class Display:
 
     def holds_value(self, text: str) -> bool:
         data = text.encode("utf-8", errors="surrogatepass")
+        if self._holds(data, text):
+            return True
+        if not self._decoded:
+            return False
+        view = decoded_view(data)
+        if not view.complete:
+            return True
+        return any(
+            self._holds(shown, shown.decode("utf-8", errors="surrogatepass"))
+            for shown in view.texts
+        )
+
+    def _holds(self, data: bytes, text: str) -> bool:
         if any(needle in data for needle in self._needles):
             return True
         return any(text[i : i + RUN] in self._runs for i in range(len(text) - RUN + 1))

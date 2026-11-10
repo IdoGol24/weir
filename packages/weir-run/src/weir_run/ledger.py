@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from weir_run.needles import needles
-from weir_run.shapes import ByteSource, generate, overlaps
+from weir_run.shapes import ID_OVERLAP, ByteSource, generate, holds_run, overlaps, windows
 
 SCHEMA = "canary-ledger/1"
 KINDS = ("env", "code", "mock-oauth")
@@ -46,6 +46,11 @@ class Placement:
     provider_host: str | None = None
 
 
+def whole(value: str) -> tuple[str]:
+    """A value drawn at random from end to end."""
+    return (value,)
+
+
 class Ledger:
     def __init__(self, path: Path, source: ByteSource, reserved_ids: Iterable[str] = ()) -> None:
         self.path = path
@@ -63,6 +68,10 @@ class Ledger:
         self._network = False
         self._needles: list[tuple[bytes, str]] = []
         self._pattern: re.Pattern[bytes] | None = None
+        # Every 6-character run of every value's random parts, as drawn,
+        # and of every whole value in lower case.
+        self._runs: set[str] = set()
+        self._folded: set[str] = set()
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND, 0o600)
         self._file = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
         self._write({"schema": SCHEMA})
@@ -94,9 +103,13 @@ class Ledger:
         required: bool = False,
         providers: Sequence[str] = (),
         provider_host: str | None = None,
+        parts: Callable[[str], Sequence[str]] = whole,
     ) -> Placement:
         """Draw a fresh value with `make` and add it as a placement, with
-        its own provider (docs/canary.md, "A placement's own provider")."""
+        its own provider (docs/canary.md, "A placement's own provider").
+        parts gives the pieces of a value `make` draws that are random,
+        which the printing rule judges: not a prefix or structure every
+        value `make` draws shares."""
         with self._lock:
             if kind not in KINDS:
                 raise LedgerError(f"unknown placement kind {kind}")
@@ -105,6 +118,9 @@ class Ledger:
             )
             if len(value) < MIN_VALUE_LENGTH:
                 raise LedgerError(f"placement {placement_id}: value shorter than 16 characters")
+            random = tuple(parts(value))
+            if not random or not all(len(r) >= ID_OVERLAP and r in value for r in random):
+                raise LedgerError(f"placement {placement_id}: value does not hold its random parts")
             self._claim_id("placement", placement_id)
             placement = Placement(
                 placement_id, kind, value, required, tuple(providers), provider_host
@@ -125,16 +141,26 @@ class Ledger:
             self._write(record)
             self._needles += [(n, placement_id) for _, n in needles(value)]
             self._pattern = None
+            self._runs.update(*(windows(r) for r in random))
+            self._folded.update(w.lower() for w in windows(value))
             return placement
 
-    def mint(self, token: str, make: Callable[[], str], providers: Sequence[str]) -> Placement:
+    def mint(
+        self,
+        token: str,
+        make: Callable[[], str],
+        providers: Sequence[str],
+        parts: Callable[[str], Sequence[str]] = whole,
+    ) -> Placement:
         """A credential the mock's OAuth endpoints issue: ledgered as a
         `mock-oauth` placement with `minted` evidence before it is handed out.
         Its providers are the OAuth endpoints and the program's own APIs."""
         with self._lock:
             n = self._counters.get(token, 0) + 1
             self._counters[token] = n
-        placement = self.plant(f"runtime.oauth.{token}#{n}", "mock-oauth", make, False, providers)
+        placement = self.plant(
+            f"runtime.oauth.{token}#{n}", "mock-oauth", make, False, providers, parts=parts
+        )
         self.exercised(placement.id, "minted")
         return placement
 
@@ -235,10 +261,19 @@ class Ledger:
             pattern = self._pattern
         return pattern.sub(lambda m: f"<canary:{by_needle[m.group(0)]}>".encode(), data)
 
-    def withheld(self, text: str) -> bool:
-        """Would the judge's printing rule withhold text? (any needle, or any
-        6-character run of any ledger value)"""
+    def withheld(self, text: str, *, host: bool = False) -> bool:
+        """Does text hold a trace of a value: any needle, or any 6-character
+        run of any ledger value's random parts? Judged on the parts that are
+        this value's own, so the prefix or structure every value of its kind
+        carries reads as it is. With host, text from the mock's own records
+        (a host, a direct target, an unmocked request) is judged as the
+        judge prints it (docs/canary.md, "Printing capture-derived text"):
+        any 6-character run of any whole value, prefix included, and in
+        either letter case, since a host reaches the runner case-folded."""
         data = text.encode("utf-8", "surrogateescape")
         if self.holders(data):
             return True
-        return any(overlaps(p.value, text) for p in self.placements)
+        with self._lock:
+            if host:
+                return holds_run(text.lower(), self._folded)
+            return holds_run(text, self._runs)

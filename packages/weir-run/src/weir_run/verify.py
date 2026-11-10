@@ -23,7 +23,6 @@ import msgspec
 
 from weir_run import evidence, probe
 from weir_run.check import CheckRun, FlowOutcome
-from weir_run.shapes import SHAPES, overlaps
 from weir_run.spec import EndpointSpec, FlowSpec, MockSpec, PlacementSpec, RunSpec, validate
 
 OUTBOUND = "outbound"
@@ -139,10 +138,9 @@ def _fragments(run: CheckRun) -> int:
     """The captured files and requests that hold a 6-character run of the
     key's random part once every needle is replaced: a slice of the key,
     which no needle matches."""
-    value = run.planted[PLACEMENT.variable][len(SHAPES[PLACEMENT.shape].prefix) :]
 
     def holds(data: bytes) -> bool:
-        return overlaps(value, run.ledger.redact(data).decode("utf-8", "replace"))
+        return run.ledger.withheld(run.ledger.redact(data).decode("utf-8", "replace"))
 
     files = [p for p in run.capture.root.rglob("*") if p.is_file() and p != run.capture.requests]
     count = sum(holds(p.read_bytes()) for p in files)
@@ -256,7 +254,7 @@ def verify(
             received = _received(run, run.run_flow(flow))
             run.stop()
             fragments = _fragments(run)
-            run.relay(err, withhold=True)
+            run.relay(err)
             verdict = run.judge(json_report=True)
             out.write(run.redacted(verdict.stdout))
             if verdict.stderr:

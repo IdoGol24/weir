@@ -72,7 +72,7 @@ def _utf8(text: str) -> bytes:
     return text.encode("utf-8", errors="surrogatepass")
 
 
-def _decode_bytes_value(text: str) -> bytes | None:
+def decode_bytes_value(text: str) -> bytes | None:
     # The protobuf JSON mapping writes bytes as base64, padded or not, in
     # the standard or the URL-safe alphabet.
     altchars = b"-_" if ("-" in text or "_" in text) else None
@@ -108,7 +108,7 @@ def _member(key: str, child: Json, path: tuple[Segment, ...], emit: Emit) -> Pen
     if key in _SCALARS:
         return [(child, path)]
     if key == "bytesValue" and isinstance(child, str):
-        decoded = _decode_bytes_value(child)
+        decoded = decode_bytes_value(child)
         emit(_utf8(child) if decoded is None else decoded, path)
         return []
     if key == "arrayValue" and isinstance(child, dict):

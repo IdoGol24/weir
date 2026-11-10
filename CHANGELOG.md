@@ -3,10 +3,36 @@
 ## [Unreleased]
 
 weir-run's unmediated tool call below is decided by weir-run's own mock
-and needs nothing of weir-scan's `weir canary judge`, which is unchanged,
-so weir-run still requires `weir-scan>=0.6.0`.
+and needs nothing of weir-scan's `weir canary judge`, so weir-run still
+requires `weir-scan>=0.6.0`.
 
 ### Added
+- **The exposure scan reads OpenTelemetry log records**: `weir scan` and
+  `weir gauge` accept an OTLP logs export (`resourceLogs`, camelCase or
+  snake_case) as well as a traces export, alone or mixed in one file or one
+  document. In each log record the scan judges the attributes, the body
+  (string, structured or nested) and the resource and scope attributes,
+  with the same detectors, grades, printing rule and review queue as a span.
+  A finding names its log record by 0-based position in the input
+  (`log record 0` in text and HTML; `log_record` on the hit and the finding,
+  with an empty `span_ref` and `span_name`). A batch holding data the scan
+  cannot read, such as metrics, is reported as `data in 1 batch not
+  scanned` in the terminal and the HTML report, never as clean. A logs-only
+  input no longer exits 2.
+- **Log records are read in every OTLP JSON spelling**: a log record's
+  values may use snake_case wrappers (`string_value`, `kvlist_value`, ...),
+  as protojson writes them with proto field names, and a `bytesValue` in a
+  log record is base64-decoded and scanned when it is UTF-8 text. A log
+  body written as a bare string is read as the body.
+- **A log-record value the exposure scan cannot read is reported as not
+  scanned** (`1 value not scanned`): bytes that are not UTF-8, a resource,
+  list or record in a shape OTLP JSON does not use, or nesting past the
+  depth cap.
+- **`weir gauge` on a logs-only export** prints `flow scan: the input held
+  no spans, so no flow trace was built` in place of the flow coverage
+  lines, then the line for any input it could not decode (a JSONL line
+  that is not JSON, bytes that are not UTF-8), then the exposure scan
+  lines.
 - **More credential shapes in the exposure scan.**
   - A bearer token is found in a request header map recorded as one
     OpenTelemetry kvlist attribute (for example
@@ -66,6 +92,21 @@ so weir-run still requires `weir-scan>=0.6.0`.
   running mediates no later run. A tool with no `tool` endpoint is
   never reported, and `tool` must be exactly the name the program offers
   the model. See docs/canary.md, "Tool calls".
+- **The canary judge reads JSON escapes.** A planted value is found when
+  the JSON around it writes any of its characters as a `\uXXXX` escape,
+  not only the characters a standard serializer escapes: in a telemetry
+  string, a request part, and a line only the raw sweep reads (console
+  output and other swept files, and a capture line the walk or the
+  request parser cannot read) that is JSON or holds a JSON object or
+  array, such as a log line printing a tool's arguments, wherever that
+  line is written. Text that holds no JSON, and the value of a credential
+  field, are matched as before. The hit is reported at the same record
+  and location as the plain value would be, under form `json` (escaped once) or `json2` (escaped more than
+  once). Text is unescaped up to 16 times; text escaped deeper makes the
+  run incomplete (`unparsed_record`), never clean. A name the judge
+  prints whose unescaped text holds a value is shown as `[withheld]`.
+  Every other judge result is unchanged (docs/canary.md, "The decoded
+  view").
 
 ### Changed
 - **weir-run: exit 1 is a finding, a leak or an unmediated tool call.** No
@@ -105,6 +146,21 @@ so weir-run still requires `weir-scan>=0.6.0`.
 - Project links point to github.com/ralis-ai/weir.
 
 ### Fixed
+- **weir-run never relays a slice of a planted key.** When `weir-run run`
+  or the pytest plugin prints a flow's own stdout and stderr, every line
+  that holds 6 or more characters in a row of a planted value is now
+  replaced by `[withheld]`, as `weir-run verify` already did; before, only
+  a whole value (in any of its encoded forms) was replaced, so a flow that
+  printed part of its key showed that part. In a flow's relayed output,
+  the prefix every key of a shape carries, such as `sk-ant-api03-`, is not
+  itself withheld: only the random part of the value is judged. For an
+  ID token the mock mints, that is its subject and signature, so another
+  JWT with the same header and claims reads as printed. A refused-egress
+  host, a blocked direct target and an unmocked request keep the judge's
+  printing rule, the whole value with its prefix, and are now judged in
+  either letter case, since the mock records a host in lower case: a host
+  name that holds a slice of a key now reads `[withheld]`. Output that
+  holds no part of a value is relayed exactly as before.
 - **A long run of backslashes after a credential-field key no longer slows
   the scan.** The `credential_field` and `json_credential_field` patterns
   now check each backslash run once, not once per value character. Such
