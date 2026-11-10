@@ -27,9 +27,11 @@ weir-run run --config canary.toml
              in a network namespace whose only network is loopback (Linux)
   4. capture OTLP/JSON lines + other telemetry bodies + each flow's stdout and stderr
              + every request the mock received, refused ones included
-  5. judge   weir canary judge (weir-scan: opens no socket, starts no process)
+  5. judge   weir canary judge (weir-scan: opens no socket, starts no process),
+             plus the mock's own unmediated tool calls
   6. delete  the ledger and the capture
-exit 0 clean and complete | 1 a canary leaked | 2 usage, input or runner error | 3 incomplete
+exit 0 clean and complete | 1 a finding: a canary leaked, or a tool ran without a model request
+     | 2 usage, input or runner error | 3 incomplete
 ```
 
 - **The judge is weir-scan's**, called only through its command line. The
@@ -110,6 +112,7 @@ status = 200
 reply = '{"results": []}'
 content_type = "application/json"
 capture = false                   # true: keep request bodies as capture files
+tool = "web_search"               # optional: the tool that calls this API (see Tool calls)
 
 [[placement]]
 id = "env.SEARCH_API_KEY"         # the variable is the id after "env."
@@ -255,6 +258,34 @@ recorded as `unexpected.<endpoint>.<field>#<n>`, never in the ledger, and
 makes the run incomplete: a flow that sends a credential no canary
 accounts for has left the check's premise.
 
+**Tool calls.** The mock keeps a tool ledger: every tool call its model
+API issues, by call id, and every request served at an endpoint whose
+`tool` names the tool that calls it, which is that tool executing. Each
+execution must answer a call the model API issued for that tool in the
+same flow whose result has not gone back to the model yet, or repeat one
+such execution ([Tool calls](../../docs/canary.md#tool-calls)). A tool
+that executes with no such call, as when a program runs a tool call a
+caller put into the conversation, or runs a tool after its call's result
+went back, is an unmediated tool call; one a tool result reports under
+the call id the model gave another tool that never ran, an alias or a
+substitution, is told apart by its reason. Either fails the run with
+exit 1, printed on execution, never as a leak:
+
+```text
+unmediated tool call: send_file (executed without a model request)
+unmediated tool call: send_file (executed in answer to a model request for read_file)
+```
+
+What a model request carries never makes or hides a finding: few-shot
+tool-use examples, a conversation replayed from a transcript, a
+framework's own hand-off, a summary or guardrail request. Neither is what
+a program legitimately repeats: a retry, a tool that makes several
+requests, batched or parallel calls. Set `tool` on the endpoint of each
+tool the model is meant to mediate, exactly as the program names the tool
+to the model; a tool without one is never reported. This is the runner's own
+check, so it needs nothing of the judge beyond the release weir-run
+requires.
+
 **The capture.** The receiver writes each export request decompressed, as
 one OTLP/JSON line (trace and span ids in lowercase hex), under
 `capture/otlp/`; its headers go to the request capture only. A body it
@@ -337,12 +368,36 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
   its blocked destinations.
 - **stdout:** the judge's text report: one `LEAK` line per hit, the
   not-exercised placements, the blocked destinations, the incomplete
-  reasons, the coverage line, the network line and the result. It names
-  placements, locations and sinks, never a value or a fragment of one.
-- `--report FILE` also writes the judge's `canary-report/1` JSON.
-- The exit code is the judge's, or 2 for the runner's own usage and
+  reasons, the coverage line, the network line; with the runner's own
+  `unmediated tool call` lines before the coverage line, and the run's
+  result as the last line. It names placements, locations, sinks and
+  tools, never a value or a fragment of one.
+- `--report FILE` also writes the run's JSON report, `canary-report/2`
+  (below).
+- The exit code is the run's verdict: 0 clean, 1 a finding (a leak or an
+  unmediated tool call), 3 incomplete, or 2 for the runner's own usage and
   configuration errors and any other failure of the run (an unwritable
   `--report`, a judge that times out). A runner fault never exits 1.
+
+The JSON report has a JSON Schema
+([`schema_artifacts/canary-report.v2.schema.json`](schema_artifacts/canary-report.v2.schema.json)),
+generated from the report's structs and drift-tested, with
+`additionalProperties: false` on every object weir-run defines. Its
+`result` and `exit_code` are always the run's:
+
+| field | type | meaning |
+| --- | --- | --- |
+| `schema` | string | `"canary-report/2"` |
+| `result` | string | `clean`, `leak`, `unmediated-tool-call` or `incomplete`: `leak` when the judge's is, otherwise `unmediated-tool-call` when `unmediated` is not empty, otherwise the judge's |
+| `exit_code` | integer | `0`, `1` or `3`: weir-run's exit code |
+| `findings` | array | the finding types the run has, sorted: `leak`, `unmediated-tool-call` or both; empty when the result is `clean` or `incomplete` |
+| `unmediated` | array | `{tool, reason, issued_tool, count}`, one per group, sorted by `tool`, `reason` and `issued_tool`: `reason` is `not_issued` or `tool_mismatch`, `issued_tool` the tool the model asked for (`tool_mismatch`), as the text line prints it, or null, `count` how many ([Tool calls](../../docs/canary.md#tool-calls)) |
+| `judge` | object | the judge's own JSON report ([`canary-report/1`](../../docs/canary.md#the-json-report-canary-report1)), unchanged: its `result` and `exit_code` are the judge's, which sees no tool call |
+
+weir-run 0.3.0 wrote the judge's `canary-report/1` itself. A job that read
+its `result` or `exit_code` reads the same fields, now the run's verdict;
+a job that read the judge's other fields, such as `hits`, `placements` or
+`coverage`, reads them from `judge`.
 
 A clean result is evidence about the flows that ran and the placements
 planted, not a statement that the program is safe. Read the coverage line:
@@ -360,7 +415,7 @@ def test_quickstart_exports_no_credentials(canary_check):
     canary_check.env("SEARCH_API_KEY", provider="search")
     variable = canary_check.code("code.client.api_key", provider="oauth")
     canary_check.run(["{python}", "examples/quickstart.py"], env={"SEARCH_BASE_URL": search})
-    # teardown judges; the test fails on a leak or an incomplete run
+    # teardown judges; the test fails on a finding or an incomplete run
 ```
 
 Declare the mock and the endpoints, then the placements that name them as
@@ -369,7 +424,9 @@ plants the canaries and starts the mock. At teardown the plugin judges,
 prints the redacted flow output and the report, deletes the ledger and the
 capture, and fails the test unless the result is clean. To assert on the
 result yourself, call `result = canary_check.judge()` (`result.code`,
-`result.report`). The judge is the `weir` beside the interpreter or on
+`result.report`). `endpoint(..., tool="web_search")` names the tool that
+calls an endpoint, as `tool` does in a config. The judge is the `weir`
+beside the interpreter or on
 `PATH`; override the `canary_judge_command` fixture to use another. Flows
 run isolated as under `weir-run run`; `--canary-require-isolation` is the
 pytest option (see [Network isolation](#network-isolation)).
@@ -381,6 +438,17 @@ pytest option (see [Network isolation](#network-isolation)).
 - Model APIs: OpenAI-compatible or Anthropic Messages API. Of the
   Messages API, `POST /v1/messages` only (no token counting, batches or
   files).
+- An unmediated tool call is seen only for a tool whose endpoint sets
+  `tool`. A request to that endpoint while a call of that tool has no
+  result in a model request yet repeats an execution, so an unasked run
+  in that window is not told apart from a retry; a tool that keeps
+  sending requests to its endpoint after its result went back, such as a
+  background upload, or first reaches it only then, such as a deferred or
+  async tool, is a finding. An execution
+  answers any open call for its tool in the flow, whichever of the flow's
+  conversations it came from. A request to a tool's endpoint is that tool
+  executing whoever sent it, so point at that endpoint only the code that
+  runs the tool.
 - Network isolation is Linux only. Elsewhere, a client that ignores proxy
   settings and has a hard-coded host is not stopped by the runner: on a
   machine with network access it connects to that host directly. Run such

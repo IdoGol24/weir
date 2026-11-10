@@ -4,7 +4,7 @@
         search = canary_check.endpoint("search", reply='{"results": []}')
         canary_check.env("SEARCH_API_KEY", provider="search")
         canary_check.run(["{python}", "examples/quickstart.py"], env={"SEARCH_BASE_URL": search})
-        # teardown judges; the test fails on a leak or an incomplete run
+        # teardown judges; the test fails on a finding or an incomplete run
 
 Declare mocked endpoints, then placements, first; the first `run` (or the
 first read of `mock_url`) plants the canaries, writes the ledger and starts
@@ -129,11 +129,13 @@ class CanaryCheck:
         status: int = 200,
         content_type: str = "application/json",
         capture: bool = False,
+        tool: str | None = None,
     ) -> str:
         """Mock one of the program's own APIs. Returns its URL as
-        `{mock}/ep/<id>`, ready for a flow's env."""
+        `{mock}/ep/<id>`, ready for a flow's env. tool names the tool that
+        calls it (docs/canary.md, "Tool calls")."""
         fields = tuple(CredentialField.parse(f) for f in credential_fields)
-        spec = EndpointSpec(id, fields, status, reply, content_type, capture)
+        spec = EndpointSpec(id, fields, status, reply, content_type, capture, tool)
         self.mock(endpoints=(*self._mock.endpoints, spec))
         return f"{{mock}}/ep/{id}"
 

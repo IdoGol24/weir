@@ -7,85 +7,64 @@ no value (docs/verify.md)."""
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Literal
 
 import msgspec
 
-SCHEMA = "weir-verify-evidence/1"
+from weir_run import evidence_v1
+from weir_run.evidence_v1 import JUDGE_REASONS as JUDGE_REASONS
+from weir_run.evidence_v1 import SINKS as SINKS
+from weir_run.evidence_v1 import (
+    Digest,
+    ManifestDigest,
+    Name,
+    Network,
+    Placement,
+    Sink,
+    Strict,
+    Tool,
+)
+from weir_run.evidence_v1 import Incomplete as Incomplete
+
+SCHEMA = "weir-verify-evidence/2"
 PREDICATE_TYPE = "https://in-toto.io/attestation/test-result/v0.1"
-# In the order the schema lists them, which is the order of a record's sinks.
-SinkName = Literal["console", "model", "outbound", "telemetry"]
-# The judge's (docs/canary.md, "Coverage states").
-JudgeReason = Literal[
-    "required_not_exercised",
-    "flow_not_ok",
-    "unexpected_credential",
-    "not_scanned",
-    "unparsed_record",
-    "empty_capture",
-    "network_not_isolated",
-    "direct_connection",
-]
-JUDGE_REASONS: frozenset[str] = frozenset(get_args(JudgeReason))
-Reason = Literal[
-    JudgeReason,
-    # verify's own; judge_other stands for any judge reason not listed above
-    "judge_other",
-    "target_missing",
-    "sink_not_reached",
-    "judge_not_clean",
-    "value_fragment",
-]
-SINKS: tuple[SinkName, ...] = get_args(SinkName)
-Verdict = Literal["clean", "leak", "incomplete"]
-Count = Annotated[int, msgspec.Meta(ge=0)]
-Digest = Annotated[str, msgspec.Meta(pattern="^sha256:[0-9a-f]{64}$")]
-Name = Annotated[str, msgspec.Meta(pattern="^[a-z0-9][a-z0-9.-]{0,39}$")]
+# What fails a run (docs/canary.md, "Coverage states"), and why a tool call
+# was unmediated (docs/canary.md, "Tool calls").
+FindingType = Literal["leak", "unmediated-tool-call"]
+FindingReason = Literal["not_issued", "tool_mismatch"]
+Verdict = Literal["clean", "leak", "unmediated-tool-call", "incomplete"]
 
 
-class _Struct(msgspec.Struct, forbid_unknown_fields=True, kw_only=True):
-    pass
+class Finding(Strict):
+    """One finding type, with its reason for an unmediated tool call (null
+    for a leak), and how many: hits for a leak, tool calls otherwise."""
 
-
-class Tool(_Struct):
-    name: Name
-    version: Annotated[str, msgspec.Meta(pattern="^[0-9][0-9A-Za-z.+-]{0,63}$")]
-
-
-class Placement(_Struct):
-    id: Annotated[str, msgspec.Meta(pattern="^env\\.[A-Z_][A-Z0-9_]{0,63}$")]
-    state: Literal["leaked", "exercised", "not_exercised"]
-    hits: Count
-
-
-class Sink(_Struct):
-    name: SinkName
-    verdict: Literal["clean", "leak", "not_reached"]
-    received: Count
-    hits: Count
-
-
-class Incomplete(_Struct):
-    reason: Reason
+    type: FindingType
+    reason: FindingReason | None
     count: Annotated[int, msgspec.Meta(ge=1)]
 
 
-class Network(_Struct):
-    isolated: bool
-    direct_attempts: Count
-
-
-class Evidence(_Struct):
-    schema: Literal["weir-verify-evidence/1"]
+class Evidence(Strict):
+    schema: Literal["weir-verify-evidence/2"]
     target: Name
     tools: list[Tool]
-    manifest_sha256: Annotated[str, msgspec.Meta(pattern="^[0-9a-f]{64}$")]
+    manifest_sha256: ManifestDigest
     image_digest: Digest | None
     verdict: Verdict
+    findings: list[Finding]
     placements: list[Placement]
     sinks: list[Sink]
     incomplete: list[Incomplete]
     network: Network
+
+
+# A record `weir-run predicate` loads: the one verify writes, or one
+# weir-run 0.3.0 wrote.
+type Record = Evidence | evidence_v1.Evidence
+
+
+class _Schema(msgspec.Struct):
+    schema: str
 
 
 class EvidenceError(Exception):
@@ -96,12 +75,34 @@ def sink_verdict(received: int, hits: int) -> str:
     return "leak" if hits else "clean" if received else "not_reached"
 
 
-def derive(e: Evidence) -> Verdict:
-    """The verdict a record's own fields support. Clean needs every sink
-    reached and clean, the placement exercised, isolation, no direct
-    connection attempt and no reason."""
+def _finding_key(f: Finding) -> tuple[str, str]:
+    return (f.type, f.reason or "")
+
+
+def findings_supported(e: Evidence) -> bool:
+    """Findings sorted and unique by type and reason; a leak finding, with
+    no reason, exactly when the sinks hold hits, counting them; an
+    unmediated-tool-call finding always with its reason."""
+    keys = [_finding_key(f) for f in e.findings]
+    if keys != sorted(set(keys)):
+        return False
+    hits = sum(s.hits for s in e.sinks)
+    leaks = [f for f in e.findings if f.type == "leak"]
+    if [(f.reason, f.count) for f in leaks] != ([(None, hits)] if hits else []):
+        return False
+    return all(f.reason is not None for f in e.findings if f.type == "unmediated-tool-call")
+
+
+def derive(e: Record) -> Verdict:
+    """The verdict a record's own fields support. Any finding fails it, a
+    leak first; clean needs every sink reached and clean, the placement
+    exercised, isolation, no direct connection attempt and no reason. A
+    v1 record has no findings, so it is clean, leak or incomplete."""
     if any(s.verdict == "leak" for s in e.sinks) or any(p.state == "leaked" for p in e.placements):
         return "leak"
+    findings = e.findings if isinstance(e, Evidence) else []
+    if any(f.type == "unmediated-tool-call" for f in findings):
+        return "unmediated-tool-call"
     complete = (
         tuple(s.name for s in e.sinks) == SINKS
         and all(s.verdict == "clean" for s in e.sinks)
@@ -121,15 +122,20 @@ def encode(e: Evidence) -> bytes:
     return data
 
 
-def load(data: bytes) -> Evidence:
-    """A record, strictly: the schema, sink verdicts that match their counts,
+def load(data: bytes) -> Record:
+    """A record, strictly, by its own schema version: the schema, sink
+    verdicts that match their counts, findings that match the sinks (v2),
     and a verdict its fields support. Anything else raises EvidenceError."""
     try:
-        e = msgspec.json.decode(data, type=Evidence)
+        version = msgspec.json.decode(data, type=_Schema).schema
+        kind = evidence_v1.Evidence if version == evidence_v1.SCHEMA else Evidence
+        e = msgspec.json.decode(data, type=kind)
     except msgspec.DecodeError:  # ValidationError included
         raise EvidenceError from None
-    if any(s.verdict != sink_verdict(s.received, s.hits) for s in e.sinks) or (
-        e.verdict != derive(e)
+    if (
+        any(s.verdict != sink_verdict(s.received, s.hits) for s in e.sinks)
+        or (isinstance(e, Evidence) and not findings_supported(e))
+        or e.verdict != derive(e)
     ):
         raise EvidenceError
     return e
@@ -137,10 +143,13 @@ def load(data: bytes) -> Evidence:
 
 def predicate(data: bytes, url: str | None = None) -> dict[str, Any]:
     """The test-result predicate for a record's bytes: PASSED only for
-    clean, FAILED for leak and incomplete, never WARNED."""
+    clean, FAILED for any finding and for incomplete, never WARNED. A v1
+    record makes the predicate weir-run 0.3.0 made for it."""
     e = load(data)
     passed = [f"sink:{s.name}" for s in e.sinks if s.verdict == "clean"]
     failed = [f"sink:{s.name}" for s in e.sinks if s.verdict != "clean"]
+    if isinstance(e, Evidence):
+        failed += [f"finding:{t}" for t in dict.fromkeys(f.type for f in e.findings)]
     failed += [f"incomplete:{i.reason}" for i in e.incomplete]
     out: dict[str, Any] = {
         "result": "PASSED" if e.verdict == "clean" else "FAILED",

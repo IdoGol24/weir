@@ -27,7 +27,9 @@ The check has two parts with a hard line between them:
   the field), never a value or any fragment of one.
 - **The canary runner** (`weir-run`, a separate package). It generates and
   plants the canaries, writes the ledger, runs the flows against a local
-  mock, writes the capture, and calls the judge.
+  mock, writes the capture, and calls the judge. It also reports, on its
+  own, each tool the program ran without a model request asking for it
+  ([Tool calls](#tool-calls)), and gives the run's verdict.
 
 This document defines placement kinds, the encoded forms the judge
 matches, the ledger and report schemas, coverage states and exit codes.
@@ -45,7 +47,9 @@ Weir is two packages that work together, in CI or on your laptop:
   refused ones included. On Linux, where it can make an unprivileged
   network namespace, the flows run in one whose only network is loopback,
   so a client that ignores the proxy settings reaches nothing, and the
-  attempt is reported.
+  attempt is reported. Its mock also keeps a ledger of the tool calls its
+  model issued and the tools it saw run, so a tool that ran without a
+  model request asking for it fails the run ([Tool calls](#tool-calls)).
 - **weir-scan is the inspector.** `weir canary judge` searches that capture
   for every planted value and gives the verdict: leak, clean or incomplete.
   Each placement names its own provider: a key in a credential field of a
@@ -433,6 +437,14 @@ planted, not a statement that the program is safe.
 - This release plants environment variables, values passed in code, and
   OAuth tokens. Model APIs must be OpenAI-compatible or Anthropic Messages
   API.
+- An unmediated tool call is seen only for a tool whose mocked endpoint
+  sets `tool`: a tool with no such endpoint is never reported. A request
+  to that endpoint while a call of that tool still has no result in a
+  model request repeats an execution, so an unasked run of the tool in
+  that window is not told apart from a retry. A tool that keeps sending
+  requests to its endpoint after its result went back, such as a
+  background upload, or first reaches it only then, such as a deferred or
+  async tool, is a finding ([Tool calls](#tool-calls)).
 - The rig isolates the network only on Linux, where it can make an
   unprivileged network namespace. Elsewhere, or where unprivileged user
   namespaces are disabled or restricted, the run goes ahead, a client that
@@ -800,9 +812,21 @@ first, or mock the service.
 | `3` | `incomplete` | no canary found, but the run is incomplete |
 
 `0`, `1` and `2` follow `weir scan`'s convention (nothing to fail on,
-findings, unusable input). The runner exits with the judge's code, and
-uses `2` for its own usage and configuration errors and for any other
-failure of the run, so a runner fault never reads as a leak.
+findings, unusable input).
+
+The runner exits with the run's verdict: the judge's code, except that an
+unmediated tool call, the runner's own finding ([Tool
+calls](#tool-calls)), makes it `1` too. For the runner, `1` is a finding:
+a leak or an unmediated tool call. No code was added for it, so a CI job
+that fails on any nonzero exit fails on it as it does on a leak.
+
+| runner code | result | meaning |
+| --- | --- | --- |
+| `0` | `clean` | complete, and no finding |
+| `1` | `leak` | a finding: the judge found a canary in the capture |
+| `1` | `unmediated-tool-call` | a finding: no canary found, but a tool ran without a model request asking for it |
+| `2` | none | a usage, configuration or input error, the runner's or the judge's, or any other failure of the run: a runner fault never reads as a finding |
+| `3` | `incomplete` | no finding, but the run is incomplete |
 
 ## The text report
 
@@ -940,8 +964,134 @@ contract:
 6. writes one `network` record saying whether the flows ran isolated, and
    whether the run requires it, and one `direct` record per distinct
    connection attempt isolation blocked;
-7. exits with the judge's code, and deletes the ledger and the capture,
-   the request capture included, when the run ends.
+7. exits with the run's verdict ([Exit codes](#exit-codes)), and deletes
+   the ledger and the capture, the request capture included, when the run
+   ends.
+
+## Tool calls
+
+A tool should run only when the model asks for it. A program that runs a
+tool no model request asked for, because a caller put a tool call into
+the conversation it sent, or because a framework or relay dispatched one
+on its own, has executed code outside the model's control. Nothing has to
+leave for that to matter, so it is its own finding, an **unmediated tool
+call**, reported on execution and never called a leak.
+
+This finding is the runner's own. The judge plays no part in it and its
+inputs are unchanged: weir-run decides it from its mock's **tool ledger**,
+which it keeps in memory for the run and never writes to the ledger file.
+
+**Model-issued.** A tool call is model-issued when the mock returned it in
+a model API reply during the run: a Chat Completions `tool_calls` entry, a
+Responses `function_call` item or an Anthropic `tool_use` block, streamed
+or not. The tool ledger keeps its call id and the tool it was issued for.
+The mock's call ids are `call_mock_<n>_<i>` (Chat Completions and
+Responses) and `toolu_mock_<n>_<i>` (Messages). Nothing else is
+model-issued: a call id a program, a caller or a framework made up never
+is, whatever it looks like.
+
+**Executed.** A `[[mock.endpoint]]` with `tool = "<name>"` stands in for
+the API that tool calls. Every request the mock serves at that endpoint is
+that tool executing. A tool with no such endpoint is never seen
+executing, so it is never reported. `tool` must be exactly the name the
+program offers the model: calls are matched to executions by that name,
+so a framework that renames a tool (a prefix, a change of case) makes
+every run of it `not_issued`.
+
+**The judgement.** An execution is judged when it happens, against the
+calls the mock issued in the same flow (a flow starts with none). A
+request to a tool's endpoint:
+
+1. answers the oldest call the mock issued for that tool in the flow that
+   no execution has answered yet and whose result has not gone back yet:
+   **model-mediated**, no finding;
+2. otherwise, while a call the mock issued for that tool in the flow has
+   no result in a model request yet, repeats an execution whose result
+   has not gone back: a retry, or a tool that makes several requests, adds
+   nothing;
+3. otherwise repeats the tool's execution just before it when that one
+   was unmediated, and is judged with it;
+4. otherwise is an **unmediated tool call**: no model request asked for
+   it. That includes a run of the tool after every call issued for it in
+   the flow has had its result: a retry comes before its result goes back,
+   so a run after it is no retry.
+
+A call's result has gone back when a model request in the same flow
+carries a tool result under its id. Only ids the mock issued in the flow
+count, so few-shot tool-use examples, a conversation replayed from a
+recorded transcript or a cache, a call and result a framework writes into
+the conversation itself (such as a hand-off back to a supervising agent),
+a summary or guardrail request, and another agent's conversation in the
+same flow are never findings and never hide one. A genuine execution
+without a model request is never clean, whatever the program reports
+afterwards, a Responses output that continues a stored conversation
+(`previous_response_id`, a call id and no tool name) included. Batched or
+parallel calls are each answered by their own execution. A call the mock
+issued again on a retried request is model-issued too, so either may be
+the one answered. With `tool_calls = "none"` the mock issues no call, so
+every execution is unmediated. A tool that keeps sending requests to its
+endpoint after its result went back, such as a background upload, is an
+unmediated tool call, and so is one whose first request to its endpoint
+comes after its result went back, such as a deferred or async tool: a call
+answered without its tool running, as a denied approval or a local error
+answers it, mediates no later run.
+
+**The reason.** An unmediated tool call is `not_issued` unless a tool
+result reports it as a call of another tool:
+
+| reason | what holds |
+| --- | --- |
+| `not_issued` | the tool executed with no call issued for it to answer |
+| `tool_mismatch` | a tool result in the flow, under the id of a call the mock issued in the flow for another tool that never executed in it, names the tool that executed, even when that tool had a call of its own: an alias or a substitution |
+
+**A tool result** is the program's report, in a model API request, that a
+tool ran:
+
+- Chat Completions: a `tool` message (its `tool_call_id`);
+- Responses: an input item whose `type` ends in `_call_output`, such as
+  `function_call_output` (its `call_id`);
+- Anthropic Messages: a `tool_result` block (its `tool_use_id`).
+
+The tools a result names are its own `name`, where it has one, and the
+name of each call with the same id that the request repeats from the
+conversation: a Chat Completions assistant `tool_calls` entry, a Responses
+`function_call` or `custom_tool_call` item, an Anthropic `tool_use` block.
+A result is used only to say which of the flow's calls have gone back and
+to find a substitution; each call's result makes at most one.
+
+**The run's verdict.** Any finding fails the run; otherwise any gap makes
+it incomplete; only a run with neither is clean. The runner's result is
+`leak` when the judge's is, otherwise `unmediated-tool-call` when there is
+any unmediated tool call, otherwise the judge's (`incomplete` or `clean`),
+and it exits `1` for either finding. It prints the judge's text report
+with one line per group of unmediated tool calls before the coverage
+line, and its own result as the last line:
+
+- `unmediated tool call: <tool> (executed without a model request)` for
+  `not_issued`;
+- `unmediated tool call: <tool> (executed in answer to a model request for
+  <issued tool>)` for `tool_mismatch`;
+- each followed by ` (<n>x)` when the group holds more than one;
+- `result: clean|leak|unmediated-tool-call|incomplete`.
+
+`<tool>` is the endpoint's `tool`. `<issued tool>` is the name the program
+offered the model, printed under the capture-text rule, and `[unnamed]`
+when it is not 1 to 128 characters from `[A-Za-z0-9._:/-]`. Groups are
+sorted by tool, reason and issued tool. For example:
+
+```text
+unmediated tool call: send_file (executed without a model request)
+unmediated tool call: send_file (executed in answer to a model request for read_file) (2x)
+coverage: ...
+result: unmediated-tool-call
+```
+
+The runner's JSON report (`canary-report/2`, [weir-run's
+README](../packages/weir-run/README.md#output)) has the run's own
+`result` and `exit_code`, carries the finding types as data, `findings`
+(`leak`, `unmediated-tool-call` or both) and `unmediated`, the groups
+above, each with its `reason`, and holds the judge's `canary-report/1`
+unchanged as `judge`.
 
 ## Testing against this contract
 
@@ -1001,7 +1151,9 @@ the flows have no route out.
 - `canary-ledger/1`, `canary-requests/1` and `canary-report/1` change only
   with an incompatible change. Additive fields keep the version: an
   optional ledger field that an older ledger leaves out, and any report
-  field.
+  field. The runner's own report, `canary-report/2`, follows the same
+  rule; its `result` adds `unmediated-tool-call`, which is why it is a new
+  version.
 - Adding a form, a kind, an evidence type, an incomplete reason, a capture
-  role or a sink changes what a run means, so each is a CHANGELOG entry in
-  the release that ships it.
+  role, a sink, a finding type or an unmediated reason changes what a run
+  means, so each is a CHANGELOG entry in the release that ships it.

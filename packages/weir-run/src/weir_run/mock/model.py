@@ -8,6 +8,12 @@ calls every offered tool once with a minimal schema-valid argument, so the
 program exercises each tool's credentials, and once tool results are in
 the conversation the reply is the configured text. Timestamps are fixed
 constants; the runner never reads the wall clock.
+
+The model API is also the authority on which tool calls the model made
+(docs/canary.md, "Tool calls"): it puts every call it issues in the
+mock's tool ledger before the reply that carries it, and hands the ledger
+the tool results of every Chat Completions, Responses and Messages
+request, which only tell an alias or a substitution from an orphan call.
 """
 
 from __future__ import annotations
@@ -18,6 +24,8 @@ import json
 import struct
 import threading
 from typing import Any, cast
+
+from weir_run.mock.tools import ToolLedger, ToolResult
 
 CREATED = 1_700_000_000
 MODEL = "mock-model"
@@ -100,6 +108,76 @@ def _arguments(parameters: object) -> str:
     return json.dumps(_input(parameters))
 
 
+def _names(value: object) -> set[str]:
+    return {value} if isinstance(value, str) else set()
+
+
+def _call_id(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _results(
+    calls: dict[str, set[str]], found: list[tuple[str | None, set[str]]]
+) -> list[ToolResult]:
+    """Each result named by its own names and by every call the request
+    repeats with the same id."""
+    return [
+        (cid, frozenset(names | calls.get(cid, set()))) for cid, names in found if cid is not None
+    ]
+
+
+def _chat_results(request: Json) -> list[ToolResult]:
+    """A Chat Completions request's tool results: `tool` messages, named by
+    their own `name` and by the assistant `tool_calls` entries with the
+    same id."""
+    calls: dict[str, set[str]] = {}
+    found: list[tuple[str | None, set[str]]] = []
+    for m in (_obj(m) for m in _list(request.get("messages"))):
+        if m.get("role") == "assistant":
+            for c in map(_obj, _list(m.get("tool_calls"))):
+                cid = _call_id(c.get("id"))
+                if cid is not None:
+                    name = _obj(c.get("function")).get("name")
+                    calls.setdefault(cid, set()).update(_names(name))
+        elif m.get("role") == "tool":
+            found.append((_call_id(m.get("tool_call_id")), _names(m.get("name"))))
+    return _results(calls, found)
+
+
+def _responses_results(request: Json) -> list[ToolResult]:
+    """A Responses request's tool results: every input item whose type ends
+    in `_call_output`, named by the `function_call` or `custom_tool_call`
+    items with the same call id. A request that continues a stored
+    conversation sends the outputs alone, so they name no tool."""
+    calls: dict[str, set[str]] = {}
+    found: list[tuple[str | None, set[str]]] = []
+    for item in (_obj(i) for i in _list(request.get("input"))):
+        kind = item.get("type")
+        if kind in ("function_call", "custom_tool_call"):
+            cid = _call_id(item.get("call_id"))
+            if cid is not None:
+                calls.setdefault(cid, set()).update(_names(item.get("name")))
+        elif isinstance(kind, str) and kind.endswith("_call_output"):
+            found.append((_call_id(item.get("call_id")), _names(item.get("name"))))
+    return _results(calls, found)
+
+
+def _messages_results(request: Json) -> list[ToolResult]:
+    """A Messages request's tool results: `tool_result` blocks, named by the
+    `tool_use` blocks with the same id."""
+    calls: dict[str, set[str]] = {}
+    found: list[tuple[str | None, set[str]]] = []
+    for m in _list(request.get("messages")):
+        for block in (_obj(b) for b in _list(_obj(m).get("content"))):
+            if block.get("type") == "tool_use":
+                cid = _call_id(block.get("id"))
+                if cid is not None:
+                    calls.setdefault(cid, set()).update(_names(block.get("name")))
+            elif block.get("type") == "tool_result":
+                found.append((_call_id(block.get("tool_use_id")), set()))
+    return _results(calls, found)
+
+
 def _sse(events: list[tuple[str | None, object]]) -> bytes:
     out: list[str] = []
     for name, data in events:
@@ -111,9 +189,10 @@ def _sse(events: list[tuple[str | None, object]]) -> bytes:
 
 
 class ModelApi:
-    def __init__(self, reply: str, tool_calls: str) -> None:
+    def __init__(self, reply: str, tool_calls: str, tools: ToolLedger | None = None) -> None:
         self.reply = reply
         self.call_tools = tool_calls == "each-offered-tool-once"
+        self.tools = ToolLedger() if tools is None else tools
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
 
@@ -124,6 +203,7 @@ class ModelApi:
     # -- Chat Completions ----------------------------------------------
 
     def chat(self, request: Json) -> tuple[bytes, str]:
+        self.tools.results(_chat_results(request))
         n = self._next()
         model = request.get("model") if isinstance(request.get("model"), str) else MODEL
         messages = [_obj(m) for m in _list(request.get("messages"))]
@@ -138,7 +218,7 @@ class ModelApi:
         if self.call_tools and tools and not answered and request.get("tool_choice") != "none":
             calls = [
                 {
-                    "id": f"call_{n}_{i}",
+                    "id": self.tools.issue(f"call_mock_{n}_{i}", str(t.get("name", ""))),
                     "type": "function",
                     "function": {
                         "name": str(t.get("name", "")),
@@ -187,6 +267,7 @@ class ModelApi:
     # -- Responses -----------------------------------------------------
 
     def responses(self, request: Json) -> tuple[bytes, str]:
+        self.tools.results(_responses_results(request))
         n = self._next()
         model = request.get("model") if isinstance(request.get("model"), str) else MODEL
         items = [_obj(i) for i in _list(request.get("input"))]
@@ -199,7 +280,7 @@ class ModelApi:
                 {
                     "type": "function_call",
                     "id": f"fc_{n}_{i}",
-                    "call_id": f"call_{n}_{i}",
+                    "call_id": self.tools.issue(f"call_mock_{n}_{i}", str(t.get("name", ""))),
                     "name": str(t.get("name", "")),
                     "arguments": _arguments(t.get("parameters")),
                     "status": "completed",
@@ -278,6 +359,7 @@ class ModelApi:
     # -- Anthropic Messages --------------------------------------------
 
     def messages(self, request: Json) -> tuple[bytes, str]:
+        self.tools.results(_messages_results(request))
         n = self._next()
         model = request.get("model") if isinstance(request.get("model"), str) else MODEL
         messages = [_obj(m) for m in _list(request.get("messages"))]
@@ -304,11 +386,12 @@ class ModelApi:
             content = []
             for i, t in enumerate(tools):
                 value = _input(t.get("input_schema"))
+                name = str(t.get("name", ""))
                 content.append(
                     {
                         "type": "tool_use",
-                        "id": f"toolu_mock_{n}_{i}",
-                        "name": str(t.get("name", "")),
+                        "id": self.tools.issue(f"toolu_mock_{n}_{i}", name),
+                        "name": name,
                         "input": value if isinstance(value, dict) else {},
                     }
                 )

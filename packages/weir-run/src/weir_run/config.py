@@ -26,7 +26,7 @@ from weir_run.spec import (
 
 _TOP = {"mock", "placement", "flow"}
 _MOCK = {"oauth", "model_reply", "tool_calls", "credential_fields", "endpoint"}
-_ENDPOINT = {"id", "credential_fields", "status", "reply", "content_type", "capture"}
+_ENDPOINT = {"id", "credential_fields", "status", "reply", "content_type", "capture", "tool"}
 _PLACEMENT = {"id", "kind", "variable", "shape", "required", "provider", "provider_host"}
 _FLOW = {"id", "command", "cwd", "timeout_seconds", "env", "skip"}
 
@@ -93,6 +93,7 @@ def _endpoint(t: dict[str, object]) -> EndpointSpec:
         reply=_str(t, "reply", where, "{}"),
         content_type=_str(t, "content_type", where, "application/json"),
         capture=_bool(t, "capture", where, False),
+        tool=_opt_str(t, "tool", where),
     )
 
 

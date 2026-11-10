@@ -7,11 +7,13 @@ Three steps call it, each with the interpreter weir-run is installed into:
   is the pin;
 - `check`: runs `weir-run run` and keeps its report;
 - `report`: writes the verdict to the step summary and to one PR comment
-  (updated in place on a re-run), and exits 0 on clean, 1 on leak, 3 on
-  incomplete and 2 on any error.
+  (updated in place on a re-run), and exits 0 on clean, 1 on a finding (a
+  leak or an unmediated tool call), 3 on incomplete and 2 on any error.
 
-The comment shows only the judge's verdict lines, which name placements
-and locations, never a value (docs/canary.md, "The text report"). It is
+The comment shows only the verdict lines of weir-run's text report: the
+judge's, and the runner's own `unmediated tool call` lines. They name
+placements, locations, sinks and tools, never a value (docs/canary.md,
+"The text report" and "Tool calls"). It is
 posted with the job's own GITHUB_TOKEN. Of the action's own steps only
 `report` is given it. With `python-version` set, actions/setup-python also
 receives it through its own `token` input default, and exits before the
@@ -38,10 +40,15 @@ from types import FrameType
 from typing import Any, NoReturn, cast
 
 ERROR = 2
-CODES = {0: "clean", 1: "leak", 3: "incomplete"}
-# docs/canary.md, "The text report": every line the judge can print.
+# docs/canary.md, "Exit codes": the results each code stands for; 1 is a
+# finding of either type.
+CODES = {0: ("clean",), 1: ("leak", "unmediated-tool-call"), 3: ("incomplete",)}
+# docs/canary.md, "The text report" and "Tool calls": every verdict line
+# weir-run's text report can hold, the runner's unmediated tool call lines
+# included.
 VERDICT_PREFIXES = (
     "LEAK ",
+    "unmediated tool call: ",
     "not exercised: ",
     "not scanned: ",
     "blocked connection: ",
@@ -58,11 +65,18 @@ HEADLINES = {
     " and the run checked everything it was asked to.",
     "leak": "**Weir leak check: leak.** A planted fake credential reached the capture."
     " Each `LEAK` line names the placement and where it went, never the value.",
+    "unmediated-tool-call": "**Weir check: unmediated tool call.** A tool ran"
+    " without a model request asking for it. Each `unmediated tool call` line names"
+    " the tool.",
     "incomplete": "**Weir leak check: incomplete.** No planted fake credential was found,"
     " but the run did not check everything it was asked to. The `incomplete` lines say"
     " what is missing.",
     "error": "**Weir leak check: error.** weir-run stopped without a verdict.",
 }
+# The error annotation's title: the check's name, except for a finding
+# that is never a leak.
+TITLE = "Weir leak check"
+TITLES = {"unmediated-tool-call": "Weir check"}
 # GitHub refuses a comment body over 65536 characters.
 MAX_BODY = 60000
 MAX_LINES = 60
@@ -98,11 +112,11 @@ def _result_line(report: str) -> str | None:
 
 def outcome(code: int | None, report: str) -> Outcome:
     """weir-run's exit code, taken only when the report's result line agrees:
-    a Python that cannot even import weir_run exits 1, which is no leak."""
-    result = CODES.get(code) if code is not None else None
-    if result is None or _result_line(report) != result:
+    a Python that cannot even import weir_run exits 1, which is no finding."""
+    result = _result_line(report)
+    if code is None or result is None or result not in CODES.get(code, ()):
         return Outcome("error", ERROR)
-    return Outcome(result, cast(int, code))
+    return Outcome(result, code)
 
 
 def verdict_lines(report: str) -> list[str]:
@@ -459,7 +473,8 @@ def _report() -> int:
             # still stands, and the step summary has it.
             print(f"::warning title=Weir leak check::no PR comment: {exc}", flush=True)
     if not result.passed:
-        print(f"::error title=Weir leak check::{result.result} (weir-run exit {code})", flush=True)
+        title = TITLES.get(result.result, TITLE)
+        print(f"::error title={title}::{result.result} (weir-run exit {code})", flush=True)
     return result.exit_code
 
 

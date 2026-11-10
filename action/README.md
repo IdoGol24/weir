@@ -2,8 +2,9 @@
 
 Runs a [weir-run](https://github.com/ralis-ai/weir/tree/main/packages/weir-run)
 config in a pull request job and posts the verdict on the pull request: one
-comment, updated in place on every re-run. The job fails on a leak or an
-incomplete run and passes on a clean one.
+comment, updated in place on every re-run. The job fails on a finding (a
+leak, or an unmediated tool call: a tool that ran without a model request
+asking for it) or an incomplete run, and passes on a clean one.
 
 ## Use it
 
@@ -100,9 +101,9 @@ than it documents. A version input takes one exact version, such as
 
 | output | what it is |
 | --- | --- |
-| `result` | `clean`, `leak`, `incomplete` or `error` |
+| `result` | `clean`, `leak`, `unmediated-tool-call`, `incomplete` or `error` |
 | `exit-code` | weir-run's exit code |
-| `report` | the path of the judge's JSON report (`canary-report/1`), when the run reached a verdict |
+| `report` | the path of weir-run's JSON report (`canary-report/2`: the run's `result` and `exit_code`, with the judge's `canary-report/1` as its `judge` field), when the run reached a verdict |
 
 The report holds no value and may be uploaded as an artifact.
 
@@ -112,12 +113,13 @@ The report holds no value and may be uploaded as an artifact.
 | --- | --- | --- |
 | `0` | `clean` | passes |
 | `1` | `leak` | fails |
+| `1` | `unmediated-tool-call` | fails: a tool ran without a model request asking for it |
 | `3` | `incomplete` | fails |
 | `2` | `error` | fails: a usage, configuration or runner error |
 
 Any other exit code is an `error`, and so is an exit code the report's
 `result:` line does not confirm. A Python that cannot import weir-run exits
-1, which is no leak.
+1, which is no finding.
 
 ## The comment
 
@@ -127,10 +129,11 @@ marker and updates it, so each check keeps one comment. A comment anyone
 else wrote is never touched, whatever it holds.
 
 It shows the result, then the report's own lines in a code block: each
-`LEAK` line, the not-exercised placements, the blocked destinations, the
-incomplete reasons, and the coverage, network and result lines. Only lines
-of the judge's report are shown, and they name placements, locations and
-sinks, never a value or a fragment of one. A long report is cut after 60
+`LEAK` line, each `unmediated tool call` line, the not-exercised
+placements, the blocked destinations, the incomplete reasons, and the
+coverage, network and result lines. Only lines of weir-run's text report
+are shown, and they name placements, locations, sinks and tools, never a
+value or a fragment of one. A long report is cut after 60
 lines, the coverage, network and result lines kept, and the job log has the
 rest. An error shows weir-run's exit code and no report. The footer names
 the config, the pull request's head commit and the job log. On a

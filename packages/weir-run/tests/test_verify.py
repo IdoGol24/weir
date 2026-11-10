@@ -18,6 +18,7 @@ import hashlib
 import json
 import re
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -26,17 +27,21 @@ import msgspec
 import pytest
 from click.testing import CliRunner, Result
 
-from weir_run import cli, evidence, isolation, verify
+from weir_run import cli, evidence, evidence_v1, isolation, verify
+from weir_run.spec import EndpointSpec, RunSpec
 
-SCHEMA_FILE = Path(__file__).parents[1] / "schema_artifacts" / "weir-verify-evidence.v1.schema.json"
+ARTIFACTS = Path(__file__).parents[1] / "schema_artifacts"
+SCHEMA_FILE = ARTIFACTS / "weir-verify-evidence.v2.schema.json"
+# The record weir-run 0.3.0 wrote; `weir-run predicate` still loads it.
+V1_SCHEMA_FILE = ARTIFACTS / "weir-verify-evidence.v1.schema.json"
 FAKE = Path(__file__).parent / "_fake_target.py"
 DIGEST = "sha256:" + hashlib.sha256(b"weir-run verify test image").hexdigest()
 TARGET = "iron-proxy"
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="the fake target is a shell shim")
 
 
-def _enum(definition: str, field: str) -> list[str]:
-    schema = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))
+def _enum(definition: str, field: str, artifact: Path = SCHEMA_FILE) -> list[str]:
+    schema = json.loads(artifact.read_text(encoding="utf-8"))
     return schema["$defs"][definition]["properties"][field]["enum"]
 
 
@@ -102,7 +107,71 @@ def test_a_key_that_reaches_a_sink_is_a_leak(
     assert result.exit_code == 1, result.output
     assert record["verdict"] == "leak"
     assert [s["name"] for s in record["sinks"] if s["verdict"] == "leak"] == leaking
+    hits = sum(s["hits"] for s in record["sinks"])
+    assert record["findings"] == [{"type": "leak", "reason": None, "count": hits}]
     assert _result_of(tmp_path, record) == "FAILED"
+    assert "finding:leak" in json.loads(_predicate(tmp_path, record).stdout)["failedTests"]
+
+
+def _finding_reasons() -> list[str]:
+    schema = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))
+    reason = schema["$defs"]["Finding"]["properties"]["reason"]["anyOf"]
+    return next(option["enum"] for option in reason if "enum" in option)
+
+
+def _with_relay_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify's own probe runs no tool and its mock has no tool endpoint;
+    give the mock one, as a target whose check runs tools would need, so
+    the relay's own tool run is seen executing."""
+    tool = EndpointSpec("relaytool", tool="run_shell")
+    spec = verify.SPEC
+    endpoints = (*spec.mock.endpoints, tool)
+    monkeypatch.setattr(
+        verify,
+        "SPEC",
+        RunSpec(spec.placements, spec.flows, replace(spec.mock, endpoints=endpoints)),
+    )
+
+
+@posix_only
+def test_a_tool_run_no_model_reply_asked_for_fails_and_names_its_type(
+    tmp_path: Path, judge: list[str], isolated: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relay that runs a tool on its own and reports it: nothing leaks,
+    every sink is clean, and the record still fails, naming the finding
+    type and its reason as fields of their own."""
+    _with_relay_tool(monkeypatch)
+    result, record, _ = _verify(tmp_path, judge, "toolresult")
+    assert result.exit_code == 1, result.output
+    finding = "unmediated-tool-call"
+    assert finding in _enum("Evidence", "verdict") and finding in _enum("Finding", "type")
+    assert "not_issued" in _finding_reasons()
+    assert [s["verdict"] for s in record["sinks"]] == ["clean"] * len(SINKS)
+    assert record["verdict"] == finding
+    assert record["findings"] == [{"type": finding, "reason": "not_issued", "count": 1}]
+    predicate = _predicate(tmp_path, record)
+    assert predicate.exit_code == 0, predicate.output
+    doc = json.loads(predicate.stdout)
+    assert doc["result"] == "FAILED"
+    assert f"finding:{finding}" in doc["failedTests"]
+    assert doc["configuration"][1]["annotations"]["findings"] == record["findings"]
+    lines = result.stdout.splitlines()
+    assert "unmediated tool call: run_shell (executed without a model request)" in lines
+    assert lines[-1] == f"verify {TARGET}: {finding}"
+    assert "leak" not in lines[-1]
+
+
+@posix_only
+def test_the_same_relay_with_no_tool_endpoint_stays_clean(
+    tmp_path: Path, judge: list[str], isolated: None
+) -> None:
+    """The twin: verify's own spec. The relay's request reaches no tool's
+    endpoint (it is answered 404), so no tool is seen executing, and the
+    tool result it adds reports nothing."""
+    result, record, _ = _verify(tmp_path, judge, "toolresult")
+    assert result.exit_code == 0, result.output
+    assert (record["verdict"], record["findings"]) == ("clean", [])
+    assert [record["schema"]] == _enum("Evidence", "schema")
 
 
 # -- never a false clean ----------------------------------------------------
@@ -257,12 +326,34 @@ def test_the_record_and_predicate_hold_no_trace_of_the_key(
 # -- the contract ------------------------------------------------------------
 
 
-def test_the_committed_schema_is_generated_from_the_record() -> None:
-    committed = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))
-    assert msgspec.json.schema(evidence.Evidence) == committed, (
-        "schema_artifacts/weir-verify-evidence.v1.schema.json is stale - regenerate it"
-        " with msgspec.json.schema(weir_run.evidence.Evidence)"
+@pytest.mark.parametrize(
+    ("artifact", "struct"),
+    [(SCHEMA_FILE, evidence.Evidence), (V1_SCHEMA_FILE, evidence_v1.Evidence)],
+    ids=["v2", "v1"],
+)
+def test_each_committed_schema_is_generated_from_its_record(artifact: Path, struct: type) -> None:
+    committed = json.loads(artifact.read_text(encoding="utf-8"))
+    assert msgspec.json.schema(struct) == committed, (
+        f"schema_artifacts/{artifact.name} is stale - regenerate it with"
+        f" msgspec.json.schema({struct.__module__}.Evidence)"
     )
+
+
+@pytest.mark.parametrize(
+    ("artifact", "titles"),
+    [
+        (SCHEMA_FILE, {"Evidence", "Finding", "Sink", "Incomplete"}),
+        (V1_SCHEMA_FILE, {"Evidence", "Sink", "Incomplete"}),
+    ],
+)
+def test_every_object_in_each_committed_schema_refuses_other_fields(
+    artifact: Path, titles: set[str]
+) -> None:
+    """docs/verify.md: `additionalProperties: false` on every object."""
+    schema = json.loads(artifact.read_text(encoding="utf-8"))
+    objects = [d for d in schema["$defs"].values() if d.get("type") == "object"]
+    assert {d["title"] for d in objects} >= titles
+    assert all(d["additionalProperties"] is False for d in objects)
 
 
 def _record(verdict: str) -> dict[str, Any]:
@@ -270,19 +361,24 @@ def _record(verdict: str) -> dict[str, Any]:
     sinks = [{"name": n, "verdict": "clean", "received": 1, "hits": 0} for n in SINKS]
     placement: dict[str, Any] = {"id": "env.ANTHROPIC_API_KEY", "state": "exercised", "hits": 0}
     incomplete: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
     if verdict == "leak":
         sinks[0].update(verdict="leak", hits=1)
         placement.update(state="leaked", hits=1)
+        findings = [{"type": "leak", "reason": None, "count": 1}]
+    if verdict == "unmediated-tool-call":
+        findings = [{"type": verdict, "reason": "not_issued", "count": 1}]
     if verdict == "incomplete":
         sinks[-1].update(verdict="not_reached", received=0)
         incomplete = [{"reason": "sink_not_reached", "count": 1}]
     return {
-        "schema": "weir-verify-evidence/1",
+        "schema": _enum("Evidence", "schema")[0],
         "target": TARGET,
         "tools": [{"name": "weir-run", "version": "0.2.1"}],
         "manifest_sha256": "0" * 64,
         "image_digest": DIGEST,
         "verdict": verdict,
+        "findings": findings,
         "placements": [placement],
         "sinks": sinks,
         "incomplete": incomplete,
@@ -303,6 +399,53 @@ def test_only_clean_passes_and_nothing_is_warned(tmp_path: Path) -> None:
         assert described["digest"]["sha256"] == hashlib.sha256(source).hexdigest()
 
 
+def _v1_record(verdict: str) -> dict[str, Any]:
+    """A record as weir-run 0.3.0 wrote it: only the fields its committed
+    schema has."""
+    fields = json.loads(V1_SCHEMA_FILE.read_text(encoding="utf-8"))["$defs"]["Evidence"]
+    record = {k: v for k, v in _record(verdict).items() if k in fields["properties"]}
+    record["schema"] = _enum("Evidence", "schema", V1_SCHEMA_FILE)[0]
+    assert sorted(record) == sorted(fields["required"])
+    return record
+
+
+def test_a_v1_record_still_makes_its_predicate(tmp_path: Path) -> None:
+    """docs/verify.md: a weir-verify-evidence/1 record is still accepted,
+    PASSED only for clean, the record itself as its annotations, and no
+    finding test, since a v1 record has no findings."""
+    verdicts = _enum("Evidence", "verdict", V1_SCHEMA_FILE)
+    assert "unmediated-tool-call" not in verdicts
+    for verdict in verdicts:
+        record = _v1_record(verdict)
+        result = _predicate(tmp_path, record)
+        assert result.exit_code == 0, result.output
+        predicate = json.loads(result.stdout)
+        assert predicate["result"] == ("PASSED" if verdict == "clean" else "FAILED")
+        assert predicate["configuration"][1]["annotations"] == record
+        tests = predicate["passedTests"] + predicate["failedTests"]
+        assert sorted(t for t in tests if t.startswith("sink:")) == [f"sink:{n}" for n in SINKS]
+        assert not [t for t in tests if t.startswith("finding:")]
+        assert ("sink:console" in predicate["failedTests"]) == (verdict == "leak")
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"findings": []}, {"verdict": "unmediated-tool-call"}, {"schema": "weir-verify-evidence/0"}],
+    ids=["v2-field", "v2-verdict", "unknown-version"],
+)
+def test_a_v1_record_is_held_to_its_own_schema(tmp_path: Path, change: dict[str, Any]) -> None:
+    result = _predicate(tmp_path, _v1_record("clean") | change)
+    assert result.exit_code == 2, result.output
+    assert result.stdout == ""
+
+
+def test_a_v2_record_without_findings_is_refused(tmp_path: Path) -> None:
+    record = _record("clean")
+    del record["findings"]
+    result = _predicate(tmp_path, record)
+    assert result.exit_code == 2, result.output
+
+
 @pytest.mark.parametrize("where", ["top", "nested"])
 def test_a_record_with_another_field_is_refused(tmp_path: Path, where: str) -> None:
     record = _record("clean")
@@ -316,7 +459,7 @@ def test_a_target_tool_or_placement_that_is_not_built_in_still_validates(
     tmp_path: Path,
 ) -> None:
     """Names are patterns: a record from a later target, tool or placement
-    is still weir-verify-evidence/1."""
+    keeps its schema version."""
     record = _record("clean")
     record["target"] = "other-swap"
     record["tools"].append({"name": "other-swap", "version": "1.0.0"})
@@ -347,6 +490,35 @@ def test_a_name_outside_its_pattern_is_refused(tmp_path: Path, change: dict[str,
         ("incomplete", {"verdict": "leak"}),
         ("clean", {"network": {"isolated": True, "direct_attempts": 5}}),
         ("clean", {"network": {"isolated": False, "direct_attempts": 0}}),
+        ("unmediated-tool-call", {"findings": []}),
+        ("unmediated-tool-call", {"verdict": "clean"}),
+        (
+            "clean",
+            {"findings": [{"type": "unmediated-tool-call", "reason": "tool_mismatch", "count": 1}]},
+        ),
+        ("leak", {"findings": []}),
+        ("leak", {"findings": [{"type": "leak", "reason": None, "count": 2}]}),
+        ("leak", {"findings": [{"type": "leak", "reason": "not_issued", "count": 1}]}),
+        (
+            "unmediated-tool-call",
+            {"findings": [{"type": "unmediated-tool-call", "reason": None, "count": 1}]},
+        ),
+        (
+            "unmediated-tool-call",
+            {
+                "findings": [{"type": "unmediated-tool-call", "reason": "not_issued", "count": 1}]
+                * 2
+            },
+        ),
+        (
+            "unmediated-tool-call",
+            {
+                "findings": [
+                    {"type": "unmediated-tool-call", "reason": "tool_mismatch", "count": 1},
+                    {"type": "unmediated-tool-call", "reason": "not_issued", "count": 1},
+                ]
+            },
+        ),
     ],
 )
 def test_a_record_whose_verdict_its_fields_do_not_support_is_refused(
