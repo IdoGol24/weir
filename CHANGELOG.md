@@ -78,10 +78,10 @@
 - **`weir scan` prints `[withheld]` for a name that holds a found value.**
   In the text output and the HTML report, a span name, span id or attribute
   key that holds a value the scan found, eligible or in the review queue,
-  or any 6 characters in a row of one, now prints as `[withheld]`, by the
-  same rule the canary judge uses. Verdict lines and review-queue rows are
-  both covered, on every exit code. What the scan reports, its counts,
-  verdicts and exit codes are unchanged.
+  or any 6 characters in a row of one, now prints as `[withheld]`. The
+  name is checked as written, without undoing JSON escapes. Verdict lines
+  and review-queue rows are both covered, on every exit code. What the
+  scan reports, its counts, verdicts and exit codes are unchanged.
 - Project links point to github.com/ralis-ai/weir.
 
 ### Fixed

@@ -196,10 +196,10 @@ def _raw_hits_for(
 
 
 def _withholding(values: set[str]) -> Callable[[str], str]:
-    """The canary judge's printing rule, with `values` in the ledger's place:
-    text that holds one, or any run of 6 consecutive characters of one,
-    prints as `[withheld]`. The flattened form is checked as well, since
-    that is what is printed.
+    """Text that holds one of `values`, in any of its encoded forms, or any
+    run of 6 consecutive characters of one, prints as `[withheld]`. The text
+    is checked as written, without undoing JSON escapes. The flattened form
+    is checked as well, since that is what is printed.
 
     A scan can match a value per span, so each needle is looked up by its
     last `_TAIL` bytes, or a shorter one by its length, and each distinct
