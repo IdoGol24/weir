@@ -21,7 +21,7 @@ from typing import cast
 
 from weir.adapters.otel._wire import LogRecordInContext, SpanInContext, WireInput, WireScope
 from weir.canary.walk import decode_bytes_value
-from weir.schema.exposure import ExposureSurface, ScannedString
+from weir.schema.exposure import ExposureSurface, ScannedString, Segment
 
 # ponytail: hard depth cap. Real OTLP kvlists are one or two levels deep;
 # anything at 64 is malformed or hostile, and crashing the scan is strictly
@@ -56,10 +56,10 @@ _LOG_WRAPPERS = (
     ("boolValue", "scalar"), ("bool_value", "scalar"),
 )
 
-# (location, text, header). A None text marks a log-record value the scan
+# (path, text, header). A None text marks a log-record value the scan
 # could not read: it is counted as not scanned, never treated as clean.
 # Span values in a shape the scan does not read are passed over, as before.
-_Found = tuple[str, str | None, str | None]
+_Found = tuple[tuple[Segment, ...], str | None, str | None]
 
 
 def _bytes_text(value: object) -> str | None:
@@ -74,7 +74,7 @@ def _bytes_text(value: object) -> str | None:
 
 def _walk_value(
     value: object,
-    location: str,
+    path: tuple[Segment, ...],
     out: list[_Found],
     depth: int = 0,
     header: str | None = None,
@@ -88,36 +88,36 @@ def _walk_value(
     kvlist entry names its own (see `_header_name`)."""
     if depth > _MAX_DEPTH or not isinstance(value, dict):
         if log and value is not None:
-            out.append((location, None, None))
+            out.append((path, None, None))
         return
     holder = cast("dict[str, object]", value)
     for wrapper, kind in _LOG_WRAPPERS if log else _SPAN_WRAPPERS:
         inner = holder.get(wrapper)
         if kind == "string" and isinstance(inner, str):
-            out.append((location, inner, header))
+            out.append((path, inner, header))
         elif kind == "array" and isinstance(inner, dict):
             items = cast("dict[str, object]", inner).get("values")
             if isinstance(items, list):
                 for index, item in enumerate(cast("list[object]", items)):
-                    _walk_value(item, f"{location}[{index}]", out, depth + 1, header, log=log)
+                    _walk_value(item, (*path, index), out, depth + 1, header, log=log)
             elif log and items is not None:
-                out.append((location, None, None))
+                out.append((path, None, None))
         elif kind == "kvlist" and isinstance(inner, dict):
             _walk_attributes(
                 cast("dict[str, object]", inner).get("values"),
-                location,
+                path,
                 out,
                 depth + 1,
                 log=log,
                 in_kvlist=True,
             )
         elif kind == "bytes" and wrapper in holder:
-            out.append((location, _bytes_text(inner), header))
+            out.append((path, _bytes_text(inner), header))
         elif kind != "scalar" or wrapper not in holder:
             continue
         return
     if log and holder:
-        out.append((location, None, None))
+        out.append((path, None, None))
 
 
 def _header_name(key: str, *, in_kvlist: bool) -> str | None:
@@ -134,7 +134,7 @@ def _header_name(key: str, *, in_kvlist: bool) -> str | None:
 
 def _walk_attributes(
     attributes: object,
-    location: str,
+    path: tuple[Segment, ...],
     out: list[_Found],
     depth: int = 0,
     *,
@@ -143,23 +143,23 @@ def _walk_attributes(
 ) -> None:
     if depth > _MAX_DEPTH or not isinstance(attributes, list):
         if log and attributes is not None:
-            out.append((location, None, None))
+            out.append((path, None, None))
         return
     for raw in cast("list[object]", attributes):
         entry = cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
         key = entry.get("key")
         if not isinstance(key, str):
             if log:
-                out.append((location, None, None))
+                out.append((path, None, None))
             continue
         header = _header_name(key, in_kvlist=in_kvlist)
-        _walk_value(entry.get("value"), f"{location}.{key}", out, depth, header, log=log)
+        _walk_value(entry.get("value"), (*path, key), out, depth, header, log=log)
 
 
 def _span_surface(ctx: SpanInContext) -> list[_Found]:
     """Every string location of one span, in the spec's declared order."""
     out: list[_Found] = []
-    _walk_attributes(ctx.span.attributes, "attributes", out)
+    _walk_attributes(ctx.span.attributes, ("attributes",), out)
     # `status` and `events` are raw pass-throughs on the wire struct - typing
     # them would quarantine spans that decode today - so every access here is
     # guarded, exactly as stage 2 guards attribute element access. Read each
@@ -173,14 +173,14 @@ def _span_surface(ctx: SpanInContext) -> list[_Found]:
             if isinstance(event, dict):
                 _walk_attributes(
                     cast("dict[str, object]", event).get("attributes"),
-                    f"events[{index}].attributes",
+                    ("events", index, "attributes"),
                     out,
                 )
     status = ctx.span.status
     if isinstance(status, dict):
         message = cast("dict[str, object]", status).get("message")
         if isinstance(message, str) and message:
-            out.append(("status.message", message, None))
+            out.append((("status", "message"), message, None))
     return out
 
 
@@ -189,12 +189,12 @@ def _log_surface(ctx: LogRecordInContext) -> list[_Found]:
     array or kvlist body reads `body`, `body[i]` or `body.key`. A body
     written as a bare string is read as that string."""
     out: list[_Found] = []
-    _walk_attributes(ctx.record.get("attributes"), "attributes", out, log=True)
+    _walk_attributes(ctx.record.get("attributes"), ("attributes",), out, log=True)
     body = ctx.record.get("body")
     if isinstance(body, str):
-        out.append(("body", body, None))
+        out.append((("body",), body, None))
     else:
-        _walk_value(body, "body", out, log=True)
+        _walk_value(body, ("body",), out, log=True)
     return out
 
 
@@ -215,10 +215,10 @@ def _context_surface(
     out: list[_Found] = []
     if id(resource_attributes) not in seen:
         seen.add(id(resource_attributes))
-        _walk_attributes(resource_attributes, "resource.attributes", out, log=log)
+        _walk_attributes(resource_attributes, ("resource", "attributes"), out, log=log)
     if id(scope) not in seen:
         seen.add(id(scope))
-        _walk_attributes(scope.attributes, "scope.attributes", out, log=log)
+        _walk_attributes(scope.attributes, ("scope", "attributes"), out, log=log)
     return out
 
 
@@ -227,10 +227,10 @@ def scan_surface(wire: WireInput) -> ExposureSurface:
     strings: list[ScannedString] = []
     unread = wire.values_not_scanned
 
-    def readable(found: list[_Found]) -> list[tuple[str, str, str | None]]:
+    def readable(found: list[_Found]) -> list[tuple[tuple[Segment, ...], str, str | None]]:
         nonlocal unread
         unread += sum(text is None for _, text, _ in found)
-        return [(location, text, header) for location, text, header in found if text is not None]
+        return [(path, text, header) for path, text, header in found if text is not None]
 
     for span_index, ctx in enumerate(wire.spans):
         found = readable(
@@ -242,11 +242,11 @@ def scan_surface(wire: WireInput) -> ExposureSurface:
                 record_index=span_index,
                 span_ref=span_ref,
                 span_name=ctx.span.name,
-                location=location,
+                path=path,
                 text=text,
                 header=header,
             )
-            for location, text, header in found
+            for path, text, header in found
         )
     for log_index, ctx in enumerate(wire.log_records):
         found = readable(
@@ -257,12 +257,12 @@ def scan_surface(wire: WireInput) -> ExposureSurface:
                 record_index=len(wire.spans) + log_index,
                 span_ref="",
                 span_name="",
-                location=location,
+                path=path,
                 text=text,
                 header=header,
                 log_record=ctx.position,
             )
-            for location, text, header in found
+            for path, text, header in found
         )
 
     return ExposureSurface(

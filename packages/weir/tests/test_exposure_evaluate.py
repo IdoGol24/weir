@@ -1,6 +1,8 @@
 """Presence does not depend on how well the span mapped: exactly two demotion
 reasons, no join clause, no degraded-node clause."""
 
+from _harness.exposure import identity
+
 from weir.evaluate.exposure import evaluate_exposure
 from weir.exposure import ExposureHit, ExposureScan
 from weir.rules_commons import RuleSpec
@@ -11,7 +13,7 @@ def _hit(**over) -> ExposureHit:
                 source_class="openai_api_key", eligible=True, value_len=48,
                 prefix="sk-proj-", last4="7Ri4", fingerprint="0123456789ab")
     base.update(over)
-    return ExposureHit(**base)
+    return ExposureHit(**identity(str(base["span_ref"]), str(base["location"])), **base)
 
 
 def _rule(**over) -> RuleSpec:

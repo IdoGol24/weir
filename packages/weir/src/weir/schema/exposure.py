@@ -15,7 +15,26 @@ serialize it, and do not put it on a report type.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import msgspec
+
+# One step of a location: a field or attribute key, or an array index.
+type Segment = str | int
+
+
+def format_location(path: tuple[Segment, ...], show: Callable[[str], str] = str) -> str:
+    """`attributes.app.config`, `events[0].attributes.k`: a key is joined
+    with `.`, an index is written `[i]`. `show` renders each key, so a key
+    that holds a matched value can be printed as `[withheld]` on its own
+    (docs/scan.md, "Why you can trust it")."""
+    out = ""
+    for segment in path:
+        if isinstance(segment, int):
+            out += f"[{segment}]"
+        else:
+            out += ("." if out else "") + show(segment)
+    return out
 
 
 class ScannedString(msgspec.Struct, frozen=True):
@@ -24,7 +43,9 @@ class ScannedString(msgspec.Struct, frozen=True):
     record_index: int
     span_ref: str
     span_name: str
-    location: str
+    # Kept as segments, not a joined string: an attribute key may hold dots,
+    # so a joined location cannot be split back into the keys it was made of.
+    path: tuple[Segment, ...]
     text: str
     # The authorization request header `text` is the value of, when the
     # attribute key names one: `http.request.header.authorization` or
@@ -37,6 +58,10 @@ class ScannedString(msgspec.Struct, frozen=True):
     # The log record's 0-based index in the input when the string is in a log
     # record; `span_ref` and `span_name` are then empty.
     log_record: int | None = None
+
+    @property
+    def location(self) -> str:
+        return format_location(self.path)
 
 
 class ExposureSurface(msgspec.Struct, frozen=True):

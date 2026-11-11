@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from _harness.exposure import identity
 from _harness.g1 import assert_byte_identical_across_hash_seeds
 
 from weir.catalog import DEFAULT_CATALOG
@@ -180,7 +181,7 @@ def _exposure_hit(**over) -> ExposureHit:
                 source_class="openai_api_key", eligible=True, value_len=48,
                 prefix="sk-proj-", last4="7Ri4", fingerprint="0123456789ab")
     base.update(over)
-    return ExposureHit(**base)
+    return ExposureHit(**identity(str(base["span_ref"]), str(base["location"])), **base)
 
 
 def _exposure_scan(hits, **over) -> ExposureScan:
@@ -258,12 +259,15 @@ def test_gauge_exposure_lines_is_hash_seed_independent() -> None:
         "from weir.gauge.exposure import exposure_gauge_lines\n"
         "hits = [\n"
         "    ExposureHit(span_ref='aa', span_name='a', location='attributes.k1',"
+        " span_key=0, site_key=0,"
         " source_class='openai_api_key', eligible=True, value_len=48,"
         " prefix='sk-proj-', last4='7Ri4', fingerprint='0123456789ab'),\n"
         "    ExposureHit(span_ref='bb', span_name='b', location='attributes.k2',"
+        " span_key=1, site_key=1,"
         " source_class='google_api_key', eligible=True, value_len=39,"
         " prefix='AIza', last4='Xyz9', fingerprint='abcdef012345'),\n"
         "    ExposureHit(span_ref='cc', span_name='c', location='attributes.k3',"
+        " span_key=2, site_key=2,"
         " source_class='credential_field', eligible=False, value_len=8,"
         " prefix='password', last4=None, fingerprint=None),\n"
         "]\n"

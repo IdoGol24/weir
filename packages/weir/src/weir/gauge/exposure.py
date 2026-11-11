@@ -48,8 +48,9 @@ def exposure_gauge_lines(scan: ExposureScan) -> list[str]:
     triage = [h for h in scan.hits if not h.eligible]
     if eligible:
         classes = ", ".join(sorted({flatten_untrusted(h.source_class) for h in eligible}))
-        locations = len({(h.span_ref, h.log_record, h.location) for h in eligible})
-        spans = len({h.span_ref for h in eligible if h.log_record is None})
+        # The ordinals, not the strings: two locations can both be withheld.
+        locations = len({h.site_key for h in eligible})
+        spans = len({h.span_key for h in eligible if h.log_record is None})
         records = len({h.log_record for h in eligible if h.log_record is not None})
         lines.append(
             f"  credentials: {len({h.fingerprint for h in eligible})} distinct "
@@ -58,7 +59,7 @@ def exposure_gauge_lines(scan: ExposureScan) -> list[str]:
         )
     if triage:
         classes = ", ".join(sorted({flatten_untrusted(h.source_class) for h in triage}))
-        locations = len({(h.span_ref, h.log_record, h.location) for h in triage})
+        locations = len({h.site_key for h in triage})
         # "match" pluralizes irregularly (matches, not matchs) - plural() only
         # handles the regular +s case, so this one stays a manual ternary.
         match_word = "match" if len(triage) == 1 else "matches"

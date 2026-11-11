@@ -36,3 +36,17 @@ def render_expected() -> str:
         "verdict_grade": sum(1 for f in findings if f.is_verdict_grade),
     }
     return json.dumps(document, indent=2, sort_keys=True) + "\n"
+
+
+_SPAN_KEYS: dict[str, int] = {}
+_SITE_KEYS: dict[tuple[str, str], int] = {}
+
+
+def identity(span_ref: str, location: str) -> dict[str, int]:
+    """The `span_key` and `site_key` the classifier gives a hit at this span
+    id and location, for tests that build hits and findings by hand: one
+    ordinal per distinct span id and one per distinct (span id, location)."""
+    return {
+        "span_key": _SPAN_KEYS.setdefault(span_ref, len(_SPAN_KEYS)),
+        "site_key": _SITE_KEYS.setdefault((span_ref, location), len(_SITE_KEYS)),
+    }

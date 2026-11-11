@@ -113,6 +113,13 @@ requires `weir-scan>=0.6.0`.
   names too. `CONTRIBUTING.md` links to it.
 
 ### Changed
+- **`weir scan` prints `[withheld]` for a name that holds a found value.**
+  In the text output and the HTML report, a span name, span id or attribute
+  key that holds a value the scan found, eligible or in the review queue,
+  or any 6 characters in a row of one, now prints as `[withheld]`. The
+  name is checked as written, without undoing JSON escapes. Verdict lines
+  and review-queue rows are both covered, on every exit code. What the
+  scan reports, its counts, verdicts and exit codes are unchanged.
 - **weir-run: exit 1 is a finding, a leak or an unmediated tool call.** No
   exit code was added: `weir-run run`, `weir-run verify`, the pytest
   plugin and the GitHub Action still exit 0 clean, 1 failed, 2 error and 3
@@ -174,6 +181,10 @@ requires `weir-scan>=0.6.0`.
 ### Corpus
 - The diffspec baselines were regenerated for the new catalog digest. The
   diff is digest-only.
+- `fixtures/exposure/attribute-exposure.expected.json` was regenerated:
+  each hit, and each rule result drawn from it, now records `span_key` and
+  `site_key`, the span and location it is at, which the counts use. No
+  other field changed.
 
 ## [0.9.0] - 2026-11-08
 

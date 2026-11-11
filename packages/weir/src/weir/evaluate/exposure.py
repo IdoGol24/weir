@@ -46,6 +46,8 @@ def evaluate_exposure(scan: ExposureScan, rules: list[RuleSpec]) -> list[Exposur
                 span_ref=hit.span_ref,
                 span_name=hit.span_name,
                 location=hit.location,
+                span_key=hit.span_key,
+                site_key=hit.site_key,
                 value_len=hit.value_len,
                 prefix=hit.prefix,
                 last4=hit.last4,
