@@ -35,10 +35,24 @@ real value after it (`["REDACTED", "..."]` is not found). Under the key
 `token` alone the value counts only when it has both a letter and a digit of
 its own (an escape sequence such as `\n` or `\u0041` counts as neither), so
 a logprobs `"token": "Certainly"` is not one, in any language. A key-name match has no shape to check, so it goes to
-the review queue rather than failing the scan. In a log record it reads the
-attributes, the body (a string or a structured value) and the resource and
-scope attributes around it, and names the finding by the log record's
-0-based position in the input (`log record 0`). An export may hold traces,
+the review queue rather than failing the scan. In a span it reads the span
+name and `traceState`, the attributes, each event's name and attributes,
+each link's `traceState` and attributes, the status message, and around it
+the resource's `schemaUrl`, attributes and `entityRefs` (each one's
+`schemaUrl`, `type`, `idKeys` and `descriptionKeys`) and the scope's
+`schemaUrl`, name, version and attributes. In a log record it reads the
+`eventName`, the `severityText`, the attributes, the body (a string or a
+structured value) and the same resource and scope data around it, and
+names the finding by the log record's 0-based position in the input (`log
+record 0`). Every attribute key is read as text too, at any depth of a
+structured value, so a credential held only in a name or a key is found the
+same as one in a value. A hit is reported at its own location: `name`,
+`events[0].name`, `links[0].attributes.app.cred`, `scope.name`,
+`eventName`, or for a key its attribute path marked `(key)`, as in
+`attributes.app.cred (key)`. That is every free-form string field OTLP
+defines for spans and log records. A field OTLP does not define is not
+read: when it holds data the export is incomplete (see [Limits](#limits)).
+An export may hold traces,
 logs or both, in one file, with camelCase or snake_case (proto field name)
 structural keys. The snake_case value wrappers (`string_value`, ...) are
 read in log records only; a span attribute value is read from the camelCase
@@ -52,8 +66,9 @@ or adding a step does not change the result. When the trace evidence is too
 weak to prove a flow, the finding stays in the report, marked as not proven
 and saying why, instead of quietly disappearing.
 
-`weir scan` exits 0 when nothing fails, 1 on a finding and 2 on unusable
-input.
+`weir scan` exits 0 when nothing fails, 1 on a finding, 2 on unusable input
+and 3, incomplete, when there is no finding but the export holds data the
+scan did not read (see [Limits](#limits)).
 
 Install `weir-scan`; the import and the command are both `weir`.
 
@@ -92,6 +107,16 @@ Any that can export OpenTelemetry spans to a file.
   `weir gauge` tells you whether it is.
 - The key scan reads spans and log records only. Metrics, or anything else
   in the export, are not scanned, and the output says so
-  (`data in 1 batch not scanned`) instead of reporting them clean. So is a
-  log-record value in a shape the scan cannot read, such as bytes that are
-  not UTF-8 (`1 value not scanned`).
+  (`data in 1 batch not scanned`) instead of reporting them clean. So is
+  span or log-record data in a shape the scan cannot read, such as a span
+  that fails to decode, a span value in a snake_case wrapper or in
+  `bytesValue`, or log-record bytes that are not UTF-8
+  (`1 value not scanned`), and so is a field OTLP does not define that
+  holds anything but `null` or an empty string, list or object, at any
+  level from the `resourceSpans` or `resourceLogs` element down to an
+  attribute value. That field is counted, never read: its name and value
+  are not printed. Such an export never passes clean:
+  unless a finding makes it exit 1, `weir scan` exits 3, its last line is
+  `incomplete: the export holds data the scan did not read (see above)`,
+  and the HTML report shows an incomplete notice in place of the green
+  page. `weir gauge` prints the same not-scanned lines and still exits 0.

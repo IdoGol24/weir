@@ -110,7 +110,8 @@ def test_a_class_miss_is_never_regraded_under_another_class() -> None:
 
 def test_counts_are_reported_even_when_nothing_is_found() -> None:
     scan = _scan([{"spanId": "aa" * 8, "attributes": [_attr("k", "nothing here")]}])
-    assert scan.applicable and scan.spans_scanned == 1 and scan.strings_scanned == 1
+    # One attribute, its key and its value, and the scope name.
+    assert scan.applicable and scan.spans_scanned == 1 and scan.strings_scanned == 3
     assert scan.hits == []
 
 

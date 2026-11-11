@@ -24,7 +24,8 @@ from weir.adapters.otel._contract import Degradation, DegradationReason
 
 _BOM = b"\xef\xbb\xbf"
 
-# snake_case -> camelCase for the structural keys weir reads. Attribute
+# snake_case -> camelCase for the multi-word structural keys OTLP defines
+# (the exposure scan counts any other member as not scanned). Attribute
 # entry keys ("key"/"value") are identical in both variants; the AnyValue
 # wrappers inside a value ("stringValue"/"string_value") are not renamed
 # here, the exposure walk reads both spellings.
@@ -40,6 +41,18 @@ _KEY_ALIASES = {
     "parent_span_id": "parentSpanId",
     "start_time_unix_nano": "startTimeUnixNano",
     "end_time_unix_nano": "endTimeUnixNano",
+    "trace_state": "traceState",
+    "severity_text": "severityText",
+    "entity_refs": "entityRefs",
+    "id_keys": "idKeys",
+    "description_keys": "descriptionKeys",
+    "event_name": "eventName",
+    "time_unix_nano": "timeUnixNano",
+    "observed_time_unix_nano": "observedTimeUnixNano",
+    "severity_number": "severityNumber",
+    "dropped_attributes_count": "droppedAttributesCount",
+    "dropped_events_count": "droppedEventsCount",
+    "dropped_links_count": "droppedLinksCount",
 }
 
 
@@ -66,8 +79,10 @@ class WireSpan(msgspec.Struct, frozen=True, rename="camel"):
     # `attributes` above, so no exporter shape can quarantine a span that
     # decoded before. The consumer guards element access, as stage 2 already
     # does for attributes.
+    trace_state: object = None
     status: object = None
     events: object = None
+    links: object = None
 
 
 class SpanInContext(msgspec.Struct, frozen=True):
@@ -77,6 +92,13 @@ class SpanInContext(msgspec.Struct, frozen=True):
     scope: WireScope
     schema_url: str
     resource_attributes: list[dict[str, object]]
+    # The raw resourceSpans and scopeSpans elements it arrived under: the
+    # exposure scan reads their schemaUrl and the resource's entityRefs.
+    resource_entry: dict[str, object] = {}
+    scope_entry: dict[str, object] = {}
+    # The raw span element `span` was decoded from: the exposure scan counts
+    # its members OTLP does not define.
+    span_entry: dict[str, object] = {}
 
 
 class LogRecordInContext(msgspec.Struct, frozen=True):
@@ -89,6 +111,9 @@ class LogRecordInContext(msgspec.Struct, frozen=True):
     # 0-based position among every log record element in the input,
     # counting the ones that could not be read.
     position: int
+    # The raw resourceLogs and scopeLogs elements, as on `SpanInContext`.
+    resource_entry: dict[str, object] = {}
+    scope_entry: dict[str, object] = {}
 
 
 class WireInput(msgspec.Struct, frozen=True):
@@ -99,8 +124,8 @@ class WireInput(msgspec.Struct, frozen=True):
     # (metrics, another signal, or nothing OTLP-shaped): the exposure scan
     # reports them as not scanned rather than clean.
     batches_not_scanned: int = 0
-    # Resources, scopes, records and lists inside a logs batch whose shape
-    # could not be read: counted toward the same not-scanned report.
+    # Resources, scopes, spans, log records and lists whose shape could not
+    # be read: counted toward the same not-scanned report.
     values_not_scanned: int = 0
     # False when no batch holds a resourceSpans list (a logs-only export):
     # there is no flow trace to measure, only the exposure scan.
@@ -187,11 +212,14 @@ _READ_SIGNALS = ("resourceSpans", "resourceLogs")
 
 def _scoped(
     resources: list[object], scope_key: str, record_key: str, degradations: list[Degradation]
-) -> Iterator[tuple[object, WireScope, str, list[dict[str, object]]] | None]:
-    """Every raw record under one resource list, with its scope, schema URL
-    and resource attributes. Spans and log records nest the same way. A
-    None marks a resource, scope or list whose shape could not be read; the
-    log path counts it as not scanned, the span path passes over it."""
+) -> Iterator[
+    tuple[object, WireScope, str, list[dict[str, object]], dict[str, object], dict[str, object]]
+    | None
+]:
+    """Every raw record under one resource list, with its scope, schema URL,
+    resource attributes and the raw resource and scope elements. Spans and
+    log records nest the same way. A None marks a resource, scope or list
+    whose shape could not be read, counted as not scanned."""
     for rs in resources:
         if not isinstance(rs, dict):
             yield None
@@ -239,7 +267,8 @@ def _scoped(
             for raw in cast("list[object]", records):
                 # Element types are unverified by design: raw pass-through,
                 # stage 2 and the exposure scan guard element access.
-                yield raw, scope, schema_url, cast("list[dict[str, object]]", resource_attrs)
+                attrs = cast("list[dict[str, object]]", resource_attrs)
+                yield raw, scope, schema_url, attrs, rs, ss
 
 
 def decode_input(data: bytes) -> WireInput:
@@ -272,8 +301,9 @@ def decode_input(data: bytes) -> WireInput:
                 cast("list[object]", resource_spans), "scopeSpans", "spans", degradations
             ):
                 if item is None:
+                    values_not_scanned += 1
                     continue
-                raw, scope, schema_url, resource_attrs = item
+                raw, scope, schema_url, resource_attrs, resource_entry, scope_entry = item
                 try:
                     span = msgspec.convert(raw, type=WireSpan, strict=False)
                 except msgspec.ValidationError as exc:
@@ -292,6 +322,7 @@ def decode_input(data: bytes) -> WireInput:
                             note=str(exc),
                         )
                     )
+                    values_not_scanned += 1
                     continue
                 spans.append(
                     SpanInContext(
@@ -299,6 +330,9 @@ def decode_input(data: bytes) -> WireInput:
                         scope=scope,
                         schema_url=schema_url,
                         resource_attributes=resource_attrs,
+                        resource_entry=resource_entry,
+                        scope_entry=scope_entry,
+                        span_entry=cast("dict[str, object]", raw),
                     )
                 )
         if isinstance(resource_logs, list):
@@ -309,7 +343,7 @@ def decode_input(data: bytes) -> WireInput:
                 if item is None:
                     values_not_scanned += 1
                     continue
-                raw, scope, _, resource_attrs = item
+                raw, scope, _, resource_attrs, resource_entry, scope_entry = item
                 log_position += 1
                 if not isinstance(raw, dict):
                     values_not_scanned += 1
@@ -320,6 +354,8 @@ def decode_input(data: bytes) -> WireInput:
                         scope=scope,
                         resource_attributes=resource_attrs,
                         position=log_position,
+                        resource_entry=resource_entry,
+                        scope_entry=scope_entry,
                     )
                 )
 

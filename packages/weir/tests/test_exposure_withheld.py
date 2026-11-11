@@ -76,10 +76,23 @@ def _summary(text: str) -> list[str]:
     ]
 
 
-def _same_findings(withheld: _Run, control: _Run) -> None:
+def _more_locations(text: str, extra: int) -> str:
+    """`text` with each credential's location count raised by `extra`."""
+    def raise_count(match: re.Match[str]) -> str:
+        count = int(match.group(1)) + extra
+        return f"in {count} location{'' if count == 1 else 's'} across"
+
+    return re.sub(r"in (\d+) locations? across", raise_count, text)
+
+
+def _same_findings(withheld: _Run, control: _Run, *, extra_locations: int = 0) -> None:
+    """Withholding changes what is printed, never what was found. A name or
+    key that holds the value is itself where the value was found, so it adds
+    `extra_locations` to each credential's count, and nothing else."""
     assert withheld.scan.exit_code == control.scan.exit_code
-    assert _summary(withheld.scan.output) == _summary(control.scan.output)
-    assert withheld.gauge.output == control.gauge.output
+    assert _summary(withheld.scan.output) == _summary(
+        _more_locations(control.scan.output, extra_locations))
+    assert withheld.gauge.output == _more_locations(control.gauge.output, extra_locations)
     assert ('class="green-screen"' in withheld.html) == ('class="green-screen"' in control.html)
 
 
@@ -89,7 +102,8 @@ def test_a_key_in_the_span_name_is_withheld_everywhere() -> None:
     control = _run(_export([_span("crew.agent", [("url.full", url)])]))
 
     _assert_never_printed(run, _KEY)
-    _same_findings(run, control)
+    # The span name is one more location of the same key.
+    _same_findings(run, control, extra_locations=1)
     assert run.scan.exit_code == 1
     row = next(line for line in run.scan.output.splitlines() if "attributes.url.full" in line)
     assert row.startswith(f"  {WITHHELD} (")
@@ -101,7 +115,8 @@ def test_a_key_in_an_attribute_key_is_withheld_everywhere() -> None:
     control = _run(_export([_span("crew.agent", [("app.cred.x", f"token={_KEY}")])]))
 
     _assert_never_printed(run, _KEY)
-    _same_findings(run, control)
+    # The attribute key is one more location of the same key.
+    _same_findings(run, control, extra_locations=1)
     assert f"attributes.{WITHHELD}" in run.scan.output
     assert f"in attributes.{WITHHELD} of span crew.agent" in run.html
 
@@ -170,8 +185,10 @@ def test_two_withheld_locations_still_count_as_two() -> None:
                                                  ("b.x", f"token={_KEY}")])]))
 
     _assert_never_printed(run, _KEY)
-    _same_findings(run, control)
-    rows = [line for line in run.scan.output.splitlines() if f"attributes.{WITHHELD}" in line]
+    # Each attribute key is one more location of the same key.
+    _same_findings(run, control, extra_locations=2)
+    rows = [line for line in run.scan.output.splitlines()
+            if f"attributes.{WITHHELD}  " in line]
     assert len(rows) == 2
 
 

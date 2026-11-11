@@ -309,6 +309,8 @@ def scan_command(
     detected_framework: str,
     input_format: str,
 ) -> None:
+    """Exit 0 clean, 1 a finding, 2 unusable input, 3 incomplete: no finding,
+    but the export holds data the scan did not read."""
     trace, remediations, exposure, _ = _load_input_or_exit(trace_path, input_format)
     graph = build_session_graph(trace)
     labeled = label_graph(graph, DEFAULT_CATALOG)
@@ -369,7 +371,12 @@ def scan_command(
         for line in finding_lines(finding, graph, rules_by_id):
             click.echo(line)
 
-    raise SystemExit(1 if failing else 0)
+    # Data the scan did not read is never passed clean (docs/scan.md); the
+    # not-scanned lines above say what it was.
+    incomplete = bool(exposure.batches_not_scanned or exposure.values_not_scanned)
+    if incomplete and not failing:
+        click.echo("incomplete: the export holds data the scan did not read (see above)")
+    raise SystemExit(1 if failing else 3 if incomplete else 0)
 
 
 def _write_output(path: Path, data: bytes) -> None:

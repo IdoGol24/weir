@@ -811,8 +811,8 @@ first, or mock the service.
 | `2` | none | usage or input error: bad arguments, an unusable ledger, a capture path or directory entry that cannot be read in full or is not a regular file or directory, a file reached through two given paths. No report is printed; the error on stderr names the input and line, never content read from it |
 | `3` | `incomplete` | no canary found, but the run is incomplete |
 
-`0`, `1` and `2` follow `weir scan`'s convention (nothing to fail on,
-findings, unusable input).
+The codes match `weir scan`'s (nothing to fail on, findings, unusable
+input, incomplete).
 
 The runner exits with the run's verdict: the judge's code, except that an
 unmediated tool call, the runner's own finding ([Tool

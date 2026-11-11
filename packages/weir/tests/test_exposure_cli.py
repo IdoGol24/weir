@@ -78,7 +78,8 @@ def test_fail_on_low_still_fails_on_a_high_severity_rule() -> None:
 def test_gauge_prints_the_exposure_block() -> None:
     result = _run(["gauge", "export.json"], {"export.json": _export(_KEY)})
     assert result.exit_code == 0
-    assert "exposure scan: 1 spans, 1 strings" in result.output
+    # The span name, the attribute key and its value.
+    assert "exposure scan: 1 spans, 3 strings" in result.output
     assert "credentials: 1 distinct (openai_api_key)" in result.output
 
 
