@@ -23,18 +23,26 @@ import msgspec
 type Segment = str | int
 
 
-def format_location(path: tuple[Segment, ...], show: Callable[[str], str] = str) -> str:
+# Marks a location whose string is the attribute or kvlist key at the end
+# of its path, not that key's value: `attributes.app.cred (key)`.
+KEY_MARK = " (key)"
+
+
+def format_location(
+    path: tuple[Segment, ...], show: Callable[[str], str] = str, *, key: bool = False
+) -> str:
     """`attributes.app.config`, `events[0].attributes.k`: a key is joined
     with `.`, an index is written `[i]`. `show` renders each key, so a key
     that holds a matched value can be printed as `[withheld]` on its own
-    (docs/scan.md, "Why you can trust it")."""
+    (docs/scan.md, "Why you can trust it"). `key` marks the location of the
+    last key itself, not of its value."""
     out = ""
     for segment in path:
         if isinstance(segment, int):
             out += f"[{segment}]"
         else:
             out += ("." if out else "") + show(segment)
-    return out
+    return out + KEY_MARK if key else out
 
 
 class ScannedString(msgspec.Struct, frozen=True):
@@ -58,10 +66,13 @@ class ScannedString(msgspec.Struct, frozen=True):
     # The log record's 0-based index in the input when the string is in a log
     # record; `span_ref` and `span_name` are then empty.
     log_record: int | None = None
+    # True when `text` is the attribute or kvlist key at the end of `path`,
+    # not its value: the location is then marked (`KEY_MARK`).
+    key: bool = False
 
     @property
     def location(self) -> str:
-        return format_location(self.path)
+        return format_location(self.path, key=self.key)
 
 
 class ExposureSurface(msgspec.Struct, frozen=True):

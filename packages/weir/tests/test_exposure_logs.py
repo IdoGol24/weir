@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from weir._text_safety import plural
 from weir.adapters.otel import REMEDIATION, decode_input
 from weir.adapters.otel.exposure import scan_surface
 from weir.catalog import DEFAULT_CATALOG, class_prefix
@@ -141,8 +142,10 @@ def test_a_clean_logs_payload_stays_clean() -> None:
     assert scan.output == "0 verdict-grade findings\n"
     gauge = _run(["gauge"], body)
     assert gauge.exit_code == 0, gauge.output
-    # Every string the payload holds is on the surface, read off the payload.
-    strings = body.count('"stringValue"')
+    # Every string the payload holds, each value, each key, the scope name
+    # and the severityText, is on the surface, read off the payload.
+    strings = sum(body.count(f'"{field}"') for field in ("stringValue", "key", "name",
+                                                          "severityText"))
     assert len(scan_surface(decode_input(body.encode())).strings) == strings
     assert (f"exposure scan: 0 spans, {len(records)} log records, {strings} strings"
             " - no credential-shaped values") in gauge.output
@@ -196,9 +199,10 @@ def test_a_payload_weir_cannot_read_is_reported_as_not_scanned(shape: str) -> No
     assert surface.batches_not_scanned == 1
     line = ("exposure scan: data in 1 batch not scanned - only spans and log records"
             " are read, not metrics or other data")
-    for command in ("scan", "gauge"):
+    # Unread data never passes clean: scan is incomplete, gauge just says so.
+    for command, code in (("scan", 3), ("gauge", 0)):
         result = _run([command], body)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == code, result.output
         assert line in result.output.splitlines(), result.output
 
 
@@ -208,12 +212,12 @@ def test_a_traces_only_export_reports_nothing_unscanned() -> None:
     assert "not scanned" not in _run(["gauge"], body).output
 
 
-def _report(body: str) -> tuple[str, str]:
+def _report(body: str, code: int = 0) -> tuple[str, str]:
     runner = CliRunner()
     with runner.isolated_filesystem():
         Path("export.json").write_text(body, encoding="utf-8")
         result = runner.invoke(main, ["scan", "export.json", "--report", "r.html"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == code, result.output
         return result.output, Path("r.html").read_text(encoding="utf-8")
 
 
@@ -226,7 +230,7 @@ def test_the_html_report_says_what_was_not_scanned(shape: str) -> None:
         body = json.dumps(_CLEAN_SPANS) + "\n" + json.dumps(_METRICS) + "\n"
     else:
         body = json.dumps({**_CLEAN_SPANS, **_METRICS})
-    output, html = _report(body)
+    output, html = _report(body, code=3)
     printed = [line for line in output.splitlines() if "not scanned" in line]
     assert len(printed) == 1, output
     assert f"<div>{printed[0]}</div>" in html
@@ -328,13 +332,13 @@ _UNREADABLE = {
 def test_a_value_the_scan_cannot_read_is_reported_as_not_scanned(shape: str) -> None:
     body = json.dumps(_UNREADABLE[shape])
     assert scan_surface(decode_input(body.encode())).values_not_scanned == 1
-    for command in ("scan", "gauge"):
+    for command, code in (("scan", 3), ("gauge", 0)):
         result = _run([command], body)
         assert result.exception is None or isinstance(result.exception, SystemExit), (
             result.exception)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == code, result.output
         assert _NOT_SCANNED_LINE in result.output.splitlines(), result.output
-    _, html = _report(body)
+    _, html = _report(body, code=3)
     assert f"<div>{_NOT_SCANNED_LINE}</div>" in html
 
 
@@ -348,8 +352,9 @@ def test_a_deep_body_within_the_cap_is_still_found() -> None:
     assert [h.location for h in hits] == ["body" + ".n" * 40]
 
 
-# Span scanning is unchanged by log support: each of these shapes, put in a
-# span-only export, prints exactly what the same export without it prints.
+# Span reading is unchanged by log support: each of these shapes, put in a
+# span-only export, reads exactly the values the same export without it
+# reads. What it holds is counted as not scanned, so `weir scan` exits 3.
 _SPAN_SHAPES = {
     "a snake_case value wrapper": {"attributes": [_snake("acme.agent.llm", _KEY)]},
     "a bytes value": {"attributes": [
@@ -362,7 +367,7 @@ _SPAN_SHAPES = {
 
 
 @pytest.mark.parametrize("shape", sorted(_SPAN_SHAPES))
-def test_a_span_only_export_scans_as_it_did_before_log_support(shape: str) -> None:
+def test_a_span_only_export_reads_as_it_did_before_log_support(shape: str) -> None:
     clean = {"spanId": "bb" * 8, "name": "crew.tool", "attributes": [_attr("k", "v")]}
     plain = _spans([clean])
     fields = dict(_SPAN_SHAPES[shape])
@@ -371,12 +376,20 @@ def test_a_span_only_export_scans_as_it_did_before_log_support(shape: str) -> No
         clean, {"spanId": "aa" * 8, "name": "crew.agent", **fields}]}]}]}
     surface = scan_surface(decode_input(json.dumps(shaped).encode()))
     expected = scan_surface(decode_input(json.dumps(plain).encode()))
-    assert surface.values_not_scanned == expected.values_not_scanned
-    assert [s.text for s in surface.strings] == [s.text for s in expected.strings]
-    assert _run(["scan"], json.dumps(shaped)).output == _run(["scan"], json.dumps(plain)).output
-    gauge = _run(["gauge"], json.dumps(shaped)).output
-    assert not [ln for ln in gauge.splitlines() if ln.startswith("exposure scan") and
-                "not scanned" in ln], gauge
+    assert surface.values_not_scanned > expected.values_not_scanned == 0
+    # The values read: the extra span's name, its scope's name and the keys
+    # are strings of their own.
+    names = {("name",), ("scope", "name")}
+    values = [s.text for s in surface.strings if not s.key and s.path not in names]
+    assert values == [s.text for s in expected.strings if not s.key and s.path not in names]
+    scan, control = _run(["scan"], json.dumps(shaped)), _run(["scan"], json.dumps(plain))
+    assert (scan.exit_code, control.exit_code) == (3, 0)
+    unread = f"exposure scan: {plural(surface.values_not_scanned, 'value')} not scanned"
+    assert [ln for ln in scan.output.splitlines() if "not scanned" in ln] == [
+        f"{unread} - not in a shape the scan reads"]
+    read = [ln for ln in scan.output.splitlines()
+            if "not scanned" not in ln and not ln.startswith("incomplete: ")]
+    assert read == control.output.splitlines()
 
 
 _REPO = Path(__file__).resolve().parents[3]
@@ -387,12 +400,16 @@ _REPO = Path(__file__).resolve().parents[3]
     sorted(p.name for p in (_REPO / "fixtures" / "otlp-corrupt").glob("*.json*")
            if not p.name.startswith("reject-")),
 )
-def test_a_committed_traces_fixture_reports_no_value_not_scanned(fixture: str) -> None:
-    # Only a log record reports a value it cannot read; these fixtures hold
-    # none, so whatever their shape, nothing is counted.
+def test_a_committed_traces_fixture_counts_only_its_quarantined_data(fixture: str) -> None:
+    # These fixtures hold no log record, and no span value in a shape the
+    # scan does not read: only a span or scope quarantined at decode, as the
+    # ledger names it, is counted as not scanned.
     data = (_REPO / "fixtures" / "otlp-corrupt" / fixture).read_bytes()
     assert b"resourceLogs" not in data and b"resource_logs" not in data
-    assert scan_surface(decode_input(data)).values_not_scanned == 0
+    wire = decode_input(data)
+    quarantined = sum(d.reason in ("undecodable_span", "undecodable_scope")
+                      for d in wire.degradations)
+    assert scan_surface(wire).values_not_scanned == quarantined
 
 
 _FLOW_LINES = ("evidentiary coverage", "argument capture", "degraded", "provenance",

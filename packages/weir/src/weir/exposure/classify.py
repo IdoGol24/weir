@@ -62,6 +62,7 @@ class _RawHit(msgspec.Struct, frozen=True):
     span_name: str
     log_record: int | None
     path: tuple[Segment, ...]
+    key: bool
     location: str
     start: int
     spec: SourceSpec
@@ -187,7 +188,7 @@ def _raw_hits_for(
         _RawHit(
             record_index=scanned.record_index, span_ref=scanned.span_ref,
             span_name=scanned.span_name, log_record=scanned.log_record,
-            path=scanned.path, location=scanned.location, start=cand.start,
+            path=scanned.path, key=scanned.key, location=scanned.location, start=cand.start,
             spec=cand.spec, value=cand.value, prefix=cand.prefix, eligible=cand.eligible,
         )
         for cand in candidates
@@ -279,7 +280,7 @@ def classify_exposure(surface: ExposureSurface, catalog: Catalog) -> ExposureSca
         hits.append(ExposureHit(
             span_ref=withhold_id(hit.span_ref),
             span_name=withhold(hit.span_name),
-            location=format_location(hit.path, withhold),
+            location=format_location(hit.path, withhold, key=hit.key),
             span_key=span_keys.setdefault(hit.span_ref, len(span_keys)),
             site_key=site_keys.setdefault(
                 (hit.span_ref, hit.log_record, hit.location), len(site_keys)

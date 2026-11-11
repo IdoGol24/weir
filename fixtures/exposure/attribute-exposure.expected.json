@@ -676,7 +676,7 @@
     ],
     "log_records_scanned": 0,
     "spans_scanned": 9,
-    "strings_scanned": 33,
+    "strings_scanned": 78,
     "values_not_scanned": 0
   },
   "verdict_grade": 8

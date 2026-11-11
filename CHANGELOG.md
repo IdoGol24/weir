@@ -62,6 +62,28 @@ requires `weir-scan>=0.6.0`.
     8-character floor, placeholder rules and letter-and-digit rule for
     `token` as the string form. A placeholder first item hides a real value
     after it (`["REDACTED", "..."]` is not a hit).
+- **The exposure scan reads names and keys.** `weir scan` and `weir gauge`
+  now read a span's name, each span event's name, a log record's
+  `eventName` (`event_name` in snake_case) and every attribute key as
+  text: span, event, link, resource, scope and log record attributes, and
+  the keys of a structured value at any depth. They also read each span
+  link's attributes and `traceState`, a span's own `traceState`, a log
+  record's `severityText`, the resource's and the scope's `schemaUrl`, the
+  resource's `entityRefs`, and the scope's name and version: every
+  free-form string field OTLP defines for spans and log records. A field
+  OTLP does not define is not read (see Changed: it makes the export
+  incomplete). A credential held only there is found and
+  graded the same as one in an attribute value. Each such hit is reported
+  at its own location: `name`, `events[0].name`,
+  `links[0].attributes.app.cred`, `scope.name`, `eventName`, or for a key
+  its attribute path marked `(key)` (`attributes.app.cred (key)`), and
+  printed under the `[withheld]` rule,
+  so the key itself is never printed. The gauge's string count now
+  includes these strings; an empty name or key is not counted. A log
+  record `eventName` or `severityText`, a span event name, a `traceState`
+  or a `schemaUrl` that is not a string, or a span link or entity ref that
+  is not an object, is counted as not scanned. Results
+  for attribute values are unchanged.
 - **weir-run: an unmediated tool call fails the run.** The mock keeps a
   tool ledger of its own: every tool call its model API issues, by call
   id, and every request served at a `[[mock.endpoint]]` whose new `tool`
@@ -113,6 +135,24 @@ requires `weir-scan>=0.6.0`.
   names too. `CONTRIBUTING.md` links to it.
 
 ### Changed
+- **`weir scan` exits 3, incomplete, when the export holds data the scan
+  did not read.** An accepted export holding metrics, another signal, or
+  span or log-record data in a shape the scan does not read (a span that
+  fails to decode, a span value in a snake_case wrapper or in `bytesValue`,
+  a span event that is not an object), or a field OTLP does not define
+  holding data at any level (a span, event, link, status, scope, resource,
+  log record, their resourceSpans, scopeSpans, resourceLogs and scopeLogs
+  elements, or an attribute and its value), no longer passes clean. Such a
+  field is counted, never read, and neither its name nor its value is
+  printed. Unless a
+  finding makes it exit 1, `weir scan` now exits 3, prints the not-scanned
+  lines and then `incomplete: the export holds data the scan did not read
+  (see above)`, and its HTML report shows an incomplete notice in place of
+  the green page. Exit codes 0, 1 and 2 and the results
+  for the data that was read are unchanged, and `weir gauge` still exits
+  0. What you need to do: a CI step that treats any non-zero exit of
+  `weir scan` as a failure needs no change; one that checks for exit 1
+  alone should also fail on 3, or drop the unread data from the export.
 - **`weir scan` prints `[withheld]` for a name that holds a found value.**
   In the text output and the HTML report, a span name, span id or attribute
   key that holds a value the scan found, eligible or in the review queue,

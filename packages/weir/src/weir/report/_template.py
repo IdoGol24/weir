@@ -31,6 +31,8 @@ REPORT_TEMPLATE = """<!doctype html>
   .review-queue h2 { font-size: 1rem; color: #666; margin-top: 0; }
   .not-scanned { border: 1px solid #e6d3a3; background: #fdf8ec; border-radius: 8px;
                  padding: 1rem 1.25rem; margin-bottom: 1rem; }
+  .incomplete-screen { background: #fdf8ec; border: 1px solid #e6d3a3; border-radius: 8px;
+                       padding: 1.5rem; font-size: 1.05rem; }
   footer { margin-top: 2rem; font-size: 0.8rem; color: #777; }
 </style>
 </head>
@@ -86,6 +88,11 @@ REPORT_TEMPLATE = """<!doctype html>
     </div>
   </div>
   {% endfor %}
+{% elif not exposure_verdict and not_scanned %}
+  <div class="incomplete-screen">
+    incomplete - 0 verdict-grade findings in the data scanned, but the export holds data
+    the scan did not read (above)
+  </div>
 {% elif not exposure_verdict %}
   <div class="green-screen">
     0 verdict-grade findings - {{ steps_scanned }} steps scanned, {{ rules_evaluated }} rules
