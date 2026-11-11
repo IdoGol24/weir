@@ -1,5 +1,8 @@
 # Security policy
 
+The security lead is the GitHub account
+[@IdoGol24](https://github.com/IdoGol24) (see [GOVERNANCE.md](GOVERNANCE.md)).
+
 ## Reporting
 
 Report suspected vulnerabilities privately - do not open a public issue.

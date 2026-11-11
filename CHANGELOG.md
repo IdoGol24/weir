@@ -107,6 +107,10 @@ requires `weir-scan>=0.6.0`.
   prints whose unescaped text holds a value is shown as `[withheld]`.
   Every other judge result is unchanged (docs/canary.md, "The decoded
   view").
+- `GOVERNANCE.md`, describing how the project is run: the maintainer, how
+  decisions are made, how changes land, how to become a maintainer and how
+  the document changes. It names the security lead, who `SECURITY.md` now
+  names too. `CONTRIBUTING.md` links to it.
 
 ### Changed
 - **weir-run: exit 1 is a finding, a leak or an unmediated tool call.** No
