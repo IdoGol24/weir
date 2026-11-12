@@ -14,7 +14,9 @@ from the keyed fingerprints of a [`weir inventory --store`](inventory.md)
 run, and never prints, caches or writes a credential value or any run of 6
 characters of one. Setup can also add a [redaction hook](#the-redaction-hook)
 that replaces those credentials in tool results before the model sees them,
-and in the copy Claude Code saves of a large one.
+and in the copy Claude Code saves of a large one, and a
+[command guard](#the-command-guard) that blocks a Bash call that would print
+one before it runs.
 
 ![Terminal recording: the status line under a fake Claude Code session counts up while it scans and settles on "weir ⚠ 2 entered · 1 sent → /weir", then /weir is typed and reports each of the two fake credentials: where it came from, the turn and tool call that moved it, where it now sits, and the advice to rotate it.](assets/statusline.svg)
 
@@ -323,6 +325,133 @@ Its limits:
   has been read by that model before the hook runs, and the hook replaces
   it only where that text repeats it.
 
+## The command guard
+
+```sh
+weir statusline guard --inventory REPORT
+```
+
+A Claude Code `PreToolUse` command hook for the Bash tool, with a 10 second
+timeout, which setup adds when asked (below). Before Claude Code runs a Bash
+call it passes the guard that call on stdin; the guard lexes
+`tool_input.command` into its simple commands and, when one matches a fixed
+rule for a command that prints a credential, denies the call. It prints
+Claude Code's PreToolUse deny (`hookSpecificOutput.permissionDecision:
+"deny"`, with `permissionDecisionReason` "shown to Claude", precedence `deny >
+ask > allow`; Claude Code
+[hooks reference](https://code.claude.com/docs/en/hooks), "PreToolUse decision
+control"); otherwise it prints nothing and the call takes Claude Code's normal
+permission flow. The reason names no value, no path and no part of the
+command:
+
+> Weir blocked this command before it ran: it would print the environment,
+> which would put a credential into this session. Do not run it in another
+> form. Where a command needs a credential, refer to it by name (such as
+> "$API\_TOKEN") without printing it; where the user needs to see it, ask them
+> to run the command themselves. (weir guard env-dump; it catches common
+> commands only and is not a security boundary.)
+
+It is an accident catcher for the agent's usual command, not a security
+boundary. The inventory report gives it names and places only - which variable
+names and which files hold a credential - and it reads no store, no key and no
+value. It is a companion to [the redaction hook](#the-redaction-hook), which
+removes a credential from a tool result after the command has run; the guard
+stops the command that would print one from running at all.
+
+### The rules it matches
+
+The rule list is version 1. Each rule fires when a simple command takes the
+shape below. A simple command is a command between `;`, `&&`, `||`, `|` or a
+newline, found inside `$(...)`, backticks, `<(...)`, a sub-shell `( )`, a
+`{ }` group, an `if`/`while`/`until`/`for` body, a function body
+(`NAME() { ...; }` or `function NAME { ...; }`, outside `$(...)`), `sh -c`,
+`eval` or `env -S` (the exceptions are listed below), with a leading
+`NAME=value`, reserved word (`if`, `then`, `elif`, `else`, `do`, `while`,
+`until`, `!`) or function header dropped and a wrapper
+such as `command`, `sudo`, `nohup`, `nice`, `timeout`, `stdbuf` or `env`
+peeled to the program it runs; a heredoc body is skipped, inside `$(...)` too.
+The program is taken by basename, so `/usr/bin/env` is `env`.
+
+| rule | prints | matches when a command is |
+| --- | --- | --- |
+| `env-dump` | the environment | `env` or `printenv` with no command and no name |
+| `shell-vars` | the shell's variables | `set` alone, or `export`/`declare`/`typeset`/`readonly` with options only (not `-f`/`-F`) |
+| `proc-environ` | a process's environment | a word or `<` target under `/proc/<id>/environ` (any one segment, such as `self`, a number, `$$` or `*`, and an optional `task/<id>`) |
+| `ps-environ` | processes' environments | `ps` with a dashless letters-only option holding `e` (`ps auxe`, `ps eww`), not `ps -ef` and not an option's value (`ps -o user`, `ps -eo user`, `ps -fu jenkins`) |
+| `credential-variable` | a variable that holds a credential | `echo`/`printf`, `printenv NAME`, or `declare`/`typeset -p NAME` expanding an inventoried variable outside single quotes (not `${#NAME}`); an `echo`/`printf` whose output goes to a file, is piped into a program other than a reader or `tee` (`echo "$TOKEN" \| gh auth login --with-token`), or is captured by the last command of a `$(...)` or backticks (`curl -H "Authorization: Bearer $(printf %s "$TOKEN")"`) is left to run unless it, or a `tee` operand, also goes to a stream the agent sees (`>&2`, `/dev/stderr`, `/dev/tty`), and a command that echoes the captured text is checked as if it expanded the variable |
+| `credential-file` | a file that holds a credential | a reader (`cat`, `grep`, `base64`, `sed`, `jq`, ...) with an operand, or any command with a `<` target, naming an inventoried credential file |
+| `gh-auth-token` | a stored credential or token | `gh auth token` |
+| `gh-auth-show-token` | a stored credential or token | `gh auth status -t`/`--show-token` |
+| `git-credential-fill` | a stored credential or token | `git credential fill` |
+| `git-credential-helper` | a stored credential or token | `git credential-* get` |
+| `docker-credential-get` | a stored credential or token | `docker-credential-* get` |
+| `gcloud-print-token` | a stored credential or token | `gcloud ... print-access-token`/`print-identity-token` |
+| `gcloud-secrets-access` | a stored credential or token | `gcloud secrets versions access` |
+| `az-account-get-token` | a stored credential or token | `az account get-access-token` |
+| `az-keyvault-secret-show` | a stored credential or token | `az keyvault secret show` |
+| `aws-configure-get` | a stored credential or token | `aws configure get` a secret or token name |
+| `aws-configure-export-credentials` | a stored credential or token | `aws configure export-credentials` |
+| `aws-ecr-login-password` | a stored credential or token | `aws ecr`/`ecr-public get-login-password` |
+| `aws-codeartifact-token` | a stored credential or token | `aws codeartifact get-authorization-token` |
+| `aws-secretsmanager-get` | a stored credential or token | `aws secretsmanager get-secret-value` |
+| `aws-ssm-get-parameter` | a stored credential or token | `aws ssm get-parameter`/`get-parameters --with-decryption` |
+| `kubectl-config-view-raw` | a stored credential or token | `kubectl config view --raw` |
+| `kubectl-get-secret` | a stored credential or token | `kubectl get secret`/`secrets -o yaml`/`json`/`jsonpath`/`go-template` |
+| `security-find-password` | a stored credential or token | `security find-generic-password`/`find-internet-password -w`/`-g` |
+| `op-read` | a stored credential or token | `op read` |
+| `op-item-get-reveal` | a stored credential or token | `op item get --reveal` |
+| `vault-print-token` | a stored credential or token | `vault print token` |
+| `vault-kv-get` | a stored credential or token | `vault kv get` |
+| `sops-decrypt` | a stored credential or token | `sops -d`/`--decrypt`/`decrypt` |
+| `ansible-vault-view` | a stored credential or token | `ansible-vault view`/`decrypt` |
+| `heroku-auth-token` | a stored credential or token | `heroku auth:token` |
+| `fly-auth-token` | a stored credential or token | `fly`/`flyctl auth token` |
+| `secret-tool-lookup` | a stored credential or token | `secret-tool lookup` |
+| `pass-show` | a stored credential or token | `pass show` |
+| `doppler-secrets-get` | a stored credential or token | `doppler secrets get`/`download` |
+
+The shape rules need no inventory; `credential-variable` and `credential-file`
+need it for the names and the files. A report the guard cannot read leaves the
+shape rules checked; with no match it exits 1 with one fixed line on stderr
+(Claude Code shows a hook error notice and runs the command), never a false
+block of every call.
+
+### What the command guard does not catch
+
+It matches a known set of command shapes; it does not reason about what a
+command does. It does not catch:
+
+- another form of a program: `python -c`, `node -e`, a script, a Makefile,
+  `npm run env`, an alias or a function, `$CMD`, `xargs`, `find -exec`,
+  `watch`, `direnv exec`, `docker exec`.
+- a file read without being named: `grep -r .`, a copy then a read, a link
+  made in the same command, a heredoc body.
+- a variable or a file the inventory does not hold: a `.env` made since the
+  inventory, another project's files, a value pasted into the chat.
+- the Read, Grep, Glob, WebFetch, MCP and PowerShell tools: Claude Code's own
+  `Read(...)` deny rules, which `/weir` prints, cover reads of a credential
+  file, and the redaction hook still replaces a known value in those results.
+- a command that sends a credential rather than printing it, or prints it in a
+  form the rules do not name, such as a value piped into a loop that echoes it.
+- a value piped into a text filter such as `tr` or `rev` that prints it (for
+  example `echo "$TOKEN" | tr -d '\n'`).
+- a command in a `case` branch, inside `$((...))` arithmetic, inside a
+  `${...}` parameter expansion (`echo "${X:-$(printenv)}"`), or nested more
+  than 40 deep; inside `$(...)`, a `case` pattern's `)`, a `NAME()` function
+  header or an array (`x=(a b)`) ends the substitution early.
+- a guard that fails or times out (the call runs; it is not a block), an agent
+  that switches the hook off, or a plugin that approves the call anyway
+  (Claude Code [permissions](https://code.claude.com/docs/en/permissions)).
+
+It also blocks one form that does not print a credential: an `echo`/`printf`
+piped into a `( )` or `{ }` group (`echo "$TOKEN" | (gh auth login
+--with-token)`) is denied, because the guard does not follow a pipe into a
+group. Pipe into the program itself instead.
+
+It fails open on purpose: blocking every Bash call when weir is half-removed
+would be worse than missing an accident. Only Claude Code's own permissions
+and sandbox stop what the guard does not.
+
 ## The /weir report
 
 ```sh
@@ -574,13 +703,27 @@ already runs the redaction hook, the preview says the hook cannot be added
 and suggests answering no to that question, which installs the status
 line alone; a `yes` to it then refuses and changes nothing.
 
+**The command guard.** After the redaction hook question, setup asks `Add the
+command guard too?` and, on an exact `yes`, adds a `hooks.PreToolUse` entry
+(matcher `Bash`, the guard command, `timeout` 10) that runs
+[the command guard](#the-command-guard); anything else, or no answer, leaves
+it out. The preview shows the entry. The guard command is
+`weir statusline guard --inventory <report>`: it reads the inventory report
+only, no store, key, cache or markers, so it changes nothing else about the
+setup. When `hooks` is not an object of lists, or `PreToolUse` already runs
+the weir guard, the preview says the guard cannot be added and suggests
+answering no; a `yes` then refuses and changes nothing. The two questions are
+independent: a setup can add the hook, the guard, both or neither.
+
 **Undo** shows what it does and, on `yes`, puts back the `statusLine` the
 backup holds (or removes it when there was none) while the status line
 is still exactly the one setup wrote: the interpreter running `-m weir
 statusline` with setup's options, and `--inner` the command from before
 setup, when there was one. It takes the redaction hook out of
-`hooks.PostToolUse`, and the `PostToolUse` and `hooks` keys when setup
-added them. Before it writes the settings it removes the hook's markers
+`hooks.PostToolUse` and the command guard out of `hooks.PreToolUse`, and the
+`PostToolUse`, `PreToolUse` and `hooks` keys when setup added them. A weir
+guard the settings already ran before setup is left as it is, as a weir hook
+is. Before it writes the settings it removes the hook's markers
 (while the settings still name their folder): the marker and `.old.json`
 files in the `--markers` folder its command names (or the status line's,
 when the hook was taken out by hand), the `.compacted` file there that
@@ -622,9 +765,10 @@ user owns, or that others can read or write, is refused, never repaired.
   only: a tool call that names a variable (`$TOKEN`) is not counted.
 - A rewrite inside the part of a file already read that keeps its end and
   its size is not seen.
-- A count is not a guard. Only the redaction hook keeps a credential from
-  reaching the agent, and only in the tool results it covers, within its
-  limits (above).
+- A count is not a guard. Only the redaction hook and the command guard keep
+  a credential from reaching the agent: the hook only in the tool results it
+  covers, the guard only for the commands it matches, each within its limits
+  (above).
 - A long record not searched whole within its time bound in three tries
   in a row, each cancelled or out of time, leaves the session partly
   checked rather than counted, where `weir audit` of the whole file counts

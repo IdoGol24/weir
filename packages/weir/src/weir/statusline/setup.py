@@ -21,13 +21,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from weir.statusline import hook
+from weir.statusline import guard, hook
 from weir.statusline.files import write_atomic
 
 # The question setup asks before it adds the redaction hook, and what it
 # suggests when the hook cannot be added.
 HOOK_QUESTION = "Add the redaction hook too?"
 ANSWER_NO = f'answer no to "{HOOK_QUESTION}" to install the status line alone'
+# The same for the command guard, asked after the redaction hook.
+GUARD_QUESTION = "Add the command guard too?"
+GUARD_ANSWER_NO = f'answer no to "{GUARD_QUESTION}" to install without it'
 
 
 class SetupError(Exception):
@@ -101,6 +104,17 @@ class Paths:
         command = self.command("hook", *self._marked(True))
         return {"matcher": "|".join(hook.COVERED), "hooks": [
             {"type": "command", "command": command, "timeout": hook.TIMEOUT_S}]}
+
+    def guard_command(self) -> str:
+        """`weir statusline guard --inventory REPORT`, this interpreter: the
+        guard reads names and places only, so no store, key, cache or markers."""
+        inputs = f"--inventory {_q(self.report)}"
+        return " ".join((shlex.quote(sys.executable), "-m weir statusline guard", inputs))
+
+    def guard_entry(self) -> dict[str, object]:
+        """The `hooks.PreToolUse` entry for the command guard."""
+        return {"matcher": "Bash", "hooks": [
+            {"type": "command", "command": self.guard_command(), "timeout": guard.GUARD_TIMEOUT_S}]}
 
     def command_file_text(self, with_hook: bool = False) -> str:
         """Claude Code runs the `!` line, with the session id put in
@@ -209,33 +223,49 @@ def _weir_hook(group: object) -> bool:
     return " -m weir statusline hook " in json.dumps(group)
 
 
-def _hooks(path: Path, settings: dict[str, object]) -> tuple[dict[str, object], list[object]]:
+def _weir_guard(group: object) -> bool:
+    """A `hooks.PreToolUse` entry that runs the command guard."""
+    return " -m weir statusline guard " in json.dumps(group)
+
+
+# The two optional components setup can add: the redaction hook on PostToolUse
+# and the command guard on PreToolUse. _with_handler / _without_handler act on
+# either, given its event and the predicate that recognises weir's own entry.
+HOOK = ("PostToolUse", _weir_hook, "redaction hook")
+GUARD = ("PreToolUse", _weir_guard, "command guard")
+
+
+def _event(path: Path, settings: dict[str, object], event: str) -> list[object]:
     hooks = settings.get("hooks", {})
-    post = cast("dict[str, object]", hooks).get("PostToolUse", []) if isinstance(
-        hooks, dict) else None
-    if not isinstance(post, list):
+    group = cast("dict[str, object]", hooks).get(event, []) if isinstance(hooks, dict) else None
+    if not isinstance(group, list):
         raise SetupError(f"{path}: hooks is not an object of lists; nothing changed", 2)
-    return cast("dict[str, object]", hooks), cast("list[object]", post)
+    return cast("list[object]", group)
 
 
-def _with_hook(path: Path, settings: dict[str, object], entry: object) -> dict[str, object]:
-    """`settings` with `entry` last in `hooks.PostToolUse`."""
-    hooks, post = _hooks(path, settings)
-    if any(_weir_hook(group) for group in post):
-        raise SetupError(f"{path}: hooks.PostToolUse already runs the weir redaction hook")
-    return {**settings, "hooks": {**hooks, "PostToolUse": [*post, entry]}}
-
-
-def _without_hook(
-    path: Path, settings: dict[str, object], was: dict[str, object]
+def _with_handler(
+    path: Path, settings: dict[str, object], event: str, entry: object,
+    is_mine: Callable[[object], bool], what: str,
 ) -> dict[str, object]:
-    """`settings` with the redaction hook taken out, and the `hooks` and
-    `PostToolUse` setup added for it, when there were none before setup."""
-    hooks, post = _hooks(path, settings)
-    kept = [group for group in post if not _weir_hook(group)]
-    rest = {k: v for k, v in hooks.items() if k != "PostToolUse"}
-    if kept or "PostToolUse" in _hooks(path, was)[0]:
-        rest = {**hooks, "PostToolUse": kept}
+    """`settings` with `entry` last in `hooks.<event>`."""
+    hooks = cast("dict[str, object]", settings.get("hooks", {}))
+    group = _event(path, settings, event)
+    if any(is_mine(g) for g in group):
+        raise SetupError(f"{path}: hooks.{event} already runs the weir {what}")
+    return {**settings, "hooks": {**hooks, event: [*group, entry]}}
+
+
+def _without_handler(
+    path: Path, settings: dict[str, object], was: dict[str, object], event: str,
+    is_mine: Callable[[object], bool],
+) -> dict[str, object]:
+    """`settings` with weir's `event` entry taken out, and the `hooks` and the
+    `event` key setup added for it, when there were none before setup."""
+    hooks = cast("dict[str, object]", settings.get("hooks", {}))
+    kept = [group for group in _event(path, settings, event) if not is_mine(group)]
+    rest = {k: v for k, v in hooks.items() if k != event}
+    if kept or event in cast("dict[str, object]", was.get("hooks", {})):
+        rest = {**hooks, event: kept}
     if rest or "hooks" in was:
         return {**settings, "hooks": rest}
     return {k: v for k, v in settings.items() if k != "hooks"}
@@ -249,6 +279,7 @@ class Plan:
     beside: bool = False  # an existing status line command runs beside the segment
     command_text: str | None = None
     with_hook: bool = False  # setup adds the redaction hook; undo takes it out
+    with_guard: bool = False  # setup adds the command guard; undo takes it out
     markers: Path | None = None  # undo: the hook's markers, removed with it
 
 
@@ -262,7 +293,7 @@ def refuse_windows() -> None:
         )
 
 
-def plan_setup(paths: Paths, with_hook: bool = False) -> Plan:
+def plan_setup(paths: Paths, with_hook: bool = False, with_guard: bool = False) -> Plan:
     refuse_windows()
     for path in (Path(sys.executable), paths.claude_dir, paths.cache, paths.report, paths.store,
                  paths.key):
@@ -293,10 +324,14 @@ def plan_setup(paths: Paths, with_hook: bool = False) -> Plan:
     line = {**old_line, "type": "command", "command": paths.segment(inner or None, with_hook)}
     after = {**settings, "statusLine": line}
     if with_hook:
-        after = _with_hook(paths.settings, after, paths.hook_entry())
+        after = _with_handler(
+            paths.settings, after, HOOK[0], paths.hook_entry(), HOOK[1], HOOK[2])
+    if with_guard:
+        after = _with_handler(
+            paths.settings, after, GUARD[0], paths.guard_entry(), GUARD[1], GUARD[2])
     return Plan(
         before, _json(after), beside=bool(inner), command_text=None if existing else text,
-        with_hook=with_hook,
+        with_hook=with_hook, with_guard=with_guard,
     )
 
 
@@ -308,16 +343,11 @@ def plan_undo(paths: Paths) -> Plan | None:
     current = _read(paths.settings)
     now, was = _settings(paths.settings, current), _settings(paths.backup, backup)
     line, old = now.get("statusLine"), was.get("statusLine")
-    try:  # a `hooks` value setup could not have added the hook to holds none
-        entry = next((g for g in _hooks(paths.settings, now)[1] if _weir_hook(g)), None)
-    except SetupError:
-        entry = None
-    try:  # nor do settings that ran it before setup: that one is left as it is
-        if any(_weir_hook(g) for g in _hooks(paths.backup, was)[1]):
-            entry = None
-    except SetupError:
-        pass
-    if line == old and entry is None and (current is not None or backup is None):
+    hook_entry = _mine_entry(now, was, paths.settings, HOOK[0], HOOK[1])
+    guard_entry = _mine_entry(now, was, paths.settings, GUARD[0], GUARD[1])
+    if line == old and hook_entry is None and guard_entry is None and (
+        current is not None or backup is None
+    ):
         return Plan(current, None)  # setup never got to the settings, or undo already ran
     if not _setups(line, _command(old)):
         message = (
@@ -329,19 +359,47 @@ def plan_undo(paths: Paths) -> Plan | None:
             f"{paths.settings}: its status line is no longer the one setup wrote (changed or"
             f" removed since); nothing changed.{message} {marker} and {paths.command_file}"
         )
-    hooked = entry is not None
-    handlers = cast("dict[str, list[object]]", entry or {}).get("hooks", [])
+    hooked, guarded = hook_entry is not None, guard_entry is not None
+    handlers = cast("dict[str, list[object]]", hook_entry or {}).get("hooks", [])
     markers = _markers_of([*handlers, line])
-    written = {**was, "statusLine": line}
-    if current == _json(_with_hook(paths.settings, written, entry) if hooked else written):
+    written: dict[str, object] = {**was, "statusLine": line}
+    if hooked:
+        written = _with_handler(paths.settings, written, HOOK[0], hook_entry, HOOK[1], HOOK[2])
+    if guarded:
+        written = _with_handler(paths.settings, written, GUARD[0], guard_entry, GUARD[1], GUARD[2])
+    if current == _json(written):
         # Nothing else changed: the bytes before setup.
-        return Plan(current, backup, remove=backup is None, with_hook=hooked, markers=markers)
-    restored = _without_hook(paths.settings, now, was) if hooked else now
+        return Plan(current, backup, remove=backup is None, with_hook=hooked,
+                    with_guard=guarded, markers=markers)
+    restored = now
+    if hooked:
+        restored = _without_handler(paths.settings, restored, was, HOOK[0], HOOK[1])
+    if guarded:
+        restored = _without_handler(paths.settings, restored, was, GUARD[0], GUARD[1])
     if "statusLine" not in was:
         restored = {k: v for k, v in restored.items() if k != "statusLine"}
     else:
         restored = {**restored, "statusLine": old}
-    return Plan(current, _json(restored), with_hook=hooked, markers=markers)
+    return Plan(current, _json(restored), with_hook=hooked, with_guard=guarded, markers=markers)
+
+
+def _mine_entry(
+    now: dict[str, object], was: dict[str, object], path: Path, event: str,
+    is_mine: Callable[[object], bool],
+) -> object:
+    """Weir's `event` entry in the current settings, or None: a `hooks` value
+    that could not hold one, or an entry the settings ran before setup (which
+    undo leaves as it is), counts as none."""
+    try:
+        entry = next((g for g in _event(path, now, event) if is_mine(g)), None)
+    except SetupError:
+        return None
+    try:
+        if any(is_mine(g) for g in _event(path, was, event)):
+            return None
+    except SetupError:
+        pass
+    return entry
 
 
 def _markers_of(handlers: list[object]) -> Path | None:
@@ -360,7 +418,8 @@ def _markers_of(handlers: list[object]) -> Path | None:
 
 
 def describe(
-    paths: Paths, plan: Plan, *, undo: bool, hook_problem: str | None = None
+    paths: Paths, plan: Plan, *, undo: bool, hook_problem: str | None = None,
+    guard_problem: str | None = None,
 ) -> list[str]:
     """Never the existing status line command: it may hold a credential."""
     new = not undo and plan.before is None
@@ -381,6 +440,8 @@ def describe(
     if undo:
         if plan.with_hook:
             lines.append("  this takes the weir redaction hook out of hooks.PostToolUse")
+        if plan.with_guard:
+            lines.append("  this takes the weir command guard out of hooks.PreToolUse")
         lines.append(f"remove {paths.command_file} and {paths.marker()}")
         if plan.markers is not None:
             lines.append(f"remove the redaction hook's markers in {plan.markers}")
@@ -388,16 +449,19 @@ def describe(
     if plan.command_text is not None:
         lines.append(f"command file: {paths.command_file} (new), for /weir:")
         lines.extend("  | " + line for line in plan.command_text.splitlines())
-    if hook_problem is not None:
-        return [*lines, f"redaction hook: cannot be added: {hook_problem}",
-                f"  {ANSWER_NO}"]
+    return [*lines, *_hook_preview(paths, plan, hook_problem),
+            *_guard_preview(paths, guard_problem)]
+
+
+def _hook_preview(paths: Paths, plan: Plan, problem: str | None) -> list[str]:
+    if problem is not None:
+        return [f"redaction hook: cannot be added: {problem}", f"  {ANSWER_NO}"]
     entry = paths.hook_entry()
     tools = ", ".join(hook.COVERED[:-1]) + " and " + hook.COVERED[-1]
     hooked = paths.command_file_text(True).splitlines()
     allowed = next(line for line in hooked if line.startswith("allowed-tools:"))
     report = next(line for line in hooked if line.startswith("!"))
     return [
-        *lines,
         f'redaction hook, added only when you also answer yes to "{HOOK_QUESTION}":',
         f"  hooks.PostToolUse, matcher {entry['matcher']}, timeout {hook.TIMEOUT_S} s:"
         f" {_command(cast('list[object]', entry['hooks'])[0])}",
@@ -407,6 +471,19 @@ def describe(
         + (" (and your existing command as --inner, not shown)" if plan.beside else ""),
         f"  with it, {paths.command_file.name} has: {allowed}",
         f"  and runs: {report}",
+    ]
+
+
+def _guard_preview(paths: Paths, problem: str | None) -> list[str]:
+    if problem is not None:
+        return [f"command guard: cannot be added: {problem}", f"  {GUARD_ANSWER_NO}"]
+    entry = paths.guard_entry()
+    return [
+        f'command guard, added only when you also answer yes to "{GUARD_QUESTION}":',
+        f"  hooks.PreToolUse, matcher {entry['matcher']}, timeout {guard.GUARD_TIMEOUT_S} s:"
+        f" {_command(cast('list[object]', entry['hooks'])[0])}",
+        "  it denies a Bash call that would print a credential before it runs,"
+        " and tells the model why in a message that holds no value",
     ]
 
 

@@ -1,5 +1,32 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`weir statusline guard`: a command guard for Claude Code** (`weir-scan`).
+  A `PreToolUse` command hook for the Bash tool. Before Claude Code runs a
+  Bash call, the guard lexes `tool_input.command` into its simple commands and
+  denies the call when one matches a fixed, versioned rule list (version 1) of
+  commands that print a credential: an environment dump (`env`, `printenv`,
+  `set`, `export`), a read of a process's environment (`/proc/<id>/environ`,
+  `ps auxe`), a print of an inventoried variable (`echo "$TOKEN"`), a read of
+  an inventoried credential file (`cat ~/.aws/credentials`), and a CLI that
+  hands back a stored token (`gh auth token`, `aws secretsmanager
+  get-secret-value`, `vault kv get`, and others). A variable piped into a
+  program that uses it (`echo "$TOKEN" | gh auth login --with-token`),
+  written to a file, or captured by a command substitution (`curl -H
+  "Authorization: Bearer $(printf %s "$TOKEN")"`) is left to run. The deny reason tells the model why in
+  fixed words that hold no value, path or part of the command. It lexes
+  pipelines, substitutions, `sh -c`, `eval`, sub-shells, `if`/`while`/`for`
+  bodies, function bodies outside `$(...)`, and wrappers, and skips heredoc
+  bodies, inside `$(...)` too; the forms it does not lex are listed in the
+  docs. It reads the inventory report for names and places
+  only, no store, key or value. It is an accident catcher, not a security
+  boundary, and fails open: an input or inventory it cannot use leaves the
+  call to run. `weir statusline setup` offers it beside the redaction hook,
+  added only on an exact `yes` to `Add the command guard too?`, and `undo`
+  takes it out ([docs/statusline.md](docs/statusline.md#the-command-guard)).
+
 ## [0.10.0] - 2026-11-12
 
 **Behaviour change:** `weir scan` now exits 3, incomplete, when an export
