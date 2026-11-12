@@ -1,10 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.0] - 2026-11-12
 
-weir-run's unmediated tool call below is decided by weir-run's own mock
-and needs nothing of weir-scan's `weir canary judge`, so weir-run still
-requires `weir-scan>=0.6.0`.
+**Behaviour change:** `weir scan` now exits 3, incomplete, when an export
+holds data it did not read. A CI step that fails only on exit 1 should
+also fail on 3. See Changed.
 
 ### Added
 - **The exposure scan reads OpenTelemetry log records**: `weir scan` and
@@ -84,36 +84,6 @@ requires `weir-scan>=0.6.0`.
   or a `schemaUrl` that is not a string, or a span link or entity ref that
   is not an object, is counted as not scanned. Results
   for attribute values are unchanged.
-- **weir-run: an unmediated tool call fails the run.** The mock keeps a
-  tool ledger of its own: every tool call its model API issues, by call
-  id, and every request served at a `[[mock.endpoint]]` whose new `tool`
-  key names the tool that calls it, which is that tool executing (the
-  pytest plugin's `endpoint(..., tool=...)` sets the same). Each execution
-  is judged when it happens: it answers the oldest call issued for that
-  tool in the flow that none has answered yet and whose result has not
-  gone back to the model yet, or repeats an execution whose result has
-  not gone back yet (a retry, several requests). A tool that executes
-  with no call to answer, as when a program runs a tool call a caller put
-  into the conversation or runs a tool after its call's result went back,
-  is a finding named `unmediated-tool-call` (reason `not_issued`). A tool
-  result under the call id the model gave another tool, which names a
-  tool that executed while the asked tool never did, is the same finding
-  with the reason `tool_mismatch`, even when the executed tool had a call
-  of its own, so an alias or a substitution is told apart from an orphan
-  call. It is printed on execution, never as a leak:
-  `unmediated tool call: send_file (executed without a model request)`,
-  `unmediated tool call: send_file (executed in answer to a model request
-  for read_file)`. An execution without a model request is never clean,
-  in a stored Responses conversation too. Nothing a model request carries
-  makes a finding: few-shot tool-use examples, a replayed transcript, a
-  framework's own hand-off, a summary or guardrail request, another
-  agent's conversation. Neither do retries or batched calls. A tool that
-  keeps sending requests to its endpoint after its result went back, such
-  as a background upload, or first reaches it only then, such as a
-  deferred or async tool, is a finding: a call answered without its tool
-  running mediates no later run. A tool with no `tool` endpoint is
-  never reported, and `tool` must be exactly the name the program offers
-  the model. See docs/canary.md, "Tool calls".
 - **The canary judge reads JSON escapes.** A planted value is found when
   the JSON around it writes any of its characters as a `\uXXXX` escape,
   not only the characters a standard serializer escapes: in a telemetry
@@ -160,7 +130,67 @@ requires `weir-scan>=0.6.0`.
   name is checked as written, without undoing JSON escapes. Verdict lines
   and review-queue rows are both covered, on every exit code. What the
   scan reports, its counts, verdicts and exit codes are unchanged.
-- **weir-run: exit 1 is a finding, a leak or an unmediated tool call.** No
+- Project links point to github.com/ralis-ai/weir.
+
+### Fixed
+- **A long run of backslashes after a credential-field key no longer slows
+  the scan.** The `credential_field` and `json_credential_field` patterns
+  now check each backslash run once, not once per value character. Such
+  input now scans at about the speed of ordinary input of the same size,
+  where before it was more than 10 times slower. Matches are unchanged.
+
+### Corpus
+- The diffspec baselines were regenerated for the new catalog digest. The
+  diff is digest-only.
+- `fixtures/exposure/attribute-exposure.expected.json` was regenerated:
+  each hit, and each rule result drawn from it, now records `span_key` and
+  `site_key`, the span and location it is at, which the counts use. No
+  other field changed.
+- The release commit regenerated the diffspec baselines for the package
+  version, which the baselines embed: `weir_version` moved from 0.9.0 to
+  0.10.0. That diff is version-only; no flow fact, node count or finding
+  moved.
+
+## [weir-run 0.4.0] - 2026-11-12
+
+Released beside weir-scan 0.10.0, still requiring `weir-scan>=0.6.0`: the
+unmediated tool call below is decided by weir-run's own mock and needs
+nothing of weir-scan's `weir canary judge`.
+
+### Added
+- **An unmediated tool call fails the run.** The mock keeps a
+  tool ledger of its own: every tool call its model API issues, by call
+  id, and every request served at a `[[mock.endpoint]]` whose new `tool`
+  key names the tool that calls it, which is that tool executing (the
+  pytest plugin's `endpoint(..., tool=...)` sets the same). Each execution
+  is judged when it happens: it answers the oldest call issued for that
+  tool in the flow that none has answered yet and whose result has not
+  gone back to the model yet, or repeats an execution whose result has
+  not gone back yet (a retry, several requests). A tool that executes
+  with no call to answer, as when a program runs a tool call a caller put
+  into the conversation or runs a tool after its call's result went back,
+  is a finding named `unmediated-tool-call` (reason `not_issued`). A tool
+  result under the call id the model gave another tool, which names a
+  tool that executed while the asked tool never did, is the same finding
+  with the reason `tool_mismatch`, even when the executed tool had a call
+  of its own, so an alias or a substitution is told apart from an orphan
+  call. It is printed on execution, never as a leak:
+  `unmediated tool call: send_file (executed without a model request)`,
+  `unmediated tool call: send_file (executed in answer to a model request
+  for read_file)`. An execution without a model request is never clean,
+  in a stored Responses conversation too. Nothing a model request carries
+  makes a finding: few-shot tool-use examples, a replayed transcript, a
+  framework's own hand-off, a summary or guardrail request, another
+  agent's conversation. Neither do retries or batched calls. A tool that
+  keeps sending requests to its endpoint after its result went back, such
+  as a background upload, or first reaches it only then, such as a
+  deferred or async tool, is a finding: a call answered without its tool
+  running mediates no later run. A tool with no `tool` endpoint is
+  never reported, and `tool` must be exactly the name the program offers
+  the model. See docs/canary.md, "Tool calls".
+
+### Changed
+- **Exit 1 is a finding, a leak or an unmediated tool call.** No
   exit code was added: `weir-run run`, `weir-run verify`, the pytest
   plugin and the GitHub Action still exit 0 clean, 1 failed, 2 error and 3
   incomplete. Any finding fails a run; otherwise any gap makes it
@@ -181,7 +211,7 @@ requires `weir-scan>=0.6.0`.
   the same predicate for it as 0.3.0 did; the v1 schema artifact is
   unchanged. verify's own probe runs no tool, so its current target never
   reaches this verdict.
-- **weir-run: `--report` writes `canary-report/2`**, the run's JSON
+- **`--report` writes `canary-report/2`**, the run's JSON
   report, with a JSON Schema artifact (`canary-report.v2.schema.json`):
   `result` and `exit_code` are always the run's, so a failing run never
   reads `clean`; `findings` (the finding types, as data), `unmediated`
@@ -191,7 +221,7 @@ requires `weir-scan>=0.6.0`.
   sees the run's verdict, `unmediated-tool-call` included; a job that
   reads the judge's other fields, such as `hits`, `placements` or
   `coverage`, reads them from `judge`.
-- **weir-run: the mock's Chat Completions and Responses call ids are
+- **The mock's Chat Completions and Responses call ids are
   `call_mock_<n>_<i>`** (were `call_<n>_<i>`), so an id a program or a
   framework makes up is less likely to look like one the mock issued.
 - Project links point to github.com/ralis-ai/weir.
@@ -212,19 +242,6 @@ requires `weir-scan>=0.6.0`.
   either letter case, since the mock records a host in lower case: a host
   name that holds a slice of a key now reads `[withheld]`. Output that
   holds no part of a value is relayed exactly as before.
-- **A long run of backslashes after a credential-field key no longer slows
-  the scan.** The `credential_field` and `json_credential_field` patterns
-  now check each backslash run once, not once per value character. Such
-  input now scans at about the speed of ordinary input of the same size,
-  where before it was more than 10 times slower. Matches are unchanged.
-
-### Corpus
-- The diffspec baselines were regenerated for the new catalog digest. The
-  diff is digest-only.
-- `fixtures/exposure/attribute-exposure.expected.json` was regenerated:
-  each hit, and each rule result drawn from it, now records `span_key` and
-  `site_key`, the span and location it is at, which the counts use. No
-  other field changed.
 
 ## [0.9.0] - 2026-11-08
 
