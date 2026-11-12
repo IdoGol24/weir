@@ -78,6 +78,7 @@ from weir.report import exposure_lines, finding_lines, render_html_report
 from weir.rules_commons import load_rules
 from weir.schema.exposure import ExposureSurface
 from weir.schema.trace import CanonicalTrace, decode_canonical_trace
+from weir.statusline import guard as command_guard
 from weir.statusline import hook as redaction_hook
 from weir.statusline import setup as statusline_setup
 from weir.statusline import valid_session_id
@@ -739,6 +740,30 @@ def statusline_hook_command(
         os._exit(0)
 
 
+@statusline_group.command("guard")
+@click.option(
+    "--inventory", "report_path", type=click.Path(readable=False, path_type=Path), required=True,
+    help="The weir-inventory/1 report (weir inventory --json); names and places only, no value.",
+)
+def statusline_guard_command(report_path: Path) -> None:
+    """(experimental) The command guard: a Claude Code PreToolUse hook that
+    denies a Bash call, the hook input on stdin, when it matches a fixed rule
+    list of commands that print a credential (docs/statusline.md). It prints
+    a deny object naming no value, or nothing to leave the call to Claude
+    Code. An accident catcher, not a security boundary; it fails open (exit 1,
+    one line on stderr, the call runs) on an input or inventory it cannot
+    use."""
+    stdin = click.get_binary_stream("stdin").read()
+    try:
+        decision = command_guard.decide(stdin, report_path)
+        if decision is not None:
+            _hook_output(_json.dumps(decision))
+    except (command_guard.GuardError, redaction_hook.HookError) as exc:
+        click.echo(f"weir: {command_guard.GUARD_NOT_CHECKED}: {exc}; the command was not blocked",
+                   err=True)
+        raise SystemExit(1) from exc
+
+
 def _hook_output(out: str) -> None:
     """Written and flushed, or HookError. What a failed write left buffered
     goes to the null device: flushed again at exit, it would fail again and
@@ -963,14 +988,11 @@ def statusline_setup_command(
         )])
     if report_path is None and store_path is None and key_path is None:
         shown += _refresh(project)
-    try:
-        statusline_setup.plan_setup(paths, with_hook=True)
-        problem = None
-    except statusline_setup.SetupError as exc:  # shown before any question: nothing changed yet
-        problem = str(exc).removesuffix("; nothing changed")
+    problem = _component_problem(paths, with_hook=True)
+    guard_problem = _component_problem(paths, with_guard=True)
     click.echo("weir statusline setup will make this change:")
     for line in [*shown, *statusline_setup.describe(
-        paths, plan, undo=False, hook_problem=problem
+        paths, plan, undo=False, hook_problem=problem, guard_problem=guard_problem
     )]:
         click.echo(line)
     undo = statusline_setup.undo_command(claude_dir)
@@ -983,23 +1005,41 @@ def statusline_setup_command(
         click.echo("\nnot applied: nothing written")
         return
     click.echo(f"\n{statusline_setup.HOOK_QUESTION} Type yes to add it: ", nl=False)
+    want_hook = _yes()
+    click.echo(f"\n{statusline_setup.GUARD_QUESTION} Type yes to add it: ", nl=False)
+    want_guard = _yes()
     try:
-        if _yes():
-            if problem is not None:
-                raise statusline_setup.SetupError(
-                    f"{problem}; nothing changed; {statusline_setup.ANSWER_NO}", 2
-                )
-            hooked = statusline_setup.plan_setup(paths, with_hook=True)
-            if hooked.before != plan.before:
+        if want_hook and problem is not None:
+            raise statusline_setup.SetupError(
+                f"{problem}; nothing changed; {statusline_setup.ANSWER_NO}", 2
+            )
+        if want_guard and guard_problem is not None:
+            raise statusline_setup.SetupError(
+                f"{guard_problem}; nothing changed; {statusline_setup.GUARD_ANSWER_NO}", 2
+            )
+        if want_hook or want_guard:
+            final = statusline_setup.plan_setup(paths, with_hook=want_hook, with_guard=want_guard)
+            if final.before != plan.before:
                 raise statusline_setup.SetupError(
                     f"{paths.settings} changed since the change was shown; nothing written"
                 )
-            plan = hooked
+            plan = final
         statusline_setup.apply(paths, plan, undo=False, first=first)
     except statusline_setup.SetupError as exc:
         _fail(exc)
-    hooked_words = " with the redaction hook" if plan.with_hook else ""
-    click.echo(f"\napplied{hooked_words}; to undo: {undo}")
+    parts = (("redaction hook", plan.with_hook), ("command guard", plan.with_guard))
+    added = " and the ".join(name for name, on in parts if on)
+    click.echo(f"\napplied{' with the ' + added if added else ''}; to undo: {undo}")
+
+
+def _component_problem(paths: statusline_setup.Paths, **kwargs: bool) -> str | None:
+    """Why a component cannot be added, shown before any question (nothing has
+    changed yet), or None when it can."""
+    try:
+        statusline_setup.plan_setup(paths, **kwargs)
+        return None
+    except statusline_setup.SetupError as exc:
+        return str(exc).removesuffix("; nothing changed")
 
 
 @statusline_group.command("undo")
